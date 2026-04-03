@@ -1,0 +1,61 @@
+name: Deploy to Servers
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy-staging:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      APP_DIR: /home/ubuntu/apps/dota-core-be
+      BRANCH: dev
+    steps:
+      - name: Deploy to staging
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          known_hosts: ${{ secrets.KNOWN_HOSTS }}
+          script_stop: true
+          envs: APP_DIR,BRANCH
+          script: |
+            cd "$APP_DIR"
+            git fetch origin "$BRANCH"
+            git checkout "$BRANCH"
+            git pull origin "$BRANCH"
+            npm ci
+            npm run build
+            pm2 restart ecosystem.config.js
+
+  # deploy-production:
+  #   if: github.ref == 'refs/heads/main'
+  #   runs-on: ubuntu-latest
+  #   environment: production
+  #   env:
+  #     APP_DIR: /home/ubuntu/apps/dota-core-be
+  #     BRANCH: main
+  #   steps:
+  #     - name: Deploy to production
+  #       uses: appleboy/ssh-action@v1.0.3
+  #       with:
+  #         host: ${{ secrets.SSH_HOST }}
+  #         username: ${{ secrets.SSH_USER }}
+  #         key: ${{ secrets.SSH_KEY }}
+  #         port: ${{ secrets.SSH_PORT }}
+  #         known_hosts: ${{ secrets.KNOWN_HOSTS }}
+  #         script_stop: true
+  #         envs: APP_DIR,BRANCH
+  #         script: |
+  #           cd "$APP_DIR"
+  #           git fetch origin "$BRANCH"
+  #           git checkout "$BRANCH"
+  #           git pull origin "$BRANCH"
+  #           npm ci
+  #           npm run build
+  #           pm2 restart ecosystem.config.js
