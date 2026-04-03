@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import * as dotenv from 'dotenv';
 import { PlayersModule } from './players/players.module';
 import { UserRolesModule } from './user-roles/user-roles.module';
 import { TeamsModule } from './teams/teams.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { MatchesModule } from './matches/matches.module';
+import { HealthController } from './health.controller';
+
+dotenv.config();
 
 @Module({
   imports: [
@@ -24,6 +28,6 @@ import { MatchesModule } from './matches/matches.module';
     TournamentsModule,
     MatchesModule,
   ],
-  controllers: [],
+  controllers: [HealthController],
 })
 export class AppModule {}
