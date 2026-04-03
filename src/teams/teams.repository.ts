@@ -1,0 +1,63 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Team } from './team.entity';
+
+@Injectable()
+export class TeamsRepository {
+  constructor(
+    @InjectRepository(Team)
+    private readonly repo: Repository<Team>,
+  ) {}
+
+  create(payload: Partial<Team>): Team {
+    return this.repo.create(payload);
+  }
+
+  save(team: Team): Promise<Team> {
+    return this.repo.save(team);
+  }
+
+  findAll(): Promise<Team[]> {
+    return this.repo.find({
+      relations: [
+        'captain',
+        'coach',
+        'mainPlayers',
+        'reservedPlayers',
+        'tournament',
+      ],
+    });
+  }
+
+  findOneById(id: string): Promise<Team | null> {
+    return this.repo.findOne({
+      where: { id },
+      relations: [
+        'captain',
+        'coach',
+        'mainPlayers',
+        'reservedPlayers',
+        'tournament',
+      ],
+    });
+  }
+
+  findOneWithRoster(id: string): Promise<Team | null> {
+    return this.repo.findOne({
+      where: { id },
+      relations: ['captain', 'coach', 'mainPlayers', 'reservedPlayers'],
+    });
+  }
+
+  findByCaptainId(playerId: string): Promise<Team[]> {
+    return this.repo.find({
+      where: { captain: { id: playerId } },
+      relations: ['captain', 'mainPlayers'],
+    });
+  }
+
+  remove(team: Team): Promise<Team> {
+    return this.repo.remove(team);
+  }
+}
