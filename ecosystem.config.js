@@ -3,7 +3,7 @@ module.exports = {
     {
       name: 'core-backend',
       script: 'dist/main.js',
-      cwd: '/home/apps/dota-core-be',
+      cwd: '/home/ubuntu/apps/dota-core-be',
       env: {
         NODE_ENV: 'staging',
         PORT: '3000',
