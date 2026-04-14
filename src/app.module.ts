@@ -7,6 +7,7 @@ import { TeamsModule } from './teams/teams.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { MatchesModule } from './matches/matches.module';
 import { HealthController } from './health.controller';
+import { AuthModule } from './auth/auth.module';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ dotenv.config();
     TeamsModule,
     TournamentsModule,
     MatchesModule,
+    AuthModule,
   ],
   controllers: [HealthController],
 })

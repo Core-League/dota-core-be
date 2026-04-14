@@ -1,14 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreatePlayerDto {
-  @ApiProperty()
-  steamId: string;
+  @ApiPropertyOptional({
+    description: 'Optional until linked; omit for Discord-only placeholder flows',
+  })
+  steamId?: string;
 
   @ApiProperty()
   discordId: string;
 
-  @ApiProperty()
-  telegramId: string;
+  @ApiPropertyOptional({
+    description: 'Optional until linked; omit for Discord-only placeholder flows',
+  })
+  telegramId?: string;
 
   @ApiPropertyOptional()
   avatarUrl?: string;
@@ -19,6 +23,6 @@ export class CreatePlayerDto {
   @ApiProperty()
   discordUsername: string;
 
-  @ApiProperty()
-  rating: number;
+  @ApiPropertyOptional({ default: 0 })
+  rating?: number;
 }

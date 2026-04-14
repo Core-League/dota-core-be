@@ -6,17 +6,19 @@ export class Player {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ unique: true })
-  steamId: string;
+  /** Linked later; null for Discord-only accounts until Steam is connected. */
+  @Column({ unique: true, nullable: true })
+  steamId: string | null;
 
   @Column({ unique: true })
   discordId: string;
 
-  @Column({ unique: true })
-  telegramId: string;
+  /** Linked later; null for Discord-only accounts until Telegram is connected. */
+  @Column({ unique: true, nullable: true })
+  telegramId: string | null;
 
   @Column({ nullable: true })
-  avatarUrl: string;
+  avatarUrl: string | null;
 
   @Column()
   discordName: string;
@@ -24,7 +26,7 @@ export class Player {
   @Column()
   discordUsername: string;
 
-  @Column()
+  @Column({ type: 'real', default: 0 })
   rating: number;
 
   @Column({ nullable: true })
