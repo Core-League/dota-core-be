@@ -7,23 +7,23 @@ export class Player {
   id: string;
 
   /** Linked later; null for Discord-only accounts until Steam is connected. */
-  @Column({ unique: true, nullable: true })
+  @Column({ type: 'varchar', unique: true, nullable: true })
   steamId: string | null;
 
-  @Column({ unique: true })
+  @Column({ type: 'varchar', unique: true })
   discordId: string;
 
   /** Linked later; null for Discord-only accounts until Telegram is connected. */
-  @Column({ unique: true, nullable: true })
+  @Column({ type: 'varchar', unique: true, nullable: true })
   telegramId: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   avatarUrl: string | null;
 
-  @Column()
+  @Column({ type: 'varchar' })
   discordName: string;
 
-  @Column()
+  @Column({ type: 'varchar' })
   discordUsername: string;
 
   @Column({ type: 'real', default: 0 })

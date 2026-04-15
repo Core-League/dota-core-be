@@ -1,0 +1,25 @@
+# Local Postgres for development only.
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# Stop:  docker compose -f docker-compose.dev.yml down
+# Data persists in volume dota-core-be_pgdata until you docker compose down -v
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dota-core-be-postgres
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: dota
+      POSTGRES_PASSWORD: dota_dev
+      POSTGRES_DB: dota_dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U dota -d dota_dev']
+      interval: 3s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

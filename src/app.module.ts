@@ -1,6 +1,6 @@
+import './config/load-env';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import * as dotenv from 'dotenv';
 import { PlayersModule } from './players/players.module';
 import { UserRolesModule } from './user-roles/user-roles.module';
 import { TeamsModule } from './teams/teams.module';
@@ -8,8 +8,6 @@ import { TournamentsModule } from './tournaments/tournaments.module';
 import { MatchesModule } from './matches/matches.module';
 import { HealthController } from './health.controller';
 import { AuthModule } from './auth/auth.module';
-
-dotenv.config();
 
 @Module({
   imports: [
