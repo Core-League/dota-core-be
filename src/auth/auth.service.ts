@@ -2,6 +2,7 @@ import { HttpService } from '@nestjs/axios';
 import {
   Injectable,
   Logger,
+  NotFoundException,
   OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { AxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
 import { DeepPartial, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
+import { CurrentPlayerDto } from './dto/current-player.dto';
 import { DiscordExchangeDto } from './dto/discord-exchange.dto';
 
 const OAUTH_STATE_TYP = 'oauth-state';
@@ -150,6 +152,32 @@ export class AuthService implements OnModuleInit {
       access_token,
       token_type: 'Bearer',
       expires_in,
+    };
+  }
+
+  async getCurrentPlayer(playerId: string): Promise<CurrentPlayerDto> {
+    const player = await this.playersRepo.findOne({
+      where: { id: playerId },
+      relations: ['roles'],
+    });
+    if (!player) {
+      throw new NotFoundException('Player not found');
+    }
+    return {
+      id: player.id,
+      steamId: player.steamId,
+      discordId: player.discordId,
+      telegramId: player.telegramId,
+      avatarUrl: player.avatarUrl,
+      discordName: player.discordName,
+      discordUsername: player.discordUsername,
+      rating: player.rating,
+      verifiedAt: player.verifiedAt ?? null,
+      roles: (player.roles ?? []).map((r) => ({
+        id: r.id,
+        name: r.name,
+        isAdminRole: r.isAdminRole,
+      })),
     };
   }
 

@@ -1,7 +1,13 @@
 import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
+import { CurrentPlayerDto } from './dto/current-player.dto';
 import { DiscordExchangeDto } from './dto/discord-exchange.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
@@ -35,12 +41,13 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @ApiOkResponse({ type: CurrentPlayerDto })
   @ApiOperation({
-    summary: 'Current player id from JWT',
+    summary: 'Current player profile',
     description:
-      'Send Authorization: Bearer <access_token> from POST /auth/discord/token.',
+      'Returns the Player row for the JWT subject. Send Authorization: Bearer <access_token>.',
   })
-  me(@Req() req: AuthedRequest): { playerId: string } {
-    return { playerId: req.user.playerId };
+  me(@Req() req: AuthedRequest): Promise<CurrentPlayerDto> {
+    return this.authService.getCurrentPlayer(req.user.playerId);
   }
 }
