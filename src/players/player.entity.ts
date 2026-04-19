@@ -29,8 +29,8 @@ export class Player {
   @Column({ type: 'real', default: 0 })
   rating: number;
 
-  @Column({ nullable: true })
-  verifiedAt: Date;
+  @Column({ nullable: true, type: 'timestamptz' })
+  verifiedAt: Date | null;
 
   @OneToMany(() => UserRoles, (role) => role.player, { cascade: false })
   roles: UserRoles[];

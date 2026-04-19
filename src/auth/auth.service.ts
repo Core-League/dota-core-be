@@ -14,6 +14,8 @@ import { AxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
 import { DeepPartial, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
+import { UserRoles } from '../user-roles/user-roles.entity';
+import { Role } from '../user-roles/role.constants';
 import { CurrentPlayerDto } from './dto/current-player.dto';
 import { DiscordExchangeDto } from './dto/discord-exchange.dto';
 
@@ -46,6 +48,8 @@ export class AuthService implements OnModuleInit {
   constructor(
     @InjectRepository(Player)
     private readonly playersRepo: Repository<Player>,
+    @InjectRepository(UserRoles)
+    private readonly rolesRepo: Repository<UserRoles>,
     private readonly jwt: JwtService,
     private readonly http: HttpService,
   ) {}
@@ -360,8 +364,9 @@ export class AuthService implements OnModuleInit {
     const avatarUrl = discordUser.avatar
       ? `https://cdn.discordapp.com/avatars/${discordId}/${discordUser.avatar}.webp`
       : null;
-    let player = await this.playersRepo.findOne({ where: { discordId } });
-    if (!player) {
+    const existing = await this.playersRepo.findOne({ where: { discordId } });
+    let player: Player;
+    if (!existing) {
       player = this.playersRepo.create({
         discordId,
         discordName,
@@ -372,11 +377,21 @@ export class AuthService implements OnModuleInit {
         rating: 0,
       } as DeepPartial<Player>);
     } else {
-      player.discordName = discordName;
-      player.discordUsername = discordUsername;
-      player.avatarUrl = avatarUrl;
+      existing.discordName = discordName;
+      existing.discordUsername = discordUsername;
+      existing.avatarUrl = avatarUrl;
+      player = existing;
     }
-    return this.playersRepo.save(player);
+    const saved = await this.playersRepo.save(player);
+    if (!existing) {
+      const role = this.rolesRepo.create({
+        name: Role.GUEST,
+        isAdminRole: false,
+      } as DeepPartial<UserRoles>);
+      role.player = saved;
+      await this.rolesRepo.save(role);
+    }
+    return saved;
   }
 
   private handleDiscordAxiosError(e: unknown, step: string): never {
