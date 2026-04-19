@@ -1,98 +1,89 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# dota-core-be
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS backend for the Dota platform. PostgreSQL via TypeORM, JWT auth, Discord OAuth, Steam OpenID.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
-
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
+## Setup
 
 ```bash
-$ npm install
+npm install
+cp .env.example .env        # fill in secrets
+cp .env.example .env.dev    # local overrides (DB, redirect URIs, etc.)
 ```
 
-## Compile and run the project
+`.env.dev` values override `.env` at startup (non-empty values only). Keep secrets in `.env`, local config in `.env.dev`.
+
+## Local development
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run db:up       # start Postgres in Docker (data persists in a named volume)
+npm run start:dev   # start NestJS in watch mode
 ```
 
-## Run tests
+> **Data loss warning:** `npm run db:down` preserves data. `npm run db:down -- -v` deletes the volume and all data.
+
+Swagger UI is available at `http://localhost:3000/api`.
+
+## Database migrations
+
+`synchronize: true` is active in development — schema changes are applied automatically on startup. In production `synchronize` is off and migrations run automatically on deploy (`migrationsRun: true`).
+
+### Typical workflow
+
+**1. Change an entity** (add a column, change a type, etc.)
+
+**2. Generate a migration** from the diff between entities and the current DB schema:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run migration:generate -- src/migrations/DescribeWhatChanged
 ```
 
-## Deployment
+This creates a timestamped file like `src/migrations/1234567890123-DescribeWhatChanged.ts` with `up()` and `down()` methods. Review it before running.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+**3. Apply the migration:**
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm run migration:run
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+**4. Undo the last migration if something went wrong:**
 
-## Resources
+```bash
+npm run migration:revert
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+### Creating a blank migration (for manual SQL / seed data)
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```bash
+npm run migration:create -- src/migrations/SeedDefaultRoles
+```
 
-## Support
+### Migration scripts reference
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+| Command | What it does |
+|---|---|
+| `migration:generate -- src/migrations/<Name>` | Diff entities vs DB, generate migration file |
+| `migration:run` | Apply all pending migrations |
+| `migration:revert` | Roll back the last applied migration |
+| `migration:create -- src/migrations/<Name>` | Create an empty migration file |
 
-## Stay in touch
+### Production
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Migrations in `dist/migrations/*.js` run automatically on app startup (`migrationsRun: true`). Make sure you build before deploying:
 
-## License
+```bash
+npm run build
+```
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## Auth
+
+| Flow | Endpoints |
+|---|---|
+| Discord login | `GET /auth/discord/url` → redirect → `POST /auth/discord/token` |
+| Steam linking | `GET /auth/steam/link` (JWT required) → redirect → auto callback |
+| Steam unlink | `DELETE /auth/steam/link` (JWT required) |
+| Steam verify | `POST /auth/steam/verify` (JWT required, needs `STEAM_API_KEY`) |
+| Current player | `GET /auth/me` (JWT required) |
+
+## Environment variables
+
+See `.env.example` for all variables and descriptions.

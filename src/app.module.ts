@@ -19,7 +19,10 @@ import { AuthModule } from './auth/auth.module';
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
       autoLoadEntities: true,
-      synchronize: true,
+      // synchronize applies schema changes automatically — safe for dev, never use in production
+      synchronize: process.env.NODE_ENV !== 'production',
+      migrations: ['dist/migrations/*.js'],
+      migrationsRun: process.env.NODE_ENV === 'production',
     }),
     PlayersModule,
     UserRolesModule,
