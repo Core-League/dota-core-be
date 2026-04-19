@@ -1,11 +1,21 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentPlayerDto } from './dto/current-player.dto';
 import { DiscordExchangeDto } from './dto/discord-exchange.dto';
@@ -17,6 +27,8 @@ type AuthedRequest = Request & { user: { playerId: string } };
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  // ── Discord ──────────────────────────────────────────────────────────────
 
   @Get('discord/url')
   @ApiOperation({
@@ -37,6 +49,67 @@ export class AuthController {
   exchangeDiscordToken(@Body() body: DiscordExchangeDto) {
     return this.authService.exchangeDiscordCode(body);
   }
+
+  // ── Steam OpenID ─────────────────────────────────────────────────────────
+
+  @Get('steam/link')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get Steam OpenID link URL',
+    description:
+      'Returns a URL to redirect the authenticated user to for Steam account linking. No Valve partnership required — uses public Steam OpenID. After the user approves, Steam GET-redirects to STEAM_CALLBACK_URI where the account is linked server-side.',
+  })
+  getSteamLinkUrl(@Req() req: AuthedRequest): { url: string } {
+    return this.authService.buildSteamLinkUrl(req.user.playerId);
+  }
+
+  @Delete('steam/link')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Unlink Steam account',
+    description: 'Clears the steamId on the current player.',
+  })
+  unlinkSteam(@Req() req: AuthedRequest): Promise<void> {
+    return this.authService.unlinkSteam(req.user.playerId);
+  }
+
+  @Post('steam/verify')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Verify linked Steam account',
+    description:
+      'Calls the Steam API to confirm the linked account still exists. Clears steamId automatically if the account is gone. Requires STEAM_API_KEY env var.',
+  })
+  verifySteamAccount(@Req() req: AuthedRequest): Promise<{ valid: boolean }> {
+    return this.authService.verifySteamAccount(req.user.playerId);
+  }
+
+  @Get('steam/callback')
+  @ApiOperation({
+    summary: 'Steam OpenID callback (server-side)',
+    description:
+      'Validates the Steam OpenID response, links the SteamID to the player, then redirects to STEAM_FRONTEND_REDIRECT.',
+  })
+  async steamCallback(
+    @Query() query: Record<string, string>,
+    @Res() res: Response,
+  ) {
+    const frontendRedirect = process.env.STEAM_FRONTEND_REDIRECT ?? '/';
+    try {
+      await this.authService.handleSteamCallback(query);
+      return res.redirect(`${frontendRedirect}?steam_linked=true`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Steam link failed';
+      return res.redirect(
+        `${frontendRedirect}?steam_error=${encodeURIComponent(msg)}`,
+      );
+    }
+  }
+
+  // ── Shared ───────────────────────────────────────────────────────────────
 
   @Get('me')
   @UseGuards(JwtAuthGuard)

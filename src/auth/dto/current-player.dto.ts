@@ -18,8 +18,8 @@ export class CurrentPlayerDto {
   @ApiPropertyOptional({ nullable: true })
   steamId: string | null;
 
-  @ApiProperty()
-  discordId: string;
+  @ApiPropertyOptional({ nullable: true })
+  discordId: string | null;
 
   @ApiPropertyOptional({ nullable: true })
   telegramId: string | null;
@@ -27,11 +27,11 @@ export class CurrentPlayerDto {
   @ApiPropertyOptional({ nullable: true })
   avatarUrl: string | null;
 
-  @ApiProperty()
-  discordName: string;
+  @ApiPropertyOptional({ nullable: true })
+  discordName: string | null;
 
-  @ApiProperty()
-  discordUsername: string;
+  @ApiPropertyOptional({ nullable: true })
+  discordUsername: string | null;
 
   @ApiProperty()
   rating: number;

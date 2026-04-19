@@ -6,12 +6,12 @@ export class Player {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /** Linked later; null for Discord-only accounts until Steam is connected. */
   @Column({ type: 'varchar', unique: true, nullable: true })
   steamId: string | null;
 
-  @Column({ type: 'varchar', unique: true })
-  discordId: string;
+  /** null for Steam-only accounts until Discord is connected */
+  @Column({ type: 'varchar', unique: true, nullable: true })
+  discordId: string | null;
 
   /** Linked later; null for Discord-only accounts until Telegram is connected. */
   @Column({ type: 'varchar', unique: true, nullable: true })
@@ -20,11 +20,11 @@ export class Player {
   @Column({ type: 'varchar', nullable: true })
   avatarUrl: string | null;
 
-  @Column({ type: 'varchar' })
-  discordName: string;
+  @Column({ type: 'varchar', nullable: true })
+  discordName: string | null;
 
-  @Column({ type: 'varchar' })
-  discordUsername: string;
+  @Column({ type: 'varchar', nullable: true })
+  discordUsername: string | null;
 
   @Column({ type: 'real', default: 0 })
   rating: number;

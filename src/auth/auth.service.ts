@@ -1,6 +1,8 @@
 import { HttpService } from '@nestjs/axios';
 import {
+  ConflictException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   OnModuleInit,
@@ -16,6 +18,11 @@ import { CurrentPlayerDto } from './dto/current-player.dto';
 import { DiscordExchangeDto } from './dto/discord-exchange.dto';
 
 const OAUTH_STATE_TYP = 'oauth-state';
+const STEAM_LINK_TYP = 'steam-link';
+
+type SteamPlayerSummariesResponse = {
+  response: { players: { steamid: string }[] };
+};
 
 type DiscordTokenResponse = {
   access_token: string;
@@ -44,26 +51,35 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    const required = [
+    const discordRequired = [
       'DISCORD_CLIENT_ID',
       'DISCORD_CLIENT_SECRET',
       'DISCORD_REDIRECT_URI',
-      'JWT_SECRET',
     ] as const;
-    for (const key of required) {
+    for (const key of discordRequired) {
       if (!process.env[key]?.trim()) {
         this.logger.warn(
           `Missing env ${key}: Discord auth will fail until set`,
         );
       }
     }
-    const uri = process.env.DISCORD_REDIRECT_URI?.trim() ?? '';
-    if (uri && !/^https?:\/\//i.test(uri)) {
+    const discordUri = process.env.DISCORD_REDIRECT_URI?.trim() ?? '';
+    if (discordUri && !/^https?:\/\//i.test(discordUri)) {
       this.logger.warn(
         'DISCORD_REDIRECT_URI must include http:// or https:// and match the Discord Developer Portal exactly',
       );
     }
+    if (!process.env['STEAM_CALLBACK_URI']?.trim()) {
+      this.logger.warn(
+        'Missing env STEAM_CALLBACK_URI: Steam linking will fail until set',
+      );
+    }
+    if (!process.env['JWT_SECRET']?.trim()) {
+      this.logger.warn('Missing env JWT_SECRET: all auth will fail until set');
+    }
   }
+
+  // ── Discord ──────────────────────────────────────────────────────────────
 
   buildDiscordAuthorizeUrl(): { url: string } {
     const clientId = process.env.DISCORD_CLIENT_ID?.trim();
@@ -136,24 +152,147 @@ export class AuthService implements OnModuleInit {
       this.handleDiscordAxiosError(e, 'user profile');
     }
     const player = await this.upsertPlayerFromDiscord(discordUser);
-    const ttlSec = process.env.JWT_EXPIRES_SEC
-      ? Number(process.env.JWT_EXPIRES_SEC)
-      : 60 * 60 * 24 * 7;
-    const access_token = this.jwt.sign(
-      { sub: player.id },
-      { expiresIn: ttlSec },
+    return this.issueJwt(player.id);
+  }
+
+  // ── Steam OpenID ─────────────────────────────────────────────────────────
+
+  buildSteamLinkUrl(playerId: string): { url: string } {
+    const callbackUri = process.env.STEAM_CALLBACK_URI?.trim();
+    if (!callbackUri) {
+      throw new InternalServerErrorException('Steam OpenID is not configured');
+    }
+    const state = this.jwt.sign(
+      { typ: STEAM_LINK_TYP, sub: playerId },
+      { expiresIn: 600 },
     );
-    const decoded = this.jwt.decode<{ exp: number }>(access_token);
-    const expires_in =
-      decoded?.exp !== undefined
-        ? Math.max(0, decoded.exp - Math.floor(Date.now() / 1000))
-        : 0;
+    const realm = new URL(callbackUri).origin;
+    const returnTo = `${callbackUri}?state=${encodeURIComponent(state)}`;
+    const params = new URLSearchParams({
+      'openid.ns': 'http://specs.openid.net/auth/2.0',
+      'openid.mode': 'checkid_setup',
+      'openid.return_to': returnTo,
+      'openid.realm': realm,
+      'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select',
+      'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
+    });
     return {
-      access_token,
-      token_type: 'Bearer',
-      expires_in,
+      url: `https://steamcommunity.com/openid/login?${params.toString()}`,
     };
   }
+
+  async handleSteamCallback(query: Record<string, string>): Promise<void> {
+    // Verify state JWT to identify which player is linking
+    const { state, ...openidParams } = query;
+    let playerId: string;
+    try {
+      const payload = this.jwt.verify<{ typ: string; sub: string }>(
+        state ?? '',
+      );
+      if (payload.typ !== STEAM_LINK_TYP) throw new Error();
+      playerId = payload.sub;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired Steam link state');
+    }
+
+    if (openidParams['openid.mode'] !== 'id_res') {
+      throw new UnauthorizedException(
+        'Steam authentication was denied or cancelled',
+      );
+    }
+
+    // Confirm the signature with Steam (check_authentication)
+    const checkParams = new URLSearchParams(
+      openidParams as Record<string, string>,
+    );
+    checkParams.set('openid.mode', 'check_authentication');
+    let responseText: string;
+    try {
+      const res = await firstValueFrom(
+        this.http.post<string>(
+          'https://steamcommunity.com/openid/login',
+          checkParams.toString(),
+          {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            responseType: 'text',
+          },
+        ),
+      );
+      responseText = String(res.data);
+    } catch {
+      throw new UnauthorizedException('Steam OpenID validation request failed');
+    }
+
+    if (!responseText.includes('is_valid:true')) {
+      throw new UnauthorizedException('Steam OpenID signature is invalid');
+    }
+
+    // Extract SteamID from the claimed_id URL (e.g. https://steamcommunity.com/openid/id/76561198xxxxxxxx)
+    const claimedId = openidParams['openid.claimed_id'] ?? '';
+    const match = claimedId.match(/\/openid\/id\/(\d+)$/);
+    if (!match) {
+      throw new UnauthorizedException(
+        'Could not extract SteamID from claimed_id',
+      );
+    }
+    const steamId = match[1];
+
+    // Reject if steamId is already linked to a different player
+    const conflict = await this.playersRepo.findOne({ where: { steamId } });
+    if (conflict && conflict.id !== playerId) {
+      throw new ConflictException(
+        'This Steam account is already linked to another player',
+      );
+    }
+
+    const player = await this.playersRepo.findOne({ where: { id: playerId } });
+    if (!player) throw new NotFoundException('Player not found');
+    player.steamId = steamId;
+    await this.playersRepo.save(player);
+  }
+
+  async unlinkSteam(playerId: string): Promise<void> {
+    const player = await this.playersRepo.findOne({ where: { id: playerId } });
+    if (!player) throw new NotFoundException('Player not found');
+    player.steamId = null;
+    await this.playersRepo.save(player);
+  }
+
+  /** Calls Steam API to confirm the linked account still exists.
+   *  Clears steamId if the account is gone or the API key is not configured. */
+  async verifySteamAccount(playerId: string): Promise<{ valid: boolean }> {
+    const player = await this.playersRepo.findOne({ where: { id: playerId } });
+    if (!player) throw new NotFoundException('Player not found');
+    if (!player.steamId) return { valid: false };
+
+    const apiKey = process.env.STEAM_API_KEY?.trim();
+    if (!apiKey) {
+      throw new InternalServerErrorException(
+        'STEAM_API_KEY is not configured — cannot verify Steam account',
+      );
+    }
+
+    let found = false;
+    try {
+      const res = await firstValueFrom(
+        this.http.get<SteamPlayerSummariesResponse>(
+          'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/',
+          { params: { key: apiKey, steamids: player.steamId } },
+        ),
+      );
+      found = (res.data?.response?.players?.length ?? 0) > 0;
+    } catch {
+      throw new InternalServerErrorException('Steam API request failed');
+    }
+
+    if (!found) {
+      player.steamId = null;
+      await this.playersRepo.save(player);
+    }
+    return { valid: found };
+  }
+
+  // ── Shared ───────────────────────────────────────────────────────────────
 
   async getCurrentPlayer(playerId: string): Promise<CurrentPlayerDto> {
     const player = await this.playersRepo.findOne({
@@ -165,12 +304,12 @@ export class AuthService implements OnModuleInit {
     }
     return {
       id: player.id,
-      steamId: player.steamId,
-      discordId: player.discordId,
-      telegramId: player.telegramId,
-      avatarUrl: player.avatarUrl,
-      discordName: player.discordName,
-      discordUsername: player.discordUsername,
+      steamId: player.steamId ?? null,
+      discordId: player.discordId ?? null,
+      telegramId: player.telegramId ?? null,
+      avatarUrl: player.avatarUrl ?? null,
+      discordName: player.discordName ?? null,
+      discordUsername: player.discordUsername ?? null,
       rating: player.rating,
       verifiedAt: player.verifiedAt ?? null,
       roles: (player.roles ?? []).map((r) => ({
@@ -179,6 +318,26 @@ export class AuthService implements OnModuleInit {
         isAdminRole: r.isAdminRole,
       })),
     };
+  }
+
+  private issueJwt(playerId: string): {
+    access_token: string;
+    token_type: string;
+    expires_in: number;
+  } {
+    const ttlSec = process.env.JWT_EXPIRES_SEC
+      ? Number(process.env.JWT_EXPIRES_SEC)
+      : 60 * 60 * 24 * 7;
+    const access_token = this.jwt.sign(
+      { sub: playerId },
+      { expiresIn: ttlSec },
+    );
+    const decoded = this.jwt.decode<{ exp: number }>(access_token);
+    const expires_in =
+      decoded?.exp !== undefined
+        ? Math.max(0, decoded.exp - Math.floor(Date.now() / 1000))
+        : 0;
+    return { access_token, token_type: 'Bearer', expires_in };
   }
 
   private verifyOAuthState(state: string): void {
