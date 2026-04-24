@@ -55,20 +55,27 @@ export class AuthService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    const discordRequired = [
-      'DISCORD_CLIENT_ID',
-      'DISCORD_CLIENT_SECRET',
-      'DISCORD_REDIRECT_URI',
-    ] as const;
-    for (const key of discordRequired) {
+    for (const key of ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'] as const) {
       if (!process.env[key]?.trim()) {
         this.logger.warn(
           `Missing env ${key}: Discord auth will fail until set`,
         );
       }
     }
-    const discordUri = process.env.DISCORD_REDIRECT_URI?.trim() ?? '';
-    if (discordUri && !/^https?:\/\//i.test(discordUri)) {
+    if (
+      !process.env['DISCORD_REDIRECT_URI']?.trim() &&
+      process.env['DISCORD_FRONTEND_REDIRECT']?.trim()
+    ) {
+      this.logger.warn(
+        'DISCORD_FRONTEND_REDIRECT is ignored for OAuth; set DISCORD_REDIRECT_URI to the same redirect URL listed in the Discord app (or remove DISCORD_FRONTEND_REDIRECT).',
+      );
+    }
+    const discordUri = this.resolveDiscordRedirectUri();
+    if (!discordUri) {
+      this.logger.warn(
+        'Missing DISCORD_REDIRECT_URI: Discord auth will fail until set',
+      );
+    } else if (!/^https?:\/\//i.test(discordUri)) {
       this.logger.warn(
         'DISCORD_REDIRECT_URI must include http:// or https:// and match the Discord Developer Portal exactly',
       );
@@ -85,9 +92,14 @@ export class AuthService implements OnModuleInit {
 
   // ── Discord ──────────────────────────────────────────────────────────────
 
+  /** Value must be identical to a redirect in the Discord application OAuth2 settings. */
+  private resolveDiscordRedirectUri(): string {
+    return process.env['DISCORD_REDIRECT_URI']?.trim() ?? '';
+  }
+
   buildDiscordAuthorizeUrl(): { url: string } {
     const clientId = process.env.DISCORD_CLIENT_ID?.trim();
-    const redirectUri = process.env.DISCORD_REDIRECT_URI?.trim();
+    const redirectUri = this.resolveDiscordRedirectUri();
     const scopes = (process.env.DISCORD_SCOPES ?? 'identify').trim();
     if (!clientId || !redirectUri) {
       throw new UnauthorizedException('Discord OAuth is not configured');
@@ -111,7 +123,7 @@ export class AuthService implements OnModuleInit {
     dto: DiscordExchangeDto,
   ): Promise<{ access_token: string; token_type: string; expires_in: number }> {
     this.verifyOAuthState(dto.state);
-    const redirectUri = process.env.DISCORD_REDIRECT_URI?.trim();
+    const redirectUri = this.resolveDiscordRedirectUri();
     const clientId = process.env.DISCORD_CLIENT_ID?.trim();
     const clientSecret = process.env.DISCORD_CLIENT_SECRET?.trim();
     if (!redirectUri || !clientId || !clientSecret) {
