@@ -94,7 +94,7 @@ export class AuthController {
       'Validates the Steam OpenID response, links the SteamID to the player, then redirects to STEAM_FRONTEND_REDIRECT.',
   })
   async steamCallback(
-    @Query() query: Record<string, string>,
+    @Query() query: Record<string, string | string[] | undefined>,
     @Res() res: Response,
   ) {
     const frontendRedirect = process.env.STEAM_FRONTEND_REDIRECT ?? '/';

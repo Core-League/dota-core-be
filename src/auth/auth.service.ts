@@ -178,12 +178,25 @@ export class AuthService implements OnModuleInit {
     if (!callbackUri) {
       throw new InternalServerErrorException('Steam OpenID is not configured');
     }
+    let callbackUrl: URL;
+    try {
+      callbackUrl = new URL(callbackUri);
+    } catch {
+      throw new InternalServerErrorException(
+        'STEAM_CALLBACK_URI is not a valid URL',
+      );
+    }
+    if (callbackUrl.pathname === '/' || callbackUrl.pathname === '') {
+      throw new InternalServerErrorException(
+        'STEAM_CALLBACK_URI must be the public URL of this API route, e.g. https://<api-host>/auth/steam/callback (not the frontend or site root)',
+      );
+    }
     const state = this.jwt.sign(
       { typ: STEAM_LINK_TYP, sub: playerId },
       { expiresIn: 600 },
     );
-    const realm = new URL(callbackUri).origin;
-    const returnTo = `${callbackUri}?state=${encodeURIComponent(state)}`;
+    const realm = callbackUrl.origin;
+    const returnTo = `${callbackUri}${callbackUri.includes('?') ? '&' : '?'}state=${encodeURIComponent(state)}`;
     const params = new URLSearchParams({
       'openid.ns': 'http://specs.openid.net/auth/2.0',
       'openid.mode': 'checkid_setup',
@@ -197,9 +210,27 @@ export class AuthService implements OnModuleInit {
     };
   }
 
-  async handleSteamCallback(query: Record<string, string>): Promise<void> {
-    // Verify state JWT to identify which player is linking
-    const { state, ...openidParams } = query;
+  async handleSteamCallback(
+    query: Record<string, string | string[] | undefined>,
+  ): Promise<void> {
+    const stateRaw = query['state'];
+    const state =
+      typeof stateRaw === 'string'
+        ? stateRaw
+        : Array.isArray(stateRaw)
+          ? stateRaw[0]
+          : undefined;
+    const openidParams: Record<string, string> = {};
+    for (const [key, value] of Object.entries(query)) {
+      if (key === 'state' || !key.startsWith('openid.')) {
+        continue;
+      }
+      const s = Array.isArray(value) ? value[0] : value;
+      if (typeof s === 'string' && s.length > 0) {
+        openidParams[key] = s;
+      }
+    }
+
     let playerId: string;
     try {
       const payload = this.jwt.verify<{ typ: string; sub: string }>(
@@ -217,10 +248,8 @@ export class AuthService implements OnModuleInit {
       );
     }
 
-    // Confirm the signature with Steam (check_authentication)
-    const checkParams = new URLSearchParams(
-      openidParams as Record<string, string>,
-    );
+    // Confirm the signature with Steam (check_authentication) — only openid.* fields
+    const checkParams = new URLSearchParams(openidParams);
     checkParams.set('openid.mode', 'check_authentication');
     let responseText: string;
     try {
