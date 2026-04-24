@@ -212,22 +212,29 @@ export class AuthService implements OnModuleInit {
 
   async handleSteamCallback(
     query: Record<string, string | string[] | undefined>,
+    pathAndQuery: string,
   ): Promise<void> {
-    const stateRaw = query['state'];
-    const state =
-      typeof stateRaw === 'string'
-        ? stateRaw
-        : Array.isArray(stateRaw)
-          ? stateRaw[0]
-          : undefined;
+    const qm = pathAndQuery.indexOf('?');
+    const search = qm === -1 ? '' : pathAndQuery.slice(qm + 1);
+
+    const fromUrl = new URLSearchParams(search);
+    const state = fromUrl.get('state') ?? this.firstStringQuery(query, 'state');
+
     const openidParams: Record<string, string> = {};
-    for (const [key, value] of Object.entries(query)) {
-      if (key === 'state' || !key.startsWith('openid.')) {
-        continue;
+    for (const [k, v] of fromUrl) {
+      if (k.startsWith('openid.')) {
+        openidParams[k] = v;
       }
-      const s = Array.isArray(value) ? value[0] : value;
-      if (typeof s === 'string' && s.length > 0) {
-        openidParams[key] = s;
+    }
+    if (Object.keys(openidParams).length === 0) {
+      for (const key of Object.keys(query)) {
+        if (key === 'state' || !key.startsWith('openid.')) {
+          continue;
+        }
+        const s = this.firstStringQuery(query, key);
+        if (s) {
+          openidParams[key] = s;
+        }
       }
     }
 
@@ -248,15 +255,17 @@ export class AuthService implements OnModuleInit {
       );
     }
 
-    // Confirm the signature with Steam (check_authentication) — only openid.* fields
-    const checkParams = new URLSearchParams(openidParams);
-    checkParams.set('openid.mode', 'check_authentication');
+    // check_authentication must use the same field order as Steam's callback URL (per OpenID 2.0);
+    // arbitrary object key order breaks the signature and yields is_valid:false.
+    const checkBody = search.trim()
+      ? this.buildSteamCheckAuthenticationParams(search)
+      : this.buildSteamCheckBodyFromOpenidMap(openidParams);
     let responseText: string;
     try {
       const res = await firstValueFrom(
         this.http.post<string>(
           'https://steamcommunity.com/openid/login',
-          checkParams.toString(),
+          checkBody,
           {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             responseType: 'text',
@@ -264,11 +273,17 @@ export class AuthService implements OnModuleInit {
         ),
       );
       responseText = String(res.data);
-    } catch {
+    } catch (e) {
+      this.logger.warn(
+        `Steam check_authentication HTTP error: ${e instanceof Error ? e.message : String(e)}`,
+      );
       throw new UnauthorizedException('Steam OpenID validation request failed');
     }
 
-    if (!responseText.includes('is_valid:true')) {
+    if (!/is_valid:\s*true\b/.test(responseText)) {
+      this.logger.warn(
+        `Steam is_valid not true, body: ${responseText.replace(/\s+/g, ' ').slice(0, 500)}`,
+      );
       throw new UnauthorizedException('Steam OpenID signature is invalid');
     }
 
@@ -294,6 +309,73 @@ export class AuthService implements OnModuleInit {
     if (!player) throw new NotFoundException('Player not found');
     player.steamId = steamId;
     await this.playersRepo.save(player);
+  }
+
+  private firstStringQuery(
+    query: Record<string, string | string[] | undefined>,
+    key: string,
+  ): string | undefined {
+    const v = query[key];
+    if (typeof v === 'string' && v.length > 0) {
+      return v;
+    }
+    if (Array.isArray(v) && typeof v[0] === 'string' && v[0].length > 0) {
+      return v[0];
+    }
+    return undefined;
+  }
+
+  /**
+   * Rebuild the positive assertion in the same order as the query string, then replace mode
+   * with check_authentication (required for Steam to verify the signature).
+   */
+  private buildSteamCheckAuthenticationParams(search: string): string {
+    const fromQuery = new URLSearchParams(search);
+    const out = new URLSearchParams();
+    for (const [k, v] of fromQuery) {
+      if (k === 'state') {
+        continue;
+      }
+      if (k === 'openid.mode') {
+        out.set('openid.mode', 'check_authentication');
+      } else if (k.startsWith('openid.')) {
+        out.set(k, v);
+      }
+    }
+    return out.toString();
+  }
+
+  /** When the raw search string is unavailable (e.g. odd proxies). */
+  private buildSteamCheckBodyFromOpenidMap(
+    openid: Record<string, string>,
+  ): string {
+    const out = new URLSearchParams();
+    const list = (openid['openid.signed'] ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (openid['openid.ns']) {
+      out.set('openid.ns', openid['openid.ns']);
+    }
+    for (const part of list) {
+      if (part === 'signed' && openid['openid.signed'] !== undefined) {
+        out.set('openid.signed', openid['openid.signed']);
+        continue;
+      }
+      const key = `openid.${part}`;
+      const val = openid[key];
+      if (val !== undefined) {
+        out.set(key, val);
+      }
+    }
+    if (!out.has('openid.signed') && openid['openid.signed'] !== undefined) {
+      out.set('openid.signed', openid['openid.signed']);
+    }
+    if (openid['openid.sig'] !== undefined) {
+      out.set('openid.sig', openid['openid.sig']);
+    }
+    out.set('openid.mode', 'check_authentication');
+    return out.toString();
   }
 
   async unlinkSteam(playerId: string): Promise<void> {

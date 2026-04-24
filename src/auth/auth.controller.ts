@@ -94,12 +94,16 @@ export class AuthController {
       'Validates the Steam OpenID response, links the SteamID to the player, then redirects to STEAM_FRONTEND_REDIRECT.',
   })
   async steamCallback(
+    @Req() req: Request,
     @Query() query: Record<string, string | string[] | undefined>,
     @Res() res: Response,
   ) {
     const frontendRedirect = process.env.STEAM_FRONTEND_REDIRECT ?? '/';
     try {
-      await this.authService.handleSteamCallback(query);
+      await this.authService.handleSteamCallback(
+        query,
+        req.originalUrl ?? req.url,
+      );
       return res.redirect(`${frontendRedirect}?steam_linked=true`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Steam link failed';
