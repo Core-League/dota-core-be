@@ -19,13 +19,13 @@ export class UserRolesRepository {
   }
 
   findAll(): Promise<UserRoles[]> {
-    return this.repo.find({ relations: ['player', 'tournaments'] });
+    return this.repo.find({ select: { id: true, name: true, isAdminRole: true } });
   }
 
   findOneById(id: string): Promise<UserRoles | null> {
     return this.repo.findOne({
       where: { id },
-      relations: ['player', 'tournaments'],
+      select: { id: true, name: true, isAdminRole: true },
     });
   }
 

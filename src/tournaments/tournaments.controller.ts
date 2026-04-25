@@ -7,8 +7,11 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { AdminGuard } from '../auth/guards/admin.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
@@ -19,6 +22,8 @@ export class TournamentsController {
   constructor(private readonly tournamentsService: TournamentsService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   create(@Body() body: CreateTournamentDto) {
     return this.tournamentsService.create(body);
   }
@@ -34,6 +39,8 @@ export class TournamentsController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateTournamentDto,
@@ -42,6 +49,8 @@ export class TournamentsController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.tournamentsService.remove(id);
   }

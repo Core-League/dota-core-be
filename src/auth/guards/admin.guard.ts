@@ -27,7 +27,7 @@ export class AdminGuard implements CanActivate {
     if (!player) return false;
 
     const isAdmin = (player.roles ?? []).some((r) => r.isAdminRole);
-    if (!isAdmin) throw new ForbiddenException('Admin access required');
+    if (!isAdmin) throw new ForbiddenException('Доступ лише для адміністраторів');
     return true;
   }
 }

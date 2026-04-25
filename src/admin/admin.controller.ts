@@ -12,8 +12,8 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import { AdminGuard } from '../auth/guards/admin.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AdminGuard } from './guards/admin.guard';
 import { AdminService, VerifyResult } from './admin.service';
 
 @ApiTags('admin')

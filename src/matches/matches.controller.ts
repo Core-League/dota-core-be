@@ -7,8 +7,11 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { AdminGuard } from '../auth/guards/admin.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { MatchesService } from './matches.service';
 import { CreateMatchDto } from './dto/create-match.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
@@ -19,6 +22,8 @@ export class MatchesController {
   constructor(private readonly matchesService: MatchesService) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   create(@Body() body: CreateMatchDto) {
     return this.matchesService.create(body);
   }
@@ -34,6 +39,8 @@ export class MatchesController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateMatchDto,
@@ -42,6 +49,8 @@ export class MatchesController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.matchesService.remove(id);
   }
