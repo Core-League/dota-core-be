@@ -1,14 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { UserRoles } from './user-roles.entity';
 
 @Injectable()
 export class UserRolesRepository {
-  constructor(
-    @InjectRepository(UserRoles)
-    private readonly repo: Repository<UserRoles>,
-  ) {}
+  private readonly repo: Repository<UserRoles>;
+
+  constructor(@InjectDataSource() dataSource: DataSource) {
+    this.repo = dataSource.getRepository(UserRoles);
+  }
 
   create(payload: Partial<UserRoles>): UserRoles {
     return this.repo.create(payload);

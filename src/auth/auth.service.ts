@@ -9,10 +9,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectRepository } from '@nestjs/typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { AxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
-import { DeepPartial, Repository } from 'typeorm';
+import { DataSource, DeepPartial, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role } from '../user-roles/role.constants';
@@ -45,14 +45,17 @@ type DiscordUserResponse = {
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
 
+  private readonly playersRepo: Repository<Player>;
+  private readonly rolesRepo: Repository<UserRoles>;
+
   constructor(
-    @InjectRepository(Player)
-    private readonly playersRepo: Repository<Player>,
-    @InjectRepository(UserRoles)
-    private readonly rolesRepo: Repository<UserRoles>,
+    @InjectDataSource() dataSource: DataSource,
     private readonly jwt: JwtService,
     private readonly http: HttpService,
-  ) {}
+  ) {
+    this.playersRepo = dataSource.getRepository(Player);
+    this.rolesRepo = dataSource.getRepository(UserRoles);
+  }
 
   onModuleInit(): void {
     for (const key of ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'] as const) {

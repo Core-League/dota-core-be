@@ -4,23 +4,23 @@ import {
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { Player } from '../../players/player.entity';
 
 @Injectable()
 export class AdminGuard implements CanActivate {
-  constructor(
-    @InjectRepository(Player)
-    private readonly playersRepo: Repository<Player>,
-  ) {}
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const req = context.switchToHttp().getRequest<{ user?: { playerId: string } }>();
+    const req = context
+      .switchToHttp()
+      .getRequest<{ user?: { playerId: string } }>();
     const playerId = req.user?.playerId;
     if (!playerId) return false;
 
-    const player = await this.playersRepo.findOne({
+    const playersRepo = this.dataSource.getRepository(Player);
+    const player = await playersRepo.findOne({
       where: { id: playerId },
       relations: ['roles'],
     });

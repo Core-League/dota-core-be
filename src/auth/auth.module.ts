@@ -2,9 +2,6 @@ import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { Player } from '../players/player.entity';
-import { UserRoles } from '../user-roles/user-roles.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -16,7 +13,6 @@ const defaultJwtTtlSec = 60 * 60 * 24 * 7;
 @Module({
   imports: [
     HttpModule.register({ timeout: 15000, maxRedirects: 3 }),
-    TypeOrmModule.forFeature([Player, UserRoles]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,

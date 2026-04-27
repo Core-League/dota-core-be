@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { DeepPartial, Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, DeepPartial, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role } from '../user-roles/role.constants';
@@ -13,12 +13,13 @@ export type VerifyResult = {
 
 @Injectable()
 export class AdminService {
-  constructor(
-    @InjectRepository(Player)
-    private readonly playersRepo: Repository<Player>,
-    @InjectRepository(UserRoles)
-    private readonly rolesRepo: Repository<UserRoles>,
-  ) {}
+  private readonly playersRepo: Repository<Player>;
+  private readonly rolesRepo: Repository<UserRoles>;
+
+  constructor(@InjectDataSource() dataSource: DataSource) {
+    this.playersRepo = dataSource.getRepository(Player);
+    this.rolesRepo = dataSource.getRepository(UserRoles);
+  }
 
   async verifyPlayer(playerId: string): Promise<VerifyResult> {
     const player = await this.findPlayerWithRoles(playerId);

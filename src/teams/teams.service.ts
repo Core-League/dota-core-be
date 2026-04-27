@@ -3,21 +3,12 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { Team } from './team.entity';
-import { Player } from '../players/player.entity';
-import { Tournament } from '../tournaments/tournaments.entity';
 import { TeamsRepository } from './teams.repository';
 
 @Injectable()
 export class TeamsService {
-  constructor(
-    private readonly teamsRepo: TeamsRepository,
-    @InjectRepository(Player) private readonly playersRepo: Repository<Player>,
-    @InjectRepository(Tournament)
-    private readonly tournamentsRepo: Repository<Tournament>,
-  ) {}
+  constructor(private readonly teamsRepo: TeamsRepository) {}
 
   create(payload: Partial<Team>): Promise<Team> {
     const entity = this.teamsRepo.create(payload);

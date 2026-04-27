@@ -1,14 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Team } from './team.entity';
 
 @Injectable()
 export class TeamsRepository {
-  constructor(
-    @InjectRepository(Team)
-    private readonly repo: Repository<Team>,
-  ) {}
+  private readonly repo: Repository<Team>;
+
+  constructor(@InjectDataSource() dataSource: DataSource) {
+    this.repo = dataSource.getRepository(Team);
+  }
 
   create(payload: Partial<Team>): Team {
     return this.repo.create(payload);
