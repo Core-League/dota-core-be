@@ -32,9 +32,9 @@ export class Player {
   @Column({ type: 'real', default: 0 })
   rating: number;
 
-  /** Lane / role (1–5); null when not set. */
-  @Column({ type: 'smallint', nullable: true })
-  position: PlayerPosition | null;
+  /** Lane / roles (1–5); null when unset, empty array when explicitly none. */
+  @Column({ type: 'smallint', array: true, nullable: true })
+  positions: PlayerPosition[] | null;
 
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;

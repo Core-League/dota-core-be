@@ -441,7 +441,7 @@ export class AuthService implements OnModuleInit {
       discordName: player.discordName ?? null,
       discordUsername: player.discordUsername ?? null,
       rating: player.rating,
-      position: player.position ?? null,
+      positions: player.positions ?? null,
       verifiedAt: player.verifiedAt ?? null,
       roles: (player.roles ?? []).map((r) => ({
         id: r.id,

@@ -38,11 +38,13 @@ export class CurrentPlayerDto {
   rating: number;
 
   @ApiPropertyOptional({
-    description: 'Dota map / role position (1–5)',
+    description: 'Dota map / roles (1–5)',
+    type: [Number],
     enum: [1, 2, 3, 4, 5],
+    isArray: true,
     nullable: true,
   })
-  position: PlayerPosition | null;
+  positions: PlayerPosition[] | null;
 
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   verifiedAt: Date | null;

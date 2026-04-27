@@ -30,9 +30,11 @@ export class CreatePlayerDto {
   rating?: number;
 
   @ApiPropertyOptional({
-    description: 'Dota map / role position (1–5); omit or null when unset',
+    description: 'Dota map / roles (1–5); omit or null when unset',
+    type: [Number],
     enum: [1, 2, 3, 4, 5],
+    isArray: true,
     nullable: true,
   })
-  position?: PlayerPosition | null;
+  positions?: PlayerPosition[] | null;
 }
