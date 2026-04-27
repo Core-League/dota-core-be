@@ -41,6 +41,13 @@ export class CurrentPlayerDto {
   @ApiPropertyOptional({ nullable: true })
   discordUsername: string | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Серверний nickname на DISCORD_SYNC_GUILD_ID; null якщо на сервері не заданий (показується global name / username)',
+  })
+  discordServerNickname: string | null;
+
   @ApiProperty()
   rating: number;
 

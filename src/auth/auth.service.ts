@@ -43,6 +43,16 @@ type DiscordUserResponse = {
   avatar: string | null;
 };
 
+/** GET /guilds/{guild}/members/{user} — fields we use for /me sync */
+type DiscordGuildMemberRest = {
+  nick: string | null;
+  user: {
+    id: string;
+    username: string;
+    global_name: string | null;
+  };
+};
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
@@ -434,6 +444,28 @@ export class AuthService implements OnModuleInit {
     if (!player) {
       throw new NotFoundException('Player not found');
     }
+
+    let discordServerNickname: string | null = null;
+    if (player.discordId) {
+      const fromGuild = await this.fetchGuildMemberForSync(player.discordId);
+      if (fromGuild) {
+        discordServerNickname = fromGuild.serverNickname;
+        const nameChanged =
+          fromGuild.displayNameForGuild !== player.discordName;
+        const userChanged =
+          fromGuild.username !== (player.discordUsername ?? null);
+        if (nameChanged) {
+          player.discordName = fromGuild.displayNameForGuild;
+        }
+        if (userChanged) {
+          player.discordUsername = fromGuild.username;
+        }
+        if (nameChanged || userChanged) {
+          await this.playersRepo.save(player);
+        }
+      }
+    }
+
     return {
       id: player.id,
       steamId: player.steamId ?? null,
@@ -442,6 +474,7 @@ export class AuthService implements OnModuleInit {
       avatarUrl: player.avatarUrl ?? null,
       discordName: player.discordName ?? null,
       discordUsername: player.discordUsername ?? null,
+      discordServerNickname,
       rating: player.rating,
       rank: toPlayerRankDto(player.rating),
       positions: player.positions ?? null,
@@ -453,6 +486,54 @@ export class AuthService implements OnModuleInit {
         color: getRoleColorByName(r.name) ?? '#64748B',
       })),
     };
+  }
+
+  /**
+   * Server display name: nick (guild) → global_name → username (same idea as client).
+   * Returns null if sync disabled, user not in guild, or API error.
+   */
+  private async fetchGuildMemberForSync(discordUserId: string): Promise<{
+    displayNameForGuild: string;
+    serverNickname: string | null;
+    username: string;
+  } | null> {
+    const token = process.env.DISCORD_BOT_TOKEN?.trim();
+    const guildId = process.env.DISCORD_SYNC_GUILD_ID?.trim();
+    if (!token || !guildId) {
+      return null;
+    }
+
+    const url = `https://discord.com/api/v10/guilds/${guildId}/members/${discordUserId}`;
+
+    try {
+      const { data } = await firstValueFrom(
+        this.http.get<DiscordGuildMemberRest>(url, {
+          headers: { Authorization: `Bot ${token}` },
+        }),
+      );
+      const nick = data.nick?.trim() || null;
+      const username = data.user.username;
+      const displayNameForGuild = (
+        nick ||
+        data.user.global_name?.trim() ||
+        username
+      ).trim();
+      return {
+        displayNameForGuild,
+        serverNickname: nick,
+        username,
+      };
+    } catch (e) {
+      const err = e as AxiosError;
+      if (err.response?.status === 404) {
+        this.logger.debug(
+          `Discord user ${discordUserId} not a member of guild ${guildId}`,
+        );
+        return null;
+      }
+      this.logger.warn('Discord GET guild member failed', err.message);
+      return null;
+    }
   }
 
   private issueJwt(playerId: string): {
