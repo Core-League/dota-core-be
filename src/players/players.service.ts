@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Player } from './player.entity';
 import { PlayersRepository } from './players.repository';
 
@@ -25,6 +29,14 @@ export class PlayersService {
 
   async update(id: string, payload: Partial<Player>): Promise<Player> {
     const player = await this.findOne(id);
+    if (
+      player.verifiedAt != null &&
+      Object.prototype.hasOwnProperty.call(payload, 'rating')
+    ) {
+      throw new ForbiddenException(
+        'Verified players cannot change their rating',
+      );
+    }
     Object.assign(player, payload);
     return this.playersRepo.save(player);
   }

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import type { PlayerPosition } from '../../players/player.entity';
 
 export class CurrentPlayerRoleDto {
   @ApiProperty()
@@ -35,6 +36,13 @@ export class CurrentPlayerDto {
 
   @ApiProperty()
   rating: number;
+
+  @ApiPropertyOptional({
+    description: 'Dota map / role position (1–5)',
+    enum: [1, 2, 3, 4, 5],
+    nullable: true,
+  })
+  position: PlayerPosition | null;
 
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   verifiedAt: Date | null;

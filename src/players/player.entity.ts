@@ -1,6 +1,9 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from 'typeorm';
 import { UserRoles } from '../user-roles/user-roles.entity';
 
+/** Dota map / role position (1–5). */
+export type PlayerPosition = 1 | 2 | 3 | 4 | 5;
+
 @Entity()
 export class Player {
   @PrimaryGeneratedColumn('uuid')
@@ -28,6 +31,10 @@ export class Player {
 
   @Column({ type: 'real', default: 0 })
   rating: number;
+
+  /** Lane / role (1–5); null when not set. */
+  @Column({ type: 'smallint', nullable: true })
+  position: PlayerPosition | null;
 
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;

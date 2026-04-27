@@ -10,6 +10,10 @@ import { HealthController } from './health.controller';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
 
+/** Staging host is the live app today; treat like production for DB safety and migrations. */
+const typeOrmProdLike =
+  process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
+
 @Module({
   imports: [
     TypeOrmModule.forRoot({
@@ -20,10 +24,9 @@ import { AdminModule } from './admin/admin.module';
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
       autoLoadEntities: true,
-      // synchronize applies schema changes automatically — safe for dev, never use in production
-      synchronize: process.env.NODE_ENV !== 'production',
+      synchronize: !typeOrmProdLike,
       migrations: ['dist/migrations/*.js'],
-      migrationsRun: process.env.NODE_ENV === 'production',
+      migrationsRun: typeOrmProdLike,
     }),
     PlayersModule,
     UserRolesModule,

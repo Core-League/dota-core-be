@@ -1,8 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import type { PlayerPosition } from '../player.entity';
 
 export class CreatePlayerDto {
   @ApiPropertyOptional({
-    description: 'Optional until linked; omit for Discord-only placeholder flows',
+    description:
+      'Optional until linked; omit for Discord-only placeholder flows',
   })
   steamId?: string;
 
@@ -10,7 +12,8 @@ export class CreatePlayerDto {
   discordId: string;
 
   @ApiPropertyOptional({
-    description: 'Optional until linked; omit for Discord-only placeholder flows',
+    description:
+      'Optional until linked; omit for Discord-only placeholder flows',
   })
   telegramId?: string;
 
@@ -25,4 +28,11 @@ export class CreatePlayerDto {
 
   @ApiPropertyOptional({ default: 0 })
   rating?: number;
+
+  @ApiPropertyOptional({
+    description: 'Dota map / role position (1–5); omit or null when unset',
+    enum: [1, 2, 3, 4, 5],
+    nullable: true,
+  })
+  position?: PlayerPosition | null;
 }

@@ -7,8 +7,11 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OwnPlayerGuard } from '../auth/guards/own-player.guard';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
@@ -34,6 +37,8 @@ export class PlayersController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, OwnPlayerGuard)
+  @ApiBearerAuth()
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdatePlayerDto,
@@ -42,6 +47,8 @@ export class PlayersController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, OwnPlayerGuard)
+  @ApiBearerAuth()
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.playersService.remove(id);
   }
