@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { UserRoles } from './user-roles.entity';
 
 @Injectable()
@@ -19,14 +19,18 @@ export class UserRolesRepository {
     return this.repo.save(role);
   }
 
-  findAll(): Promise<UserRoles[]> {
-    return this.repo.find({ relations: ['player', 'tournaments'] });
+  /** System role catalog only (`playerId` null). */
+  findAllCatalog(): Promise<UserRoles[]> {
+    return this.repo.find({
+      where: { player: IsNull() },
+      relations: ['player'],
+    });
   }
 
   findOneById(id: string): Promise<UserRoles | null> {
     return this.repo.findOne({
       where: { id },
-      relations: ['player', 'tournaments'],
+      relations: ['player'],
     });
   }
 

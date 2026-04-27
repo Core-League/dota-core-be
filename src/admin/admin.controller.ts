@@ -27,7 +27,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Verify a player',
     description:
-      "Sets the player's role to 'user' and stamps verifiedAt. Requires admin role.",
+      "Sets the player's role to «Гравець» and stamps verifiedAt. Requires admin role.",
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   verifyPlayer(
@@ -40,7 +40,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Unverify a player',
     description:
-      "Reverts the player's role to 'guest' and clears verifiedAt. Requires admin role.",
+      "Reverts the player's role to «Гість» and clears verifiedAt. Requires admin role.",
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   unverifyPlayer(

@@ -31,7 +31,7 @@ export class AdminService {
       } as DeepPartial<UserRoles>);
       role.player = player;
     }
-    role.name = Role.USER;
+    role.name = Role.PLAYER;
     await this.rolesRepo.save(role);
 
     player.verifiedAt = new Date();

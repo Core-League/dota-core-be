@@ -20,11 +20,13 @@ export class UserRoles {
   @Column()
   isAdminRole: boolean;
 
+  /** Null for system role catalog rows (Гість / Гравець / Капітан / Адмін). */
   @ManyToOne(() => Player, (player) => player.roles, {
     onDelete: 'CASCADE',
+    nullable: true,
   })
   @JoinColumn({ name: 'playerId' })
-  player: Player;
+  player: Player | null;
 
   @ManyToMany(() => Tournament, (tournament) => tournament.eligibleRoles)
   tournaments: Tournament[];
