@@ -15,14 +15,14 @@ import { firstValueFrom } from 'rxjs';
 import { DataSource, DeepPartial, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
-import { Role } from '../user-roles/role.constants';
+import { Role, getRoleColorByName } from '../user-roles/role.constants';
 import { toPlayerRankDto } from '../players/dto/player-rank.dto';
-import { getRoleColorByName } from '../user-roles/role.constants';
 import { CurrentPlayerDto } from './dto/current-player.dto';
 import { DiscordExchangeDto } from './dto/discord-exchange.dto';
 
 const OAUTH_STATE_TYP = 'oauth-state';
 const STEAM_LINK_TYP = 'steam-link';
+const DISCORD_VERIFIED_ROLE_ID = '1498458326839591126';
 
 type SteamPlayerSummariesResponse = {
   response: { players: { steamid: string }[] };
@@ -46,6 +46,7 @@ type DiscordUserResponse = {
 /** GET /guilds/{guild}/members/{user} — fields we use for /me sync */
 type DiscordGuildMemberRest = {
   nick: string | null;
+  roles: string[];
   user: {
     id: string;
     username: string;
@@ -93,6 +94,16 @@ export class AuthService implements OnModuleInit {
     } else if (!/^https?:\/\//i.test(discordUri)) {
       this.logger.warn(
         'DISCORD_REDIRECT_URI must include http:// or https:// and match the Discord Developer Portal exactly',
+      );
+    }
+    if (!process.env['DISCORD_BOT_TOKEN']?.trim()) {
+      this.logger.warn(
+        'Missing env DISCORD_BOT_TOKEN: guild nickname sync on /me will return null',
+      );
+    }
+    if (!process.env['DISCORD_SYNC_GUILD_ID']?.trim()) {
+      this.logger.warn(
+        'Missing env DISCORD_SYNC_GUILD_ID: guild nickname sync on /me will return null',
       );
     }
     if (!process.env['STEAM_CALLBACK_URI']?.trim()) {
@@ -460,7 +471,29 @@ export class AuthService implements OnModuleInit {
         if (userChanged) {
           player.discordUsername = fromGuild.username;
         }
-        if (nameChanged || userChanged) {
+
+        const dbVerified = player.verifiedAt !== null;
+        if (fromGuild.isDiscordVerified && !dbVerified) {
+          player.verifiedAt = new Date();
+          const role = player.roles?.find((r) => !r.isAdminRole);
+          if (role) {
+            role.name = Role.PLAYER;
+            await this.rolesRepo.save(role);
+          }
+        } else if (!fromGuild.isDiscordVerified && dbVerified) {
+          player.verifiedAt = null;
+          const role = player.roles?.find((r) => !r.isAdminRole);
+          if (role) {
+            role.name = Role.GUEST;
+            await this.rolesRepo.save(role);
+          }
+        }
+
+        if (
+          nameChanged ||
+          userChanged ||
+          fromGuild.isDiscordVerified !== dbVerified
+        ) {
           await this.playersRepo.save(player);
         }
       }
@@ -496,6 +529,7 @@ export class AuthService implements OnModuleInit {
     displayNameForGuild: string;
     serverNickname: string | null;
     username: string;
+    isDiscordVerified: boolean;
   } | null> {
     const token = process.env.DISCORD_BOT_TOKEN?.trim();
     const guildId = process.env.DISCORD_SYNC_GUILD_ID?.trim();
@@ -518,20 +552,33 @@ export class AuthService implements OnModuleInit {
         data.user.global_name?.trim() ||
         username
       ).trim();
+      const isDiscordVerified = (data.roles ?? []).includes(
+        DISCORD_VERIFIED_ROLE_ID,
+      );
+      this.logger.log(
+        `Discord guild member fetched: user=${discordUserId} nick=${nick ?? '(none)'} verified=${isDiscordVerified}`,
+      );
       return {
         displayNameForGuild,
         serverNickname: nick,
         username,
+        isDiscordVerified,
       };
     } catch (e) {
       const err = e as AxiosError;
       if (err.response?.status === 404) {
-        this.logger.debug(
-          `Discord user ${discordUserId} not a member of guild ${guildId}`,
+        this.logger.warn(
+          `Discord user ${discordUserId} not found in guild ${guildId} — bot may not be in the guild or user is not a member`,
         );
         return null;
       }
-      this.logger.warn('Discord GET guild member failed', err.message);
+      const status = err.response?.status ?? 'unknown';
+      const body = err.response?.data
+        ? JSON.stringify(err.response.data)
+        : err.message;
+      this.logger.warn(
+        `Discord GET guild member failed (HTTP ${status}): ${body}`,
+      );
       return null;
     }
   }

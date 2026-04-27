@@ -1,3 +1,4 @@
+import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
@@ -7,7 +8,11 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Player, UserRoles]), AuthModule],
+  imports: [
+    HttpModule.register({ timeout: 15000, maxRedirects: 3 }),
+    TypeOrmModule.forFeature([Player, UserRoles]),
+    AuthModule,
+  ],
   controllers: [AdminController],
   providers: [AdminService],
 })
