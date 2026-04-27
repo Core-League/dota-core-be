@@ -2,6 +2,7 @@ import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { AdminGuard } from '../admin/guards/admin.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -24,7 +25,7 @@ const defaultJwtTtlSec = 60 * 60 * 24 * 7;
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard],
-  exports: [JwtModule, JwtAuthGuard, PassportModule],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, AdminGuard],
+  exports: [JwtModule, JwtAuthGuard, AdminGuard, PassportModule],
 })
 export class AuthModule {}
