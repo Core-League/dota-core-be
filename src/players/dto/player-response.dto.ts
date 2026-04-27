@@ -1,8 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PlayerRankDto } from '../../players/dto/player-rank.dto';
-import type { PlayerPosition } from '../../players/player.entity';
+import type { PlayerPosition } from '../player.entity';
+import { PlayerRankDto } from './player-rank.dto';
 
-export class CurrentPlayerRoleDto {
+export class PlayerRolePublicDto {
   @ApiProperty()
   id: string;
 
@@ -19,7 +19,7 @@ export class CurrentPlayerRoleDto {
   color: string;
 }
 
-export class CurrentPlayerDto {
+export class PlayerResponseDto {
   @ApiProperty()
   id: string;
 
@@ -59,6 +59,6 @@ export class CurrentPlayerDto {
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   verifiedAt: Date | null;
 
-  @ApiProperty({ type: [CurrentPlayerRoleDto] })
-  roles: CurrentPlayerRoleDto[];
+  @ApiProperty({ type: [PlayerRolePublicDto] })
+  roles: PlayerRolePublicDto[];
 }

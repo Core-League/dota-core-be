@@ -4,31 +4,60 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Player } from './player.entity';
+import { toPlayerRankDto } from './dto/player-rank.dto';
+import { PlayerResponseDto } from './dto/player-response.dto';
+import { getRoleColorByName } from '../user-roles/role.constants';
 import { PlayersRepository } from './players.repository';
 
 @Injectable()
 export class PlayersService {
   constructor(private readonly playersRepo: PlayersRepository) {}
 
+  private toResponse(player: Player): PlayerResponseDto {
+    return {
+      id: player.id,
+      steamId: player.steamId ?? null,
+      discordId: player.discordId ?? null,
+      telegramId: player.telegramId ?? null,
+      avatarUrl: player.avatarUrl ?? null,
+      discordName: player.discordName ?? null,
+      discordUsername: player.discordUsername ?? null,
+      rating: player.rating,
+      rank: toPlayerRankDto(player.rating),
+      positions: player.positions ?? null,
+      verifiedAt: player.verifiedAt ?? null,
+      roles: (player.roles ?? []).map((r) => ({
+        id: r.id,
+        name: r.name,
+        isAdminRole: r.isAdminRole,
+        color: getRoleColorByName(r.name) ?? '#64748B',
+      })),
+    };
+  }
+
   create(payload: Partial<Player>): Promise<Player> {
     const entity = this.playersRepo.create(payload);
     return this.playersRepo.save(entity);
   }
 
-  findAll(): Promise<Player[]> {
-    return this.playersRepo.findAll();
+  async findAll(): Promise<PlayerResponseDto[]> {
+    const rows = await this.playersRepo.findAll();
+    return rows.map((p) => this.toResponse(p));
   }
 
-  async findOne(id: string): Promise<Player> {
+  async findOne(id: string): Promise<PlayerResponseDto> {
     const player = await this.playersRepo.findOneById(id);
     if (!player) {
       throw new NotFoundException('Гравця не знайдено');
     }
-    return player;
+    return this.toResponse(player);
   }
 
   async update(id: string, payload: Partial<Player>): Promise<Player> {
-    const player = await this.findOne(id);
+    const player = await this.playersRepo.findOneById(id);
+    if (!player) {
+      throw new NotFoundException('Гравця не знайдено');
+    }
     if (
       player.verifiedAt != null &&
       Object.prototype.hasOwnProperty.call(payload, 'rating')
@@ -42,7 +71,10 @@ export class PlayersService {
   }
 
   async remove(id: string): Promise<void> {
-    const player = await this.findOne(id);
+    const player = await this.playersRepo.findOneById(id);
+    if (!player) {
+      throw new NotFoundException('Гравця не знайдено');
+    }
     await this.playersRepo.remove(player);
   }
 }

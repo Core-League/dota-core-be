@@ -10,4 +10,10 @@ export class UserRoleResponseDto {
 
   @ApiProperty()
   isAdminRole: boolean;
+
+  @ApiProperty({
+    description: 'CSS hex #RRGGBB (для parseHexColor на клієнті)',
+    example: '#2563EB',
+  })
+  color: string;
 }

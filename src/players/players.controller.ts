@@ -9,9 +9,10 @@ import {
   ParseUUIDPipe,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OwnPlayerGuard } from '../auth/guards/own-player.guard';
+import { PlayerResponseDto } from './dto/player-response.dto';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
@@ -27,11 +28,13 @@ export class PlayersController {
   }
 
   @Get()
+  @ApiOkResponse({ type: PlayerResponseDto, isArray: true })
   findAll() {
     return this.playersService.findAll();
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: PlayerResponseDto })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.playersService.findOne(id);
   }

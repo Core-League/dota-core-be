@@ -16,6 +16,8 @@ import { DataSource, DeepPartial, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role } from '../user-roles/role.constants';
+import { toPlayerRankDto } from '../players/dto/player-rank.dto';
+import { getRoleColorByName } from '../user-roles/role.constants';
 import { CurrentPlayerDto } from './dto/current-player.dto';
 import { DiscordExchangeDto } from './dto/discord-exchange.dto';
 
@@ -441,12 +443,14 @@ export class AuthService implements OnModuleInit {
       discordName: player.discordName ?? null,
       discordUsername: player.discordUsername ?? null,
       rating: player.rating,
+      rank: toPlayerRankDto(player.rating),
       positions: player.positions ?? null,
       verifiedAt: player.verifiedAt ?? null,
       roles: (player.roles ?? []).map((r) => ({
         id: r.id,
         name: r.name,
         isAdminRole: r.isAdminRole,
+        color: getRoleColorByName(r.name) ?? '#64748B',
       })),
     };
   }

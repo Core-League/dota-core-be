@@ -29,3 +29,21 @@ export const ROLE_CATALOG_DISPLAY_ORDER: readonly string[] = [
   ROLE_CATALOG_IDS.CAPTAIN,
   ROLE_CATALOG_IDS.ADMIN,
 ];
+
+/**
+ * Hex for UI (`#RRGGBB`), під parseHexColor на фронті.
+ * Гість — нейтральний сірий, гравець — синій, капітан — золотистий, адмін — контрастний акцент.
+ */
+export const ROLE_COLOR_HEX: Record<RoleName, string> = {
+  [Role.GUEST]: '#64748B',
+  [Role.PLAYER]: '#2563EB',
+  [Role.CAPTAIN]: '#D97706',
+  [Role.ADMIN]: '#B91C1C',
+};
+
+export function getRoleColorByName(name: string): string | null {
+  if (!(ROLE_NAMES as readonly string[]).includes(name)) {
+    return null;
+  }
+  return ROLE_COLOR_HEX[name as RoleName];
+}

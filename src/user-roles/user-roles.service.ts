@@ -5,7 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { UserRoles } from './user-roles.entity';
-import { ROLE_CATALOG_DISPLAY_ORDER, ROLE_NAMES } from './role.constants';
+import {
+  getRoleColorByName,
+  ROLE_CATALOG_DISPLAY_ORDER,
+  ROLE_NAMES,
+} from './role.constants';
 import { UserRolesRepository } from './user-roles.repository';
 import { UserRoleResponseDto } from './dto/user-role-response.dto';
 import { CreateUserRoleDto } from './dto/create-user-role.dto';
@@ -21,6 +25,7 @@ export class UserRolesService {
       id: role.id,
       name: role.name,
       isAdminRole: role.isAdminRole,
+      color: getRoleColorByName(role.name) ?? '#64748B',
     };
   }
 
