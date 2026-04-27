@@ -22,7 +22,6 @@ import { DiscordExchangeDto } from './dto/discord-exchange.dto';
 
 const OAUTH_STATE_TYP = 'oauth-state';
 const STEAM_LINK_TYP = 'steam-link';
-const DISCORD_VERIFIED_ROLE_ID = '1498458326839591126';
 
 type SteamPlayerSummariesResponse = {
   response: { players: { steamid: string }[] };
@@ -46,7 +45,6 @@ type DiscordUserResponse = {
 /** GET /guilds/{guild}/members/{user} — fields we use for /me sync */
 type DiscordGuildMemberRest = {
   nick: string | null;
-  roles: string[];
   user: {
     id: string;
     username: string;
@@ -472,28 +470,7 @@ export class AuthService implements OnModuleInit {
           player.discordUsername = fromGuild.username;
         }
 
-        const dbVerified = player.verifiedAt !== null;
-        if (fromGuild.isDiscordVerified && !dbVerified) {
-          player.verifiedAt = new Date();
-          const role = player.roles?.find((r) => !r.isAdminRole);
-          if (role) {
-            role.name = Role.PLAYER;
-            await this.rolesRepo.save(role);
-          }
-        } else if (!fromGuild.isDiscordVerified && dbVerified) {
-          player.verifiedAt = null;
-          const role = player.roles?.find((r) => !r.isAdminRole);
-          if (role) {
-            role.name = Role.GUEST;
-            await this.rolesRepo.save(role);
-          }
-        }
-
-        if (
-          nameChanged ||
-          userChanged ||
-          fromGuild.isDiscordVerified !== dbVerified
-        ) {
+        if (nameChanged || userChanged) {
           await this.playersRepo.save(player);
         }
       }
@@ -529,7 +506,6 @@ export class AuthService implements OnModuleInit {
     displayNameForGuild: string;
     serverNickname: string | null;
     username: string;
-    isDiscordVerified: boolean;
   } | null> {
     const token = process.env.DISCORD_BOT_TOKEN?.trim();
     const guildId = process.env.DISCORD_SYNC_GUILD_ID?.trim();
@@ -552,17 +528,13 @@ export class AuthService implements OnModuleInit {
         data.user.global_name?.trim() ||
         username
       ).trim();
-      const isDiscordVerified = (data.roles ?? []).includes(
-        DISCORD_VERIFIED_ROLE_ID,
-      );
       this.logger.log(
-        `Discord guild member fetched: user=${discordUserId} nick=${nick ?? '(none)'} verified=${isDiscordVerified}`,
+        `Discord guild member fetched: user=${discordUserId} nick=${nick ?? '(none)'}`,
       );
       return {
         displayNameForGuild,
         serverNickname: nick,
         username,
-        isDiscordVerified,
       };
     } catch (e) {
       const err = e as AxiosError;
