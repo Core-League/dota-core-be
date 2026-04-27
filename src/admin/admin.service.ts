@@ -33,7 +33,11 @@ export class AdminService {
   async verifyPlayer(playerId: string): Promise<VerifyResult> {
     const player = await this.findPlayerWithRoles(playerId);
 
-    let role = player.roles.find((r) => !r.isAdminRole);
+    const nonAdminRoles = player.roles.filter((r) => !r.isAdminRole);
+    if (nonAdminRoles.length > 1) {
+      await this.rolesRepo.remove(nonAdminRoles.slice(1));
+    }
+    let role = nonAdminRoles[0];
     if (!role) {
       role = this.rolesRepo.create({
         isAdminRole: false,
@@ -54,7 +58,11 @@ export class AdminService {
   async unverifyPlayer(playerId: string): Promise<VerifyResult> {
     const player = await this.findPlayerWithRoles(playerId);
 
-    const role = player.roles.find((r) => !r.isAdminRole);
+    const nonAdminRoles = player.roles.filter((r) => !r.isAdminRole);
+    if (nonAdminRoles.length > 1) {
+      await this.rolesRepo.remove(nonAdminRoles.slice(1));
+    }
+    const role = nonAdminRoles[0];
     if (role) {
       role.name = Role.GUEST;
       await this.rolesRepo.save(role);
