@@ -6,6 +6,7 @@ on:
       - dev
 
 jobs:
+  # This job deploys the public app (GitHub env name "staging"; server uses NODE_ENV=staging = live/prod-like).
   deploy-staging:
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest

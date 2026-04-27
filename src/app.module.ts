@@ -10,7 +10,11 @@ import { HealthController } from './health.controller';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
 
-/** Staging host is the live app today; treat like production for DB safety and migrations. */
+/**
+ * Live deploy uses `NODE_ENV=staging` (see `ecosystem.config.js`). For TypeORM,
+ * staging is treated like production: no `synchronize`, migrations on boot.
+ * `production` is included for a future split or CI.
+ */
 const typeOrmProdLike =
   process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
 

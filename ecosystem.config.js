@@ -1,3 +1,4 @@
+// Primary public server: NODE_ENV=staging. App treats staging as production-like (migrations, no sync).
 module.exports = {
   apps: [
     {

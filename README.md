@@ -25,7 +25,7 @@ Swagger UI is available at `http://localhost:3000/api`.
 
 ## Database migrations
 
-`synchronize: true` is active in development — schema changes are applied automatically on startup. In production `synchronize` is off and migrations run automatically on deploy (`migrationsRun: true`).
+`synchronize: true` is active in development — schema changes are applied automatically on startup. On the **live server** we use `NODE_ENV=staging` (see `ecosystem.config.js`); there `synchronize` is off and migrations run on startup (`migrationsRun: true`), same as a typical production setup.
 
 ### Typical workflow
 
@@ -66,9 +66,9 @@ npm run migration:create -- src/migrations/SeedDefaultRoles
 | `migration:revert` | Roll back the last applied migration |
 | `migration:create -- src/migrations/<Name>` | Create an empty migration file |
 
-### Production
+### Live deploy (staging / production-like)
 
-Migrations in `dist/migrations/*.js` run automatically on app startup (`migrationsRun: true`). Make sure you build before deploying:
+Migrations in `dist/migrations/*.js` run automatically on app startup when `NODE_ENV` is `staging` or `production`. Make sure you build before deploying:
 
 ```bash
 npm run build
