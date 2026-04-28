@@ -7,11 +7,15 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { OwnPlayerGuard } from '../auth/guards/own-player.guard';
+import {
+  OwnPlayerOrAdminGuard,
+  type RequestWithJwtActor,
+} from '../auth/guards/own-player-or-admin.guard';
 import { PlayerResponseDto } from './dto/player-response.dto';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
@@ -40,17 +44,20 @@ export class PlayersController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, OwnPlayerGuard)
+  @UseGuards(JwtAuthGuard, OwnPlayerOrAdminGuard)
   @ApiBearerAuth()
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdatePlayerDto,
+    @Req() req: RequestWithJwtActor,
   ) {
-    return this.playersService.update(id, body);
+    return this.playersService.update(id, body, {
+      actorHasAdminRole: req.actorHasAdminRole ?? false,
+    });
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, OwnPlayerGuard)
+  @UseGuards(JwtAuthGuard, OwnPlayerOrAdminGuard)
   @ApiBearerAuth()
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.playersService.remove(id);

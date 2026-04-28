@@ -7,9 +7,7 @@ const KEEP_IDS = [
 ];
 
 /** One-off: remove duplicate user_roles rows for the admin player, keeping only the two canonical ones. */
-export class CleanupDuplicateRolesForAdmin1746100000000
-  implements MigrationInterface
-{
+export class CleanupDuplicateRolesForAdmin1746100000000 implements MigrationInterface {
   name = 'CleanupDuplicateRolesForAdmin1746100000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

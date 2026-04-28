@@ -53,7 +53,11 @@ export class PlayersService {
     return this.toResponse(player);
   }
 
-  async update(id: string, payload: Partial<Player>): Promise<Player> {
+  async update(
+    id: string,
+    payload: Partial<Player>,
+    options?: { actorHasAdminRole?: boolean },
+  ): Promise<Player> {
     const player = await this.playersRepo.findOneById(id);
     if (!player) {
       throw new NotFoundException('Гравця не знайдено');
@@ -62,9 +66,11 @@ export class PlayersService {
       player.verifiedAt != null &&
       Object.prototype.hasOwnProperty.call(payload, 'rating')
     ) {
-      throw new ForbiddenException(
-        'Verified players cannot change their rating',
-      );
+      if (!options?.actorHasAdminRole) {
+        throw new ForbiddenException(
+          'Verified players cannot change their rating',
+        );
+      }
     }
     Object.assign(player, payload);
     return this.playersRepo.save(player);

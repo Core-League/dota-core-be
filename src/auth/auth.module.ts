@@ -6,7 +6,7 @@ import { AdminGuard } from '../admin/guards/admin.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { OwnPlayerGuard } from './guards/own-player.guard';
+import { OwnPlayerOrAdminGuard } from './guards/own-player-or-admin.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 /** Default access-token lifetime in seconds (7 days). Override with JWT_EXPIRES_SEC. */
@@ -30,13 +30,13 @@ const defaultJwtTtlSec = 60 * 60 * 24 * 7;
     AuthService,
     JwtStrategy,
     JwtAuthGuard,
-    OwnPlayerGuard,
+    OwnPlayerOrAdminGuard,
     AdminGuard,
   ],
   exports: [
     JwtModule,
     JwtAuthGuard,
-    OwnPlayerGuard,
+    OwnPlayerOrAdminGuard,
     AdminGuard,
     PassportModule,
   ],
