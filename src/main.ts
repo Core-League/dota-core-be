@@ -1,3 +1,7 @@
+import './config/load-env';
+
+import type { INestApplication } from '@nestjs/common';
+import type { Handler } from 'aws-lambda';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -16,6 +20,7 @@ function buildCorsOptions(): CorsOptions {
     'http://127.0.0.1:3000',
     'http://localhost:4200',
   ];
+
   const origin = raw
     ? raw
         .split(',')
@@ -31,7 +36,7 @@ function buildCorsOptions(): CorsOptions {
   };
 }
 
-async function bootstrap() {
+async function createHttpApplication(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors(buildCorsOptions());
@@ -57,6 +62,62 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
-  await app.listen(process.env.PORT ?? 3000);
+  return app;
 }
-void bootstrap();
+
+/** PM2, Docker, локально: довгоживучий HTTP-сервер */
+async function bootstrapHttpServer(): Promise<void> {
+  const app = await createHttpApplication();
+  const port = Number(process.env.PORT ?? 3000);
+  await app.listen(port);
+}
+
+/** Один Express-стек для Lambda (API Gateway) і для default (req/res), напр. Vercel / адаптери */
+let expressSingleton: ExpressApplication | null = null;
+
+async function getInitializedExpress(): Promise<ExpressApplication> {
+  if (!expressSingleton) {
+    const app = await createHttpApplication();
+    await app.init();
+    expressSingleton = app.getHttpAdapter().getInstance() as ExpressApplication;
+  }
+  return expressSingleton;
+}
+
+let lambdaProxy:
+  | ((event: unknown, context: unknown) => Promise<unknown>)
+  | null = null;
+
+async function getLambdaProxy(): Promise<
+  (event: unknown, context: unknown) => Promise<unknown>
+> {
+  if (!lambdaProxy) {
+    lambdaProxy = serverlessHttp(await getInitializedExpress());
+  }
+  return lambdaProxy;
+}
+
+/** AWS Lambda (handler = file.handler) */
+export const handler: Handler = async (event, context) => {
+  const proxy = await getLambdaProxy();
+  return proxy(event, context) as Promise<object>;
+};
+
+/**
+ * Платформи з перевіркою default export (Vercel, частина адаптерів):
+ * має бути функція (req, res) або http.Server.
+ */
+export default async function defaultHttpHandler(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const expressApp = await getInitializedExpress();
+  expressApp(req, res);
+}
+
+const isDirectNodeEntry =
+  typeof require !== 'undefined' && require.main === module;
+
+if (isDirectNodeEntry) {
+  void bootstrapHttpServer();
+}
