@@ -50,7 +50,7 @@ export class AdminService {
     player.verifiedAt = new Date();
     await this.playersRepo.save(player);
 
-    await this.setDiscordVerifiedRole(player.discordId, true);
+    await this.setDiscordVerifiedRole(player.discordId, player.discordUsername, true);
 
     return { playerId, verified: true, verifiedAt: player.verifiedAt };
   }
@@ -71,7 +71,7 @@ export class AdminService {
     player.verifiedAt = null;
     await this.playersRepo.save(player);
 
-    await this.setDiscordVerifiedRole(player.discordId, false);
+    await this.setDiscordVerifiedRole(player.discordId, player.discordUsername, false);
 
     return { playerId, verified: false, verifiedAt: null };
   }
@@ -87,28 +87,51 @@ export class AdminService {
 
   private async setDiscordVerifiedRole(
     discordId: string | null,
+    discordUsername: string | null,
     add: boolean,
   ): Promise<void> {
-    if (!discordId) return;
+    if (!discordId || !discordUsername) return;
     const token = process.env.DISCORD_BOT_TOKEN?.trim();
     const guildId = process.env.DISCORD_SYNC_GUILD_ID?.trim();
     if (!token || !guildId) return;
 
-    const url = `https://discord.com/api/v10/guilds/${guildId}/members/${discordId}/roles/${DISCORD_VERIFIED_ROLE_ID}`;
+    const headers = { Authorization: `Bot ${token}` };
+
+    // Step 1 — fetch current roles via member search, then filter to the exact user
+    const searchUrl = `https://discord.com/api/v10/guilds/${guildId}/members/search?query=${encodeURIComponent(discordUsername)}&limit=10`;
+    let currentRoles: string[];
     try {
-      if (add) {
-        await firstValueFrom(
-          this.http.put(url, null, {
-            headers: { Authorization: `Bot ${token}` },
-          }),
+      const { data } = await firstValueFrom(
+        this.http.get<{ user: { id: string }; roles: string[] }[]>(searchUrl, {
+          headers,
+        }),
+      );
+      const member = data.find((m) => m.user.id === discordId);
+      if (!member) {
+        this.logger.warn(
+          `Discord user ${discordId} not found in guild ${guildId} — skipping role update`,
         );
-      } else {
-        await firstValueFrom(
-          this.http.delete(url, {
-            headers: { Authorization: `Bot ${token}` },
-          }),
-        );
+        return;
       }
+      currentRoles = member.roles;
+    } catch (e) {
+      const err = e as AxiosError;
+      this.logger.warn(
+        `Failed to fetch Discord member roles (HTTP ${err.response?.status ?? 'unknown'})`,
+      );
+      return;
+    }
+
+    // Step 2 — compute new roles array and PATCH
+    const updatedRoles = add
+      ? [...new Set([...currentRoles, DISCORD_VERIFIED_ROLE_ID])]
+      : currentRoles.filter((id) => id !== DISCORD_VERIFIED_ROLE_ID);
+
+    const patchUrl = `https://discord.com/api/v10/guilds/${guildId}/members/${discordId}`;
+    try {
+      await firstValueFrom(
+        this.http.patch(patchUrl, { roles: updatedRoles }, { headers }),
+      );
     } catch (e) {
       const err = e as AxiosError;
       const status = err.response?.status ?? 'unknown';
