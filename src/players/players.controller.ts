@@ -46,6 +46,7 @@ export class PlayersController {
   @Patch(':id')
   @UseGuards(JwtAuthGuard, OwnPlayerOrAdminGuard)
   @ApiBearerAuth()
+  @ApiOkResponse({ type: PlayerResponseDto })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdatePlayerDto,

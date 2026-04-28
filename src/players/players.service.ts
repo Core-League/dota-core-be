@@ -57,7 +57,7 @@ export class PlayersService {
     id: string,
     payload: Partial<Player>,
     options?: { actorHasAdminRole?: boolean },
-  ): Promise<Player> {
+  ): Promise<PlayerResponseDto> {
     const player = await this.playersRepo.findOneById(id);
     if (!player) {
       throw new NotFoundException('Гравця не знайдено');
@@ -73,7 +73,12 @@ export class PlayersService {
       }
     }
     Object.assign(player, payload);
-    return this.playersRepo.save(player);
+    await this.playersRepo.save(player);
+    const refreshed = await this.playersRepo.findOneById(id);
+    if (!refreshed) {
+      throw new NotFoundException('Гравця не знайдено');
+    }
+    return this.toResponse(refreshed);
   }
 
   async remove(id: string): Promise<void> {
