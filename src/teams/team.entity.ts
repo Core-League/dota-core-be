@@ -35,6 +35,9 @@ export class Team {
   @JoinColumn({ name: 'coachId' })
   coach: Player;
 
+  @Column({ nullable: true, type: 'varchar' })
+  logoUrl: string | null;
+
   @Column()
   isVerified: boolean;
 

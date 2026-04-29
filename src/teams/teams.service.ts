@@ -3,16 +3,44 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { Team } from './team.entity';
 import { TeamsRepository } from './teams.repository';
+import { CreateTeamDto } from './dto/create-team.dto';
+import { Player } from '../players/player.entity';
+import { UserRoles } from '../user-roles/user-roles.entity';
+import { Role } from '../user-roles/role.constants';
 
 @Injectable()
 export class TeamsService {
-  constructor(private readonly teamsRepo: TeamsRepository) {}
+  constructor(
+    private readonly teamsRepo: TeamsRepository,
+    @InjectDataSource() private readonly dataSource: DataSource,
+  ) {}
 
-  create(payload: Partial<Team>): Promise<Team> {
-    const entity = this.teamsRepo.create(payload);
-    return this.teamsRepo.save(entity);
+  async createTeam(dto: CreateTeamDto, captainId: string): Promise<Team> {
+    const entity = this.teamsRepo.create({
+      ...dto,
+      captain: { id: captainId } as Player,
+      mainPlayers: [{ id: captainId } as Player],
+    });
+    const team = await this.teamsRepo.save(entity);
+
+    const rolesRepo = this.dataSource.getRepository(UserRoles);
+    const existing = await rolesRepo.findOne({
+      where: { player: { id: captainId }, name: Role.CAPTAIN },
+    });
+    if (!existing) {
+      const role = rolesRepo.create({
+        name: Role.CAPTAIN,
+        isAdminRole: false,
+        player: { id: captainId } as Player,
+      });
+      await rolesRepo.save(role);
+    }
+
+    return team;
   }
 
   findAll(): Promise<Team[]> {
@@ -35,13 +63,20 @@ export class TeamsService {
 
   async remove(id: string): Promise<void> {
     const team = await this.findOne(id);
+    const captainId = team.captain?.id;
     await this.teamsRepo.remove(team);
+
+    if (captainId) {
+      const rolesRepo = this.dataSource.getRepository(UserRoles);
+      const captainRole = await rolesRepo.findOne({
+        where: { player: { id: captainId }, name: Role.CAPTAIN },
+      });
+      if (captainRole) {
+        await rolesRepo.remove(captainRole);
+      }
+    }
   }
 
-  /**
-   * Removes a player from a team (main/reserved/captain) and reassigns captain if needed.
-   * If the departing player was captain, the next available main player becomes captain.
-   */
   async removePlayerFromTeam(teamId: string, playerId: string): Promise<Team> {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) {
@@ -69,10 +104,6 @@ export class TeamsService {
     return this.teamsRepo.save(team);
   }
 
-  /**
-   * Helper to reassign captain when a Player entity is being deleted.
-   * Call this before deleting the Player to keep FK constraints satisfied.
-   */
   async reassignCaptainIfPlayerIsCaptain(playerId: string): Promise<void> {
     const teams = await this.teamsRepo.findByCaptainId(playerId);
 

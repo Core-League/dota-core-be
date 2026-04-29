@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
+import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsService } from './teams.service';
 import { TeamsController } from './teams.controller';
 import { Team } from './team.entity';
@@ -9,7 +10,11 @@ import { Tournament } from '../tournaments/tournaments.entity';
 import { TeamsRepository } from './teams.repository';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Team, Player, Tournament]), AuthModule],
+  imports: [
+    TypeOrmModule.forFeature([Team, Player, Tournament]),
+    AuthModule,
+    UploadsModule,
+  ],
   providers: [TeamsService, TeamsRepository],
   controllers: [TeamsController],
 })
