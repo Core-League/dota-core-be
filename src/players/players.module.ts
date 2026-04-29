@@ -5,9 +5,10 @@ import { PlayersService } from './players.service';
 import { PlayersController } from './players.controller';
 import { Player } from './player.entity';
 import { PlayersRepository } from './players.repository';
+import { UploadsModule } from '../uploads/uploads.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Player]), AuthModule],
+  imports: [TypeOrmModule.forFeature([Player]), AuthModule, UploadsModule],
   providers: [PlayersService, PlayersRepository],
   controllers: [PlayersController],
 })

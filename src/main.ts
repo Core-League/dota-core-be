@@ -1,6 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
+import { join } from 'path';
+import { mkdirSync } from 'fs';
+import express from 'express';
 import { AppModule } from './app.module';
 
 function buildCorsOptions(): CorsOptions {
@@ -31,6 +34,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors(buildCorsOptions());
+
+  const uploadsDir = join(process.cwd(), 'uploads');
+  mkdirSync(uploadsDir, { recursive: true });
+  app.use('/uploads', express.static(uploadsDir));
 
   const config = new DocumentBuilder()
     .setTitle('Core Backend API')
