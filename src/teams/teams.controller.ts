@@ -7,8 +7,12 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.guard';
 import { TeamsService } from './teams.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
@@ -19,8 +23,13 @@ export class TeamsController {
   constructor(private readonly teamsService: TeamsService) {}
 
   @Post()
-  create(@Body() body: CreateTeamDto) {
-    return this.teamsService.create(body);
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  create(@Body() body: CreateTeamDto, @Req() req: RequestWithJwtActor) {
+    return this.teamsService.create({
+      ...body,
+      captain: { id: req.user!.playerId } as any,
+    });
   }
 
   @Get()
