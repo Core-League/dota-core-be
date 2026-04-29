@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -20,6 +21,11 @@ export class TeamsService {
   ) {}
 
   async createTeam(dto: CreateTeamDto, captainId: string): Promise<Team> {
+    const existingTeams = await this.teamsRepo.findByCaptainId(captainId);
+    if (existingTeams.length > 0) {
+      throw new ConflictException('Ви вже є капітаном іншої команди');
+    }
+
     const entity = this.teamsRepo.create({
       ...dto,
       captain: { id: captainId } as Player,
@@ -27,17 +33,22 @@ export class TeamsService {
     });
     const team = await this.teamsRepo.save(entity);
 
+    await this.dataSource
+      .getRepository(Player)
+      .update({ id: captainId }, { teamId: team.id });
+
     const rolesRepo = this.dataSource.getRepository(UserRoles);
     const existing = await rolesRepo.findOne({
       where: { player: { id: captainId }, name: Role.CAPTAIN },
     });
     if (!existing) {
-      const role = rolesRepo.create({
-        name: Role.CAPTAIN,
-        isAdminRole: false,
-        player: { id: captainId } as Player,
-      });
-      await rolesRepo.save(role);
+      await rolesRepo.save(
+        rolesRepo.create({
+          name: Role.CAPTAIN,
+          isAdminRole: false,
+          player: { id: captainId } as Player,
+        }),
+      );
     }
 
     return team;

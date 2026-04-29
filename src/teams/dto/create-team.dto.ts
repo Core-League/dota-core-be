@@ -7,6 +7,9 @@ export class CreateTeamDto {
   @ApiPropertyOptional({ description: 'UUID of the coach player' })
   coachId?: string;
 
+  @ApiPropertyOptional({ description: 'Dota 2 team ID from the game API' })
+  dotaTeamId?: string;
+
   @ApiProperty()
   isVerified: boolean;
 

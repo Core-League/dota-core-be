@@ -38,6 +38,9 @@ export class Team {
   @Column({ nullable: true, type: 'varchar' })
   logoUrl: string | null;
 
+  @Column({ nullable: true, type: 'varchar' })
+  dotaTeamId: string | null;
+
   @Column()
   isVerified: boolean;
 

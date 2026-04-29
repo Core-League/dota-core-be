@@ -59,6 +59,9 @@ export class PlayerResponseDto {
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   verifiedAt: Date | null;
 
+  @ApiPropertyOptional({ nullable: true, type: String })
+  teamId: string | null;
+
   @ApiProperty({ type: [PlayerRolePublicDto] })
   roles: PlayerRolePublicDto[];
 }
