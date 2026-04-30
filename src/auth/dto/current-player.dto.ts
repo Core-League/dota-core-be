@@ -66,6 +66,12 @@ export class CurrentPlayerDto {
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   verifiedAt: Date | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'UUID команди або null поза складом',
+  })
+  teamId: string | null;
+
   @ApiProperty({ type: [CurrentPlayerRoleDto] })
   roles: CurrentPlayerRoleDto[];
 }

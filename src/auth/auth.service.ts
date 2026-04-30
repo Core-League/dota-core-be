@@ -489,6 +489,7 @@ export class AuthService implements OnModuleInit {
       rank: toPlayerRankDto(player.rating),
       positions: player.positions ?? null,
       verifiedAt: player.verifiedAt ?? null,
+      teamId: player.teamId ?? null,
       roles: (player.roles ?? []).map((r) => ({
         id: r.id,
         name: r.name,
