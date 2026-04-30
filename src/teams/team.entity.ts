@@ -33,7 +33,7 @@ export class Team {
     nullable: true,
   })
   @JoinColumn({ name: 'coachId' })
-  coach: Player;
+  coach: Player | null;
 
   @Column({ nullable: true, type: 'varchar' })
   logoUrl: string | null;

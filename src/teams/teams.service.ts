@@ -26,16 +26,15 @@ export class TeamsService {
       throw new ConflictException('Ви вже є капітаном іншої команди');
     }
 
+    const { coachId, ...teamFields } = dto;
     const entity = this.teamsRepo.create({
-      ...dto,
+      ...teamFields,
       captain: { id: captainId } as Player,
       mainPlayers: [{ id: captainId } as Player],
+      ...(coachId ? { coach: { id: coachId } as Player } : {}),
     });
     const team = await this.teamsRepo.save(entity);
-
-    await this.dataSource
-      .getRepository(Player)
-      .update({ id: captainId }, { teamId: team.id });
+    await this.syncPlayerTeamLinks(team.id);
 
     const rolesRepo = this.dataSource.getRepository(UserRoles);
     const existing = await rolesRepo.findOne({
@@ -69,7 +68,9 @@ export class TeamsService {
   async update(id: string, payload: Partial<Team>): Promise<Team> {
     const team = await this.findOne(id);
     Object.assign(team, payload);
-    return this.teamsRepo.save(team);
+    const saved = await this.teamsRepo.save(team);
+    await this.syncPlayerTeamLinks(id);
+    return saved;
   }
 
   async remove(id: string): Promise<void> {
@@ -101,6 +102,9 @@ export class TeamsService {
     team.reservedPlayers = (team.reservedPlayers || []).filter(
       (p) => p.id !== playerId,
     );
+    if (team.coach?.id === playerId) {
+      team.coach = null;
+    }
 
     if (wasCaptain) {
       const nextCaptain = team.mainPlayers[0];
@@ -112,7 +116,45 @@ export class TeamsService {
       team.captain = nextCaptain;
     }
 
-    return this.teamsRepo.save(team);
+    const saved = await this.teamsRepo.save(team);
+    await this.syncPlayerTeamLinks(teamId);
+    return saved;
+  }
+
+  /**
+   * Вирівнює player.teamId з поточним ростером (капітан, тренер, основа, запасні).
+   * У кого був цей teamId, але гравця вже немає в команді — ставить null.
+   */
+  private async syncPlayerTeamLinks(teamId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      await manager
+        .createQueryBuilder()
+        .update(Player)
+        .set({ teamId: null })
+        .where('"teamId" = :tid', { tid: teamId })
+        .execute();
+
+      const team = await manager.findOne(Team, {
+        where: { id: teamId },
+        relations: ['captain', 'coach', 'mainPlayers', 'reservedPlayers'],
+      });
+      if (!team) return;
+
+      const ids = new Set<string>();
+      if (team.captain?.id) ids.add(team.captain.id);
+      if (team.coach?.id) ids.add(team.coach.id);
+      for (const p of team.mainPlayers ?? []) ids.add(p.id);
+      for (const p of team.reservedPlayers ?? []) ids.add(p.id);
+
+      if (ids.size === 0) return;
+
+      await manager
+        .createQueryBuilder()
+        .update(Player)
+        .set({ teamId })
+        .where('id IN (:...ids)', { ids: [...ids] })
+        .execute();
+    });
   }
 
   async reassignCaptainIfPlayerIsCaptain(playerId: string): Promise<void> {
@@ -128,6 +170,7 @@ export class TeamsService {
       }
       team.captain = nextCaptain;
       await this.teamsRepo.save(team);
+      await this.syncPlayerTeamLinks(team.id);
     }
   }
 }
