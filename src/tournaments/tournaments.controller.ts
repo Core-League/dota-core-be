@@ -13,12 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import {
-  ApiBearerAuth,
-  ApiBody,
-  ApiConsumes,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';

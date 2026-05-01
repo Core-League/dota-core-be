@@ -39,8 +39,11 @@ export class Player {
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;
 
-  /** FK to the team this player belongs to; null when not on a team. Cleared automatically when the team is deleted (ON DELETE SET NULL). */
-  @Column({ type: 'uuid', nullable: true })
+  /**
+   * Team reference: internal team UUID and/or public Dotabuff/OpenDota team id string,
+   * depending on deployment. Column is varchar so DB operators match string parameters.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
   teamId: string | null;
 
   @OneToMany(() => UserRoles, (role) => role.player, { cascade: false })
