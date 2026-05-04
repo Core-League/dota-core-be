@@ -46,6 +46,12 @@ export class QualificationService {
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
+  async getByTournamentId(tournamentId: string): Promise<Qualification> {
+    const qualification = await this.qualRepo.findByTournamentId(tournamentId);
+    if (!qualification) throw new NotFoundException('Кваліфікацію турніру не знайдено');
+    return qualification;
+  }
+
   async createForTournament(tournament: Tournament, nodeGroupId: string): Promise<Qualification> {
     const q = this.qualRepo.create({
       tournament,

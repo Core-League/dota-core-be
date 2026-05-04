@@ -78,6 +78,11 @@ export class TournamentsController {
     await this.tournamentsService.remove(id);
   }
 
+  @Get(':id/qualification')
+  getQualification(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.qualificationService.getByTournamentId(id);
+  }
+
   @Post(':id/join')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

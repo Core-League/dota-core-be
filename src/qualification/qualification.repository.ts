@@ -22,7 +22,7 @@ export class QualificationRepository {
   findByTournamentId(tournamentId: string): Promise<Qualification | null> {
     return this.repo.findOne({
       where: { tournament: { id: tournamentId } },
-      relations: ['tournament', 'matches', 'matches.teamA', 'matches.teamB'],
+      relations: ['tournament', 'matches', 'matches.teamA', 'matches.teamB', 'matches.winner'],
     });
   }
 }
