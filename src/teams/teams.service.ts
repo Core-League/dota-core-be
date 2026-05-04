@@ -9,6 +9,8 @@ import { DataSource } from 'typeorm';
 import { Team } from './team.entity';
 import { TeamsRepository } from './teams.repository';
 import { CreateTeamDto } from './dto/create-team.dto';
+import { SearchTeamsDto } from './dto/search-teams.dto';
+import { Tournament } from '../tournaments/tournaments.entity';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role } from '../user-roles/role.constants';
@@ -55,6 +57,22 @@ export class TeamsService {
 
   findAll(): Promise<Team[]> {
     return this.teamsRepo.findAll();
+  }
+
+  /**
+   * Lists teams with optional `tournaments` array (from `team.tournament`, ManyToOne).
+   */
+  async search(
+    dto: SearchTeamsDto = {},
+  ): Promise<Array<Team & { tournaments?: Tournament[] }>> {
+    const teams = await this.teamsRepo.findAll();
+    if (!dto.withTournaments) {
+      return teams;
+    }
+    return teams.map((t) => ({
+      ...t,
+      tournaments: t.tournament ? [t.tournament] : [],
+    }));
   }
 
   async findOne(id: string): Promise<Team> {

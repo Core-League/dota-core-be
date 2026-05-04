@@ -24,6 +24,7 @@ import {
 } from '../uploads/uploads.service';
 import { TeamsService } from './teams.service';
 import { CreateTeamDto } from './dto/create-team.dto';
+import { SearchTeamsDto } from './dto/search-teams.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 
 const FILE_API_BODY = {
@@ -52,6 +53,12 @@ export class TeamsController {
   @Get()
   findAll() {
     return this.teamsService.findAll();
+  }
+
+  @Post('search')
+  @ApiBody({ type: SearchTeamsDto, required: false })
+  search(@Body() body?: SearchTeamsDto) {
+    return this.teamsService.search(body ?? {});
   }
 
   @Get(':id')
