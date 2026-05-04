@@ -164,7 +164,8 @@ export class QualificationService {
         phase: 0,
         defaultNodeType: 1,
       });
-      await this.dota2.addNodeGroupTeam(qualification.nodeGroupId, opponent.dotaTeamId);
+      await this.dota2.addNodeGroupTeam(matchNodeGroupId, team.dotaTeamId);
+      await this.dota2.addNodeGroupTeam(matchNodeGroupId, opponent.dotaTeamId);
 
       const match = this.qualMatchRepo.create({
         qualification,
