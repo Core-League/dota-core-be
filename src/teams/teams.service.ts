@@ -5,7 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { Team } from './team.entity';
 import { TeamsRepository } from './teams.repository';
 import { CreateTeamDto } from './dto/create-team.dto';
@@ -94,7 +94,11 @@ export class TeamsService {
   async remove(id: string): Promise<void> {
     const team = await this.findOne(id);
     const captainId = team.captain?.id;
-    await this.teamsRepo.remove(team);
+
+    await this.dataSource.transaction(async (manager) => {
+      await this.resetPlayersTeamIdColumn(id, manager);
+      await manager.remove(team);
+    });
 
     if (captainId) {
       const rolesRepo = this.dataSource.getRepository(UserRoles);
@@ -139,18 +143,25 @@ export class TeamsService {
     return saved;
   }
 
+  private async resetPlayersTeamIdColumn(
+    teamId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager
+      .createQueryBuilder()
+      .update(Player)
+      .set({ teamId: null })
+      .where('"teamId" = :tid', { tid: teamId })
+      .execute();
+  }
+
   /**
    * Вирівнює player.teamId з поточним ростером (капітан, тренер, основа, запасні).
    * У кого був цей teamId, але гравця вже немає в команді — ставить null.
    */
   private async syncPlayerTeamLinks(teamId: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      await manager
-        .createQueryBuilder()
-        .update(Player)
-        .set({ teamId: null })
-        .where('"teamId" = :tid', { tid: teamId })
-        .execute();
+      await this.resetPlayersTeamIdColumn(teamId, manager);
 
       const team = await manager.findOne(Team, {
         where: { id: teamId },
