@@ -23,6 +23,7 @@ import {
   UploadsService,
 } from '../uploads/uploads.service';
 import { TeamsService } from './teams.service';
+import { AddPlayerDto } from './dto/add-player.dto';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { SearchTeamsDto } from './dto/search-teams.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
@@ -77,6 +78,26 @@ export class TeamsController {
   @Delete(':id')
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.teamsService.remove(id);
+  }
+
+  @Post(':id/players')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  addPlayer(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: AddPlayerDto,
+  ) {
+    return this.teamsService.addPlayerToTeam(id, body.playerId, body.slot);
+  }
+
+  @Delete(':id/players/:playerId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  removePlayer(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('playerId', new ParseUUIDPipe()) playerId: string,
+  ) {
+    return this.teamsService.removePlayerFromTeam(id, playerId);
   }
 
   @Post(':id/logo')

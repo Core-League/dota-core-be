@@ -117,6 +117,51 @@ export class TeamsService {
     }
   }
 
+  async addPlayerToTeam(
+    teamId: string,
+    playerId: string,
+    slot: 'main' | 'reserved',
+  ): Promise<Team> {
+    const team = await this.teamsRepo.findOneWithRoster(teamId);
+    if (!team) throw new NotFoundException('Команду не знайдено');
+
+    if (team.tournament !== null) {
+      throw new ForbiddenException('Склад команди заблоковано під час участі в турнірі');
+    }
+
+    const player = await this.dataSource.getRepository(Player).findOne({
+      where: { id: playerId },
+    });
+    if (!player) throw new NotFoundException('Гравця не знайдено');
+
+    if (player.teamId !== null) {
+      throw new ConflictException('Гравець вже є учасником іншої команди');
+    }
+
+    const main = team.mainPlayers ?? [];
+    const reserved = team.reservedPlayers ?? [];
+    const alreadyOnTeam = [...main, ...reserved].some((p) => p.id === playerId);
+    if (alreadyOnTeam) {
+      throw new ConflictException('Гравець вже є в складі цієї команди');
+    }
+
+    if (slot === 'main') {
+      if (main.length >= 5) {
+        throw new BadRequestException('Основний склад вже заповнений (максимум 5 гравців)');
+      }
+      team.mainPlayers = [...main, player];
+    } else {
+      if (reserved.length >= 3) {
+        throw new BadRequestException('Список запасних вже заповнений (максимум 3 гравці)');
+      }
+      team.reservedPlayers = [...reserved, player];
+    }
+
+    const saved = await this.teamsRepo.save(team);
+    await this.syncPlayerTeamLinks(teamId);
+    return saved;
+  }
+
   async removePlayerFromTeam(teamId: string, playerId: string): Promise<Team> {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) {
