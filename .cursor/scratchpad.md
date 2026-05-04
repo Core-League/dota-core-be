@@ -34,7 +34,7 @@ NestJS + TypeORM backend (`core-backend`). Executor mode is engaged to implement
 ## Current Status / Progress Tracking
 
 - **Mode:** Executor (implementation)
-- **Recent work:** Added repository-backed CRUD endpoints for Player, UserRoles, Team, Match, Tournament; resolved lint issues.
+- **Recent work:** MEDIA role wired in `role.constants` (names, catalog id, display order, color); migration `1746200000004-AddMediaRoleCatalog` updates DB CHECK + catalog upsert; `findAllCatalog` uses `playerId IS NULL` query builder so all catalog rows are returned; stable sort for list endpoint.
 
 ## Executor’s Feedback or Assistance Requests
 
@@ -42,4 +42,5 @@ No blockers. Consider DTO validation/whitelisting for payloads and authorization
 
 ## Lessons
 
-_(Executor: add fixes and gotchas here as they appear.)_
+- After adding a `Role` enum value, keep `ROLE_NAMES`, `ROLE_CATALOG_IDS`, `ROLE_CATALOG_DISPLAY_ORDER`, and `ROLE_COLOR_HEX` in sync or `Record<RoleName, string>` fails the build.
+- Catalog listing should query `playerId IS NULL` via QueryBuilder; `find` + `relations: ['player']` can interact badly with nullable `ManyToOne` in some cases.

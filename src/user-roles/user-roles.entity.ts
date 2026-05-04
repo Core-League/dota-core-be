@@ -20,7 +20,7 @@ export class UserRoles {
   @Column()
   isAdminRole: boolean;
 
-  /** Null for system role catalog rows (Гість / Гравець / Капітан / Адмін). */
+  /** Null for system role catalog rows (Гість / Гравець / Капітан / Медіа / Адмін). */
   @ManyToOne(() => Player, (player) => player.roles, {
     onDelete: 'CASCADE',
     nullable: true,

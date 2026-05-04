@@ -55,7 +55,13 @@ export class UserRolesService {
   async findAll(): Promise<UserRoleResponseDto[]> {
     const rows = await this.userRolesRepo.findAllCatalog();
     const order = ROLE_CATALOG_DISPLAY_ORDER;
-    rows.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    rows.sort((a, b) => {
+      const ia = order.indexOf(a.id);
+      const ib = order.indexOf(b.id);
+      const sa = ia === -1 ? Number.MAX_SAFE_INTEGER : ia;
+      const sb = ib === -1 ? Number.MAX_SAFE_INTEGER : ib;
+      return sa - sb || a.name.localeCompare(b.name);
+    });
     return rows.map((r) => this.toResponse(r));
   }
 

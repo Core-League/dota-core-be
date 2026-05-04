@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { UserRoles } from './user-roles.entity';
 
 @Injectable()
@@ -19,12 +19,12 @@ export class UserRolesRepository {
     return this.repo.save(role);
   }
 
-  /** System role catalog only (`playerId` null). */
+  /** System role catalog only (`playerId` null). Query by column to avoid relation join edge cases. */
   findAllCatalog(): Promise<UserRoles[]> {
-    return this.repo.find({
-      where: { player: IsNull() },
-      relations: ['player'],
-    });
+    return this.repo
+      .createQueryBuilder('ur')
+      .where('ur.playerId IS NULL')
+      .getMany();
   }
 
   findOneById(id: string): Promise<UserRoles | null> {
