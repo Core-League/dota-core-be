@@ -1,12 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TournamentStatus } from '../tournaments.model';
+import { TournamentDivision, TournamentStatus } from '../tournaments.model';
 
 export class CreateTournamentDto {
   @ApiProperty()
   name: string;
 
-  @ApiProperty()
-  prizePool: number;
+  @ApiPropertyOptional()
+  prizePool?: number | null;
+
+  @ApiProperty({ enum: TournamentDivision, enumName: 'TournamentDivision' })
+  division: TournamentDivision;
 
   @ApiPropertyOptional()
   headerBannerUrl?: string;

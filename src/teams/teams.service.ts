@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
@@ -85,6 +86,11 @@ export class TeamsService {
 
   async update(id: string, payload: Partial<Team>): Promise<Team> {
     const team = await this.findOne(id);
+    const rosterFields: Array<keyof Team> = ['mainPlayers', 'reservedPlayers', 'captain', 'coach'];
+    const touchesRoster = rosterFields.some((f) => f in payload);
+    if (touchesRoster && team.tournament !== null) {
+      throw new ForbiddenException('Склад команди заблоковано під час участі в турнірі');
+    }
     Object.assign(team, payload);
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(id);
@@ -115,6 +121,9 @@ export class TeamsService {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) {
       throw new NotFoundException('Team not found');
+    }
+    if (team.tournament !== null) {
+      throw new ForbiddenException('Склад команди заблоковано під час участі в турнірі');
     }
 
     const wasCaptain = team.captain?.id === playerId;

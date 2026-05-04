@@ -47,7 +47,7 @@ export class TeamsRepository {
   findOneWithRoster(id: string): Promise<Team | null> {
     return this.repo.findOne({
       where: { id },
-      relations: ['captain', 'coach', 'mainPlayers', 'reservedPlayers'],
+      relations: ['captain', 'coach', 'mainPlayers', 'reservedPlayers', 'tournament'],
     });
   }
 

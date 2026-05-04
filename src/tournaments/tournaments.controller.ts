@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -15,6 +16,9 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.guard';
+import { QualificationService } from '../qualification/qualification.service';
+import { SubmitMatchDto } from '../qualification/dto/submit-match.dto';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
@@ -43,6 +47,7 @@ export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
     private readonly uploadsService: UploadsService,
+    private readonly qualificationService: QualificationService,
   ) {}
 
   @Post()
@@ -71,6 +76,28 @@ export class TournamentsController {
   @Delete(':id')
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.tournamentsService.remove(id);
+  }
+
+  @Post(':id/join')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async join(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<void> {
+    await this.qualificationService.joinTournament(id, req.user!.playerId);
+  }
+
+  @Post(':id/qualification/matches/:matchId/submit')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async submitMatch(
+    @Param('id', new ParseUUIDPipe()) _tournamentId: string,
+    @Param('matchId', new ParseUUIDPipe()) matchId: string,
+    @Body() body: SubmitMatchDto,
+    @Req() req: RequestWithJwtActor,
+  ) {
+    return this.qualificationService.submitMatch(matchId, body.dotaMatchId, req.user!.playerId);
   }
 
   @Post(':id/header-banner')
