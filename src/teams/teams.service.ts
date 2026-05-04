@@ -86,10 +86,17 @@ export class TeamsService {
 
   async update(id: string, payload: Partial<Team>): Promise<Team> {
     const team = await this.findOne(id);
-    const rosterFields: Array<keyof Team> = ['mainPlayers', 'reservedPlayers', 'captain', 'coach'];
+    const rosterFields: Array<keyof Team> = [
+      'mainPlayers',
+      'reservedPlayers',
+      'captain',
+      'coach',
+    ];
     const touchesRoster = rosterFields.some((f) => f in payload);
     if (touchesRoster && team.tournament !== null) {
-      throw new ForbiddenException('Склад команди заблоковано під час участі в турнірі');
+      throw new ForbiddenException(
+        'Склад команди заблоковано під час участі в турнірі',
+      );
     }
     Object.assign(team, payload);
     const saved = await this.teamsRepo.save(team);
@@ -126,7 +133,9 @@ export class TeamsService {
     if (!team) throw new NotFoundException('Команду не знайдено');
 
     if (team.tournament !== null) {
-      throw new ForbiddenException('Склад команди заблоковано під час участі в турнірі');
+      throw new ForbiddenException(
+        'Склад команди заблоковано під час участі в турнірі',
+      );
     }
 
     const player = await this.dataSource.getRepository(Player).findOne({
@@ -147,12 +156,16 @@ export class TeamsService {
 
     if (slot === 'main') {
       if (main.length >= 5) {
-        throw new BadRequestException('Основний склад вже заповнений (максимум 5 гравців)');
+        throw new BadRequestException(
+          'Основний склад вже заповнений (максимум 5 гравців)',
+        );
       }
       team.mainPlayers = [...main, player];
     } else {
       if (reserved.length >= 3) {
-        throw new BadRequestException('Список запасних вже заповнений (максимум 3 гравці)');
+        throw new BadRequestException(
+          'Список запасних вже заповнений (максимум 3 гравці)',
+        );
       }
       team.reservedPlayers = [...reserved, player];
     }
@@ -168,7 +181,9 @@ export class TeamsService {
       throw new NotFoundException('Team not found');
     }
     if (team.tournament !== null) {
-      throw new ForbiddenException('Склад команди заблоковано під час участі в турнірі');
+      throw new ForbiddenException(
+        'Склад команди заблоковано під час участі в турнірі',
+      );
     }
 
     const wasCaptain = team.captain?.id === playerId;
