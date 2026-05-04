@@ -15,6 +15,7 @@ import { Tournament } from '../tournaments/tournaments.entity';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role } from '../user-roles/role.constants';
+import { toPlayerRankDto } from '../players/dto/player-rank.dto';
 
 @Injectable()
 export class TeamsService {
@@ -23,7 +24,22 @@ export class TeamsService {
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
-  async createTeam(dto: CreateTeamDto, captainId: string): Promise<Team> {
+  private withRank(player: Player | null | undefined) {
+    if (!player) return player ?? null;
+    return { ...player, rank: toPlayerRankDto(player.rating) };
+  }
+
+  private mapTeam(team: Team) {
+    return {
+      ...team,
+      captain: this.withRank(team.captain),
+      coach: this.withRank(team.coach),
+      mainPlayers: (team.mainPlayers ?? []).map((p) => this.withRank(p)!),
+      reservedPlayers: (team.reservedPlayers ?? []).map((p) => this.withRank(p)!),
+    };
+  }
+
+  async createTeam(dto: CreateTeamDto, captainId: string) {
     const existingTeams = await this.teamsRepo.findByCaptainId(captainId);
     if (existingTeams.length > 0) {
       throw new ConflictException('Ви вже є капітаном іншої команди');
@@ -53,39 +69,40 @@ export class TeamsService {
       );
     }
 
-    return team;
+    return this.mapTeam(team);
   }
 
-  findAll(): Promise<Team[]> {
-    return this.teamsRepo.findAll();
+  async findAll() {
+    const teams = await this.teamsRepo.findAll();
+    return teams.map((t) => this.mapTeam(t));
   }
 
   /**
    * Lists teams with optional `tournaments` array (from `team.tournament`, ManyToOne).
    */
-  async search(
-    dto: SearchTeamsDto = {},
-  ): Promise<Array<Team & { tournaments?: Tournament[] }>> {
+  async search(dto: SearchTeamsDto = {}) {
     const teams = await this.teamsRepo.findAll();
+    const mapped = teams.map((t) => this.mapTeam(t));
     if (!dto.withTournaments) {
-      return teams;
+      return mapped;
     }
-    return teams.map((t) => ({
+    return mapped.map((t) => ({
       ...t,
       tournaments: t.tournament ? [t.tournament] : [],
     }));
   }
 
-  async findOne(id: string): Promise<Team> {
+  async findOne(id: string) {
     const team = await this.teamsRepo.findOneById(id);
     if (!team) {
       throw new NotFoundException('Команду не знайдено');
     }
-    return team;
+    return this.mapTeam(team);
   }
 
-  async update(id: string, payload: Partial<Team>): Promise<Team> {
-    const team = await this.findOne(id);
+  async update(id: string, payload: Partial<Team>) {
+    const team = await this.teamsRepo.findOneById(id);
+    if (!team) throw new NotFoundException('Команду не знайдено');
     const rosterFields: Array<keyof Team> = [
       'mainPlayers',
       'reservedPlayers',
@@ -101,11 +118,12 @@ export class TeamsService {
     Object.assign(team, payload);
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(id);
-    return saved;
+    return this.mapTeam(saved);
   }
 
   async remove(id: string): Promise<void> {
-    const team = await this.findOne(id);
+    const team = await this.teamsRepo.findOneById(id);
+    if (!team) throw new NotFoundException('Команду не знайдено');
     const captainId = team.captain?.id;
 
     await this.dataSource.transaction(async (manager) => {
@@ -128,7 +146,7 @@ export class TeamsService {
     teamId: string,
     playerId: string,
     slot: 'main' | 'reserved',
-  ): Promise<Team> {
+  ) {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) throw new NotFoundException('Команду не знайдено');
 
@@ -172,10 +190,10 @@ export class TeamsService {
 
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(teamId);
-    return saved;
+    return this.mapTeam(saved);
   }
 
-  async removePlayerFromTeam(teamId: string, playerId: string): Promise<Team> {
+  async removePlayerFromTeam(teamId: string, playerId: string) {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) {
       throw new NotFoundException('Team not found');
@@ -209,7 +227,7 @@ export class TeamsService {
 
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(teamId);
-    return saved;
+    return this.mapTeam(saved);
   }
 
   private async resetPlayersTeamIdColumn(
