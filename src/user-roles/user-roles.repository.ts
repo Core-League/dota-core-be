@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { UserRoles } from './user-roles.entity';
+import { ROLE_CATALOG_DISPLAY_ORDER } from './role.constants';
 
 @Injectable()
 export class UserRolesRepository {
@@ -19,12 +20,11 @@ export class UserRolesRepository {
     return this.repo.save(role);
   }
 
-  /** System role catalog only (`playerId` null). Query by column to avoid relation join edge cases. */
+  /** System role catalog rows: stable UUIDs from `ROLE_CATALOG_DISPLAY_ORDER` (not `playerId IS NULL`, so Адмін is included even if a row was mis-linked). */
   findAllCatalog(): Promise<UserRoles[]> {
-    return this.repo
-      .createQueryBuilder('ur')
-      .where('ur.playerId IS NULL')
-      .getMany();
+    return this.repo.find({
+      where: { id: In([...ROLE_CATALOG_DISPLAY_ORDER]) },
+    });
   }
 
   findOneById(id: string): Promise<UserRoles | null> {

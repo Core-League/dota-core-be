@@ -34,6 +34,20 @@ export const ROLE_CATALOG_DISPLAY_ORDER: readonly string[] = [
   ROLE_CATALOG_IDS.ADMIN,
 ];
 
+/** Defaults for stable catalog UUIDs (used when DB row is missing or mis-linked). */
+export function getSystemCatalogRoleSpec(
+  id: string,
+): { name: RoleName; isAdminRole: boolean } | undefined {
+  const table: Record<string, { name: RoleName; isAdminRole: boolean }> = {
+    [ROLE_CATALOG_IDS.GUEST]: { name: Role.GUEST, isAdminRole: false },
+    [ROLE_CATALOG_IDS.PLAYER]: { name: Role.PLAYER, isAdminRole: false },
+    [ROLE_CATALOG_IDS.CAPTAIN]: { name: Role.CAPTAIN, isAdminRole: false },
+    [ROLE_CATALOG_IDS.MEDIA]: { name: Role.MEDIA, isAdminRole: false },
+    [ROLE_CATALOG_IDS.ADMIN]: { name: Role.ADMIN, isAdminRole: true },
+  };
+  return table[id];
+}
+
 /**
  * Hex for UI (`#RRGGBB`), під parseHexColor на фронті.
  * Гість — нейтральний сірий, гравець — синій, капітан — золотистий, медіа — фіолетовий, адмін — контрастний акцент.
