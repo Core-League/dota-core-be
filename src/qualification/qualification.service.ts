@@ -155,17 +155,15 @@ export class QualificationService {
     for (const opponent of existingTeams) {
       if (!opponent.dotaTeamId) continue;
 
-      // Create the match node referencing the qualification stage (node_group_id = qual ID).
-      // The match itself is assigned the NEXT counter value by Dota2, so we increment after.
+      const matchNodeGroupId = await this.nextNodeGroupId();
       await this.dota2.addNodeGroup({
-        nodeGroupId: qualification.nodeGroupId,
+        nodeGroupId: matchNodeGroupId,
         nodeGroupType: 7,
         teamCount: 2,
         containingNodeGroupId: qualification.nodeGroupId,
         phase: 0,
         defaultNodeType: 1,
       });
-      const matchNodeGroupId = await this.nextNodeGroupId();
       await this.dota2.addNodeGroupTeam(matchNodeGroupId, team.dotaTeamId);
       await this.dota2.addNodeGroupTeam(matchNodeGroupId, opponent.dotaTeamId);
 
