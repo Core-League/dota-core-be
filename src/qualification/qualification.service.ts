@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -39,6 +40,8 @@ function computeDivision(mainPlayers: Player[]): TournamentDivision | null {
 
 @Injectable()
 export class QualificationService {
+  private readonly logger = new Logger(QualificationService.name);
+
   constructor(
     private readonly qualRepo: QualificationRepository,
     private readonly qualMatchRepo: QualificationMatchRepository,
@@ -53,20 +56,25 @@ export class QualificationService {
   }
 
   async createForTournament(tournament: Tournament, nodeGroupId: string): Promise<Qualification> {
+    this.logger.log(`Creating qualification for tournament ${tournament.id} with nodeGroupId=${nodeGroupId}`);
     const q = this.qualRepo.create({
       tournament,
       startTime: tournament.registrationStartsAt,
       endTime: tournament.registrationEndsAt,
       nodeGroupId,
     });
-    return this.qualRepo.save(q);
+    const saved = await this.qualRepo.save(q);
+    this.logger.log(`Qualification created: id=${saved.id} nodeGroupId=${nodeGroupId}`);
+    return saved;
   }
 
   async nextNodeGroupId(): Promise<string> {
     const result = await this.dataSource.query(
       "SELECT nextval('dota_node_group_seq') AS value",
     );
-    return String(result[0].value);
+    const id = String(result[0].value);
+    this.logger.log(`node_group_seq nextval → ${id}`);
+    return id;
   }
 
   async joinTournament(tournamentId: string, playerId: string): Promise<void> {
@@ -149,23 +157,29 @@ export class QualificationService {
       return acc;
     }, []);
 
+    this.logger.log(`Team ${team.id} (dotaTeamId=${team.dotaTeamId}) joining qualification nodeGroupId=${qualification.nodeGroupId}`);
     await this.dota2.addNodeGroupTeam(qualification.nodeGroupId, team.dotaTeamId);
+    this.logger.log(`Team added to qualification stage nodeGroupId=${qualification.nodeGroupId}`);
 
     const newMatches: QualificationMatch[] = [];
     for (const opponent of existingTeams) {
       if (!opponent.dotaTeamId) continue;
 
-      const matchNodeGroupId = await this.nextNodeGroupId();
+      this.logger.log(`Creating match node: containingNodeGroupId=${qualification.nodeGroupId} (team=${team.dotaTeamId} vs opponent=${opponent.dotaTeamId}), node_group_id empty — Dota2 auto-assigns`);
       await this.dota2.addNodeGroup({
-        nodeGroupId: matchNodeGroupId,
+        nodeGroupId: '',
         nodeGroupType: 7,
         teamCount: 2,
         containingNodeGroupId: qualification.nodeGroupId,
         phase: 0,
         defaultNodeType: 1,
       });
+      const matchNodeGroupId = await this.nextNodeGroupId();
+      this.logger.log(`Match node created — Dota2 assigned nodeGroupId=${matchNodeGroupId} — adding teams`);
       await this.dota2.addNodeGroupTeam(matchNodeGroupId, team.dotaTeamId);
+      this.logger.log(`Added team ${team.dotaTeamId} to match nodeGroupId=${matchNodeGroupId}`);
       await this.dota2.addNodeGroupTeam(matchNodeGroupId, opponent.dotaTeamId);
+      this.logger.log(`Added opponent ${opponent.dotaTeamId} to match nodeGroupId=${matchNodeGroupId}`);
 
       const match = this.qualMatchRepo.create({
         qualification,
