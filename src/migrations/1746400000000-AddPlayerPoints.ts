@@ -8,8 +8,8 @@ export class AddPlayerPoints1746400000000 implements MigrationInterface {
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS player_tournament_points (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        "playerId" varchar NOT NULL,
-        "tournamentId" varchar NOT NULL,
+        "playerId" uuid NOT NULL,
+        "tournamentId" uuid NOT NULL,
         points integer NOT NULL DEFAULT 0,
         CONSTRAINT fk_ptp_player FOREIGN KEY ("playerId") REFERENCES player(id) ON DELETE CASCADE,
         CONSTRAINT fk_ptp_tournament FOREIGN KEY ("tournamentId") REFERENCES tournament(id) ON DELETE CASCADE,

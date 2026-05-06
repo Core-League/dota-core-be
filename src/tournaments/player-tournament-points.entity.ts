@@ -15,14 +15,14 @@ export class PlayerTournamentPoints {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar' })
+  @Column({ type: 'uuid' })
   playerId: string;
 
   @ManyToOne(() => Player, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'playerId' })
   player: Player;
 
-  @Column({ type: 'varchar' })
+  @Column({ type: 'uuid' })
   tournamentId: string;
 
   @ManyToOne(() => Tournament, { onDelete: 'CASCADE' })
