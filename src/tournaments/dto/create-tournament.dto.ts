@@ -1,8 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
 import {
-  IsDate,
+  IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -45,27 +45,27 @@ export class CreateTournamentDto {
   tournamentSlots?: number;
 
   @ApiProperty()
-  @Type(() => Date)
-  @IsDate()
-  registrationStartsAt: Date;
+  @IsDateString()
+  registrationStartsAt: string;
 
   @ApiProperty()
-  @Type(() => Date)
-  @IsDate()
-  registrationEndsAt: Date;
+  @IsDateString()
+  registrationEndsAt: string;
 
   @ApiProperty()
-  @Type(() => Date)
-  @IsDate()
-  tournamentStartsAt: Date;
+  @IsDateString()
+  tournamentStartsAt: string;
 
   @ApiProperty()
-  @Type(() => Date)
-  @IsDate()
-  tournamentEndsAt: Date;
+  @IsDateString()
+  tournamentEndsAt: string;
 
-  @ApiProperty({ enum: TournamentStatus, enumName: 'TournamentStatus' })
-  @IsEnum(TournamentStatus)
+  @ApiProperty({
+    enum: [TournamentStatus.QUALIFICATIONS, TournamentStatus.PLAYOFF],
+    enumName: 'TournamentStatus',
+    description: 'COMPLETED cannot be set on creation',
+  })
+  @IsIn([TournamentStatus.QUALIFICATIONS, TournamentStatus.PLAYOFF])
   tournamentStatus: TournamentStatus;
 
   @ApiPropertyOptional()

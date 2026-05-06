@@ -72,7 +72,28 @@ export class TournamentsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateTournamentDto,
   ) {
-    return this.tournamentsService.update(id, body);
+    const {
+      registrationStartsAt,
+      registrationEndsAt,
+      tournamentStartsAt,
+      tournamentEndsAt,
+      ...rest
+    } = body;
+    return this.tournamentsService.update(id, {
+      ...rest,
+      ...(registrationStartsAt !== undefined && {
+        registrationStartsAt: new Date(registrationStartsAt),
+      }),
+      ...(registrationEndsAt !== undefined && {
+        registrationEndsAt: new Date(registrationEndsAt),
+      }),
+      ...(tournamentStartsAt !== undefined && {
+        tournamentStartsAt: new Date(tournamentStartsAt),
+      }),
+      ...(tournamentEndsAt !== undefined && {
+        tournamentEndsAt: new Date(tournamentEndsAt),
+      }),
+    });
   }
 
   @Delete(':id')

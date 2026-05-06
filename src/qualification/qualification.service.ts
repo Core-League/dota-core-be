@@ -97,7 +97,7 @@ export class QualificationService {
 
     if (
       !bypass &&
-      tournament.tournamentStatus !== TournamentStatus.REGISTRATION_OPEN
+      tournament.tournamentStatus !== TournamentStatus.QUALIFICATIONS
     ) {
       throw new BadRequestException('Реєстрація на турнір закрита');
     }
@@ -293,6 +293,15 @@ export class QualificationService {
     if (!qualMatch) {
       throw new NotFoundException(
         'Кваліфікаційний матч для вказаних команд не знайдено або результат вже подано',
+      );
+    }
+
+    if (
+      qualMatch.qualification.tournament.tournamentStatus !==
+      TournamentStatus.QUALIFICATIONS
+    ) {
+      throw new BadRequestException(
+        'Подача матчів доступна лише під час кваліфікаційного етапу',
       );
     }
 

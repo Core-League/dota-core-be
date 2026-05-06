@@ -16,7 +16,13 @@ export class TournamentsService {
   ) {}
 
   async create(dto: CreateTournamentDto): Promise<Tournament> {
-    const entity = this.tournamentsRepo.create(dto);
+    const entity = this.tournamentsRepo.create({
+      ...dto,
+      registrationStartsAt: new Date(dto.registrationStartsAt),
+      registrationEndsAt: new Date(dto.registrationEndsAt),
+      tournamentStartsAt: new Date(dto.tournamentStartsAt),
+      tournamentEndsAt: new Date(dto.tournamentEndsAt),
+    });
     const tournament = await this.tournamentsRepo.save(entity);
 
     this.logger.log(
