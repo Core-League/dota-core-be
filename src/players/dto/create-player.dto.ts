@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsArray,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import type { PlayerPosition } from '../player.entity';
 
 export class CreatePlayerDto {

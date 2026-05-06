@@ -13,7 +13,7 @@ export class ClearPlayerTeamId7a9c75831746200000005 implements MigrationInterfac
     );
   }
 
-  public async down(_queryRunner: QueryRunner): Promise<void> {
+  public async down(): Promise<void> {
     await Promise.resolve();
   }
 }

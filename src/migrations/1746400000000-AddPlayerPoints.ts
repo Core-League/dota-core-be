@@ -3,7 +3,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 export class AddPlayerPoints1746400000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Remove the transient player.points column if it was added by an earlier version
-    await queryRunner.query(`ALTER TABLE player DROP COLUMN IF EXISTS "points";`);
+    await queryRunner.query(
+      `ALTER TABLE player DROP COLUMN IF EXISTS "points";`,
+    );
 
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS player_tournament_points (

@@ -95,19 +95,26 @@ export class TournamentsController {
     @Body() body: JoinTournamentDto,
     @Req() req: RequestWithJwtActor,
   ): Promise<void> {
-    await this.qualificationService.joinTournament(id, req.user!.playerId, body?.teamId);
+    await this.qualificationService.joinTournament(
+      id,
+      req.user!.playerId,
+      body?.teamId,
+    );
   }
 
-  @Post(':id/qualification/matches/:matchId/submit')
+  @Post(':id/qualification/submit')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   async submitMatch(
-    @Param('id', new ParseUUIDPipe()) _tournamentId: string,
-    @Param('matchId', new ParseUUIDPipe()) matchId: string,
+    @Param('id', new ParseUUIDPipe()) tournamentId: string,
     @Body() body: SubmitMatchDto,
     @Req() req: RequestWithJwtActor,
   ) {
-    return this.qualificationService.submitMatch(matchId, body.dotaMatchId, req.user!.playerId);
+    return this.qualificationService.submitMatch(
+      tournamentId,
+      body.dotaMatchId,
+      req.user!.playerId,
+    );
   }
 
   @Post(':id/header-banner')

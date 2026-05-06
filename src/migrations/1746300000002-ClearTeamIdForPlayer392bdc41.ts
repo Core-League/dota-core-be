@@ -17,7 +17,7 @@ export class ClearTeamIdForPlayer392bdc411746300000002 implements MigrationInter
     `);
   }
 
-  public async down(_queryRunner: QueryRunner): Promise<void> {
+  public async down(): Promise<void> {
     // Data fix cannot be reversed automatically
   }
 }

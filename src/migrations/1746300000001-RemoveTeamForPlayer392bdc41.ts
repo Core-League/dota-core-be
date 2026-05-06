@@ -43,7 +43,7 @@ export class RemoveTeamForPlayer392bdc411746300000001 implements MigrationInterf
     `);
   }
 
-  public async down(_queryRunner: QueryRunner): Promise<void> {
+  public async down(): Promise<void> {
     // Data deletion cannot be reversed automatically
   }
 }

@@ -12,10 +12,20 @@ import { QualificationService } from './qualification.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Qualification, QualificationMatch, Team, Tournament, PlayerTournamentPoints]),
+    TypeOrmModule.forFeature([
+      Qualification,
+      QualificationMatch,
+      Team,
+      Tournament,
+      PlayerTournamentPoints,
+    ]),
     Dota2Module,
   ],
-  providers: [QualificationService, QualificationRepository, QualificationMatchRepository],
+  providers: [
+    QualificationService,
+    QualificationRepository,
+    QualificationMatchRepository,
+  ],
   exports: [QualificationService],
 })
 export class QualificationModule {}

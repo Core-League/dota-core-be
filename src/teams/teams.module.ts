@@ -12,7 +12,12 @@ import { TeamsRepository } from './teams.repository';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Team, Player, Tournament, PlayerTournamentPoints]),
+    TypeOrmModule.forFeature([
+      Team,
+      Player,
+      Tournament,
+      PlayerTournamentPoints,
+    ]),
     AuthModule,
     UploadsModule,
   ],

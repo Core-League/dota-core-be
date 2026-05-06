@@ -64,9 +64,13 @@ export class AddDivisionAndQualification1746300000000 implements MigrationInterf
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP TABLE IF EXISTS "qualification_match"`);
     await queryRunner.query(`DROP TABLE IF EXISTS "qualification"`);
-    await queryRunner.query(`ALTER TABLE "tournament" DROP COLUMN IF EXISTS "division"`);
+    await queryRunner.query(
+      `ALTER TABLE "tournament" DROP COLUMN IF EXISTS "division"`,
+    );
     await queryRunner.query(`DROP TYPE IF EXISTS tournament_division_enum`);
-    await queryRunner.query(`ALTER TABLE "tournament" ALTER COLUMN "prizePool" SET NOT NULL`);
+    await queryRunner.query(
+      `ALTER TABLE "tournament" ALTER COLUMN "prizePool" SET NOT NULL`,
+    );
     await queryRunner.query(`DROP SEQUENCE IF EXISTS dota_node_group_seq`);
   }
 }

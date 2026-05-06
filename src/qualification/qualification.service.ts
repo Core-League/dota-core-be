@@ -270,12 +270,31 @@ export class QualificationService {
   }
 
   async submitMatch(
-    qualMatchId: string,
+    tournamentId: string,
     dotaMatchId: string,
     playerId: string,
   ): Promise<QualificationMatch> {
-    const qualMatch = await this.qualMatchRepo.findOneById(qualMatchId);
-    if (!qualMatch) throw new NotFoundException('Матч не знайдено');
+    const matchData = await this.dota2.getOpenDotaMatch(dotaMatchId);
+
+    const radiantTeamId = String(matchData.radiant_team?.team_id ?? '');
+    const direTeamId = String(matchData.dire_team?.team_id ?? '');
+
+    if (!radiantTeamId || !direTeamId) {
+      throw new BadRequestException(
+        'Матч не містить інформації про команди — переконайтеся що це офіційний ліговий матч',
+      );
+    }
+
+    const qualMatch = await this.qualMatchRepo.findByTournamentAndDotaTeams(
+      tournamentId,
+      radiantTeamId,
+      direTeamId,
+    );
+    if (!qualMatch) {
+      throw new NotFoundException(
+        'Кваліфікаційний матч для вказаних команд не знайдено або результат вже подано',
+      );
+    }
 
     const isCaptainA = qualMatch.teamA.captain?.id === playerId;
     const isCaptainB = qualMatch.teamB.captain?.id === playerId;
@@ -296,10 +315,6 @@ export class QualificationService {
       }
     }
 
-    if (qualMatch.dotaMatchId !== null) {
-      throw new BadRequestException('Результат цього матчу вже подано');
-    }
-
     if (new Date() > qualMatch.qualification.endTime) {
       throw new BadRequestException(
         'Кваліфікаційний етап завершено — подача матчів заборонена',
@@ -317,11 +332,7 @@ export class QualificationService {
       );
     }
 
-    const matchData = await this.dota2.getOpenDotaMatch(dotaMatchId);
     this.validateOpenDotaMatch(matchData, qualMatch);
-
-    const radiantTeamId = String(matchData.radiant_team?.team_id ?? '');
-    const direTeamId = String(matchData.dire_team?.team_id ?? '');
 
     const teamAIsRadiant =
       radiantTeamId === qualMatch.teamA.dotaTeamId ||
@@ -345,8 +356,6 @@ export class QualificationService {
       loser.id === qualMatch.teamA.id
         ? qualMatch.teamA.mainPlayers
         : qualMatch.teamB.mainPlayers;
-
-    const tournamentId = qualMatch.qualification.tournament.id;
 
     qualMatch.dotaMatchId = dotaMatchId;
     qualMatch.winner = winner;

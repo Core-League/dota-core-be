@@ -3,7 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
@@ -11,7 +10,6 @@ import { Team } from './team.entity';
 import { TeamsRepository } from './teams.repository';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { SearchTeamsDto } from './dto/search-teams.dto';
-import { Tournament } from '../tournaments/tournaments.entity';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
@@ -36,7 +34,9 @@ export class TeamsService {
       captain: this.withRank(team.captain),
       coach: this.withRank(team.coach),
       mainPlayers: (team.mainPlayers ?? []).map((p) => this.withRank(p)!),
-      reservedPlayers: (team.reservedPlayers ?? []).map((p) => this.withRank(p)!),
+      reservedPlayers: (team.reservedPlayers ?? []).map(
+        (p) => this.withRank(p)!,
+      ),
     };
   }
 

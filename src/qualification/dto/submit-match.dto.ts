@@ -1,9 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNumberString } from 'class-validator';
 
 export class SubmitMatchDto {
-  @ApiProperty({ description: 'Dota2 match ID from the played game' })
-  @IsString()
-  @IsNotEmpty()
+  @ApiProperty({ description: 'Dota2 numeric match ID from the played game' })
+  @IsNumberString()
   dotaMatchId: string;
 }

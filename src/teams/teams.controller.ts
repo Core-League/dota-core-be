@@ -118,7 +118,7 @@ export class TeamsController {
   ): Promise<{ url: string }> {
     if (!file) throw new BadRequestException('No file uploaded');
     const url = this.uploadsService.buildUrl('teams', file.filename);
-    await this.teamsService.update(id, { logoUrl: url } as any);
+    await this.teamsService.update(id, { logoUrl: url });
     return { url };
   }
 }
