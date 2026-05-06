@@ -22,6 +22,7 @@ import { QualificationService } from '../qualification/qualification.service';
 import { SubmitMatchDto } from '../qualification/dto/submit-match.dto';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
+import { JoinTournamentDto } from './dto/join-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import {
   createDiskStorage,
@@ -91,7 +92,7 @@ export class TournamentsController {
   @ApiBearerAuth()
   async join(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { teamId?: string },
+    @Body() body: JoinTournamentDto,
     @Req() req: RequestWithJwtActor,
   ): Promise<void> {
     await this.qualificationService.joinTournament(id, req.user!.playerId, body?.teamId);

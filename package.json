@@ -41,6 +41,8 @@
     "@nestjs/typeorm": "^11.0.0",
     "axios": "^1.15.0",
     "cheerio": "^1.2.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.4",
     "discord-interactions": "^4.4.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
