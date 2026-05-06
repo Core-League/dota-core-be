@@ -19,7 +19,9 @@ export class TournamentsService {
     const entity = this.tournamentsRepo.create(dto);
     const tournament = await this.tournamentsRepo.save(entity);
 
-    this.logger.log(`Tournament ${tournament.id}: calling addNodeGroup for qualification stage (node_group_id empty, Dota2 auto-assigns)`);
+    this.logger.log(
+      `Tournament ${tournament.id}: calling addNodeGroup for qualification stage`,
+    );
     await this.dota2.addNodeGroup({
       nodeGroupId: '',
       nodeGroupType: 1,
@@ -28,9 +30,14 @@ export class TournamentsService {
       phase: 2,
       defaultNodeType: 0,
     });
-    const nodeGroupId = await this.qualificationService.nextNodeGroupId();
-    this.logger.log(`Qualification stage nodeGroupId=${nodeGroupId} (Dota2 assigned)`);
-    await this.qualificationService.createForTournament(tournament, nodeGroupId);
+    const nodeGroupId = await this.dota2.resolveOrganizationalNodeGroupId();
+    this.logger.log(
+      `Qualification stage nodeGroupId=${nodeGroupId} (parsed from Dota2 page)`,
+    );
+    await this.qualificationService.createForTournament(
+      tournament,
+      nodeGroupId,
+    );
 
     return tournament;
   }
@@ -55,6 +62,26 @@ export class TournamentsService {
 
   async remove(id: string): Promise<void> {
     const tournament = await this.findOne(id);
+
+    try {
+      const qualification =
+        await this.qualificationService.getByTournamentId(id);
+
+      for (const match of qualification.matches ?? []) {
+        this.logger.log(`Removing Dota2 match node group ${match.nodeGroupId}`);
+        await this.dota2.removeNodeGroup(match.nodeGroupId);
+      }
+
+      this.logger.log(
+        `Removing Dota2 qualification node group ${qualification.nodeGroupId} for tournament ${id}`,
+      );
+      await this.dota2.removeNodeGroup(qualification.nodeGroupId);
+    } catch {
+      this.logger.warn(
+        `No qualification found for tournament ${id} — skipping Dota2 node group removal`,
+      );
+    }
+
     await this.tournamentsRepo.remove(tournament);
   }
 }

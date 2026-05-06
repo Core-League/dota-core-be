@@ -12,7 +12,11 @@ import { Dota2Service, OpenDotaMatch } from '../dota2/dota2.service';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
-import { TournamentDivision, TournamentStatus } from '../tournaments/tournaments.model';
+import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
+import {
+  TournamentDivision,
+  TournamentStatus,
+} from '../tournaments/tournaments.model';
 import { QualificationMatch } from './qualification-match.entity';
 import { QualificationMatchRepository } from './qualification-match.repository';
 import { Qualification } from './qualification.entity';
@@ -20,7 +24,6 @@ import { QualificationRepository } from './qualification.repository';
 
 const STEAM_ID_OFFSET = 76561197960265728n;
 const MIN_MATCH_DURATION_SEC = 900;
-const MAIN_PLAYERS_REQUIRED = 5;
 const MAX_RESERVED_PLAYERS = 3;
 
 function steamId64ToAccountId(steamId64: string): number {
@@ -51,12 +54,21 @@ export class QualificationService {
 
   async getByTournamentId(tournamentId: string): Promise<Qualification> {
     const qualification = await this.qualRepo.findByTournamentId(tournamentId);
-    if (!qualification) throw new NotFoundException('Кваліфікацію турніру не знайдено');
+    if (!qualification)
+      throw new NotFoundException('Кваліфікацію турніру не знайдено');
+    qualification.matches = (qualification.matches ?? []).filter(
+      (m) => m.dotaMatchId !== null,
+    );
     return qualification;
   }
 
-  async createForTournament(tournament: Tournament, nodeGroupId: string): Promise<Qualification> {
-    this.logger.log(`Creating qualification for tournament ${tournament.id} with nodeGroupId=${nodeGroupId}`);
+  async createForTournament(
+    tournament: Tournament,
+    nodeGroupId: string,
+  ): Promise<Qualification> {
+    this.logger.log(
+      `Creating qualification for tournament ${tournament.id} with nodeGroupId=${nodeGroupId}`,
+    );
     const q = this.qualRepo.create({
       tournament,
       startTime: tournament.registrationStartsAt,
@@ -64,82 +76,116 @@ export class QualificationService {
       nodeGroupId,
     });
     const saved = await this.qualRepo.save(q);
-    this.logger.log(`Qualification created: id=${saved.id} nodeGroupId=${nodeGroupId}`);
+    this.logger.log(
+      `Qualification created: id=${saved.id} nodeGroupId=${nodeGroupId}`,
+    );
     return saved;
   }
 
-  async nextNodeGroupId(): Promise<string> {
-    const result = await this.dataSource.query(
-      "SELECT nextval('dota_node_group_seq') AS value",
-    );
-    const id = String(result[0].value);
-    this.logger.log(`node_group_seq nextval → ${id}`);
-    return id;
-  }
+  async joinTournament(
+    tournamentId: string,
+    playerId: string,
+    overrideTeamId?: string,
+  ): Promise<void> {
+    const bypass = process.env.BYPASS_TEAM_VERIFICATION === 'true';
 
-  async joinTournament(tournamentId: string, playerId: string): Promise<void> {
     const tournament = await this.dataSource.getRepository(Tournament).findOne({
       where: { id: tournamentId },
       relations: ['teams'],
     });
     if (!tournament) throw new NotFoundException('Турнір не знайдено');
 
-    if (tournament.tournamentStatus !== TournamentStatus.REGISTRATION_OPEN) {
+    if (
+      !bypass &&
+      tournament.tournamentStatus !== TournamentStatus.REGISTRATION_OPEN
+    ) {
       throw new BadRequestException('Реєстрація на турнір закрита');
     }
 
-    const team = await this.dataSource.getRepository(Team).findOne({
-      where: { captain: { id: playerId } },
-      relations: ['captain', 'mainPlayers', 'reservedPlayers', 'tournament'],
-    });
+    const teamRepo = this.dataSource.getRepository(Team);
+    const team =
+      bypass && overrideTeamId
+        ? await teamRepo.findOne({
+            where: { id: overrideTeamId },
+            relations: [
+              'captain',
+              'mainPlayers',
+              'reservedPlayers',
+              'tournament',
+            ],
+          })
+        : await teamRepo.findOne({
+            where: { captain: { id: playerId } },
+            relations: [
+              'captain',
+              'mainPlayers',
+              'reservedPlayers',
+              'tournament',
+            ],
+          });
+
     if (!team) {
-      throw new ForbiddenException('Тільки капітан команди може приєднатися до турніру');
+      throw new ForbiddenException(
+        bypass && overrideTeamId
+          ? 'Команду не знайдено'
+          : 'Тільки капітан команди може приєднатися до турніру',
+      );
     }
 
     if (team.tournament !== null) {
       throw new BadRequestException('Команда вже бере участь у турнірі');
     }
 
-    if (!team.isVerified) {
-      throw new BadRequestException('Команда не верифікована');
-    }
-
-    if (!team.dotaTeamId) {
-      throw new BadRequestException('Команда не має Dota2 Team ID');
-    }
-
-    const main = team.mainPlayers ?? [];
-    if (main.length !== MAIN_PLAYERS_REQUIRED) {
-      throw new BadRequestException(`Команда повинна мати рівно ${MAIN_PLAYERS_REQUIRED} основних гравців`);
-    }
-
-    const unverifiedMain = main.filter((p) => !p.verifiedAt);
-    if (unverifiedMain.length > 0) {
-      throw new BadRequestException('Всі основні гравці повинні бути верифіковані');
-    }
-
-    const teamDivision = computeDivision(main);
-    if (!teamDivision) {
-      throw new BadRequestException('Рейтинг команди виходить за межі дозволених дивізіонів');
-    }
-    if (teamDivision !== tournament.division) {
-      throw new BadRequestException(
-        `Дивізіон команди (${teamDivision}) не відповідає дивізіону турніру (${tournament.division})`,
-      );
-    }
-
-    const reserved = team.reservedPlayers ?? [];
-    if (reserved.length > MAX_RESERVED_PLAYERS) {
-      throw new BadRequestException(`Дозволено не більше ${MAX_RESERVED_PLAYERS} запасних гравців`);
-    }
-    for (const sub of reserved) {
-      if (!sub.verifiedAt) {
-        throw new BadRequestException(`Запасний гравець ${sub.id} не верифікований`);
+    if (!bypass) {
+      if (!team.isVerified) {
+        throw new BadRequestException('Команда не верифікована');
       }
-      this.validateSubstitute(main, sub);
+
+      if (!team.dotaTeamId) {
+        throw new BadRequestException('Команда не має Dota2 Team ID');
+      }
+
+      const main = team.mainPlayers ?? [];
+
+      const unverifiedMain = main.filter((p) => !p.verifiedAt);
+      if (unverifiedMain.length > 0) {
+        throw new BadRequestException(
+          'Всі основні гравці повинні бути верифіковані',
+        );
+      }
+
+      const teamDivision = computeDivision(main);
+      if (!teamDivision) {
+        throw new BadRequestException(
+          'Рейтинг команди виходить за межі дозволених дивізіонів',
+        );
+      }
+      if (teamDivision !== tournament.division) {
+        throw new BadRequestException(
+          `Дивізіон команди (${teamDivision}) не відповідає дивізіону турніру (${tournament.division})`,
+        );
+      }
+
+      const reserved = team.reservedPlayers ?? [];
+      if (reserved.length > MAX_RESERVED_PLAYERS) {
+        throw new BadRequestException(
+          `Дозволено не більше ${MAX_RESERVED_PLAYERS} запасних гравців`,
+        );
+      }
+      for (const sub of reserved) {
+        if (!sub.verifiedAt) {
+          throw new BadRequestException(
+            `Запасний гравець ${sub.id} не верифікований`,
+          );
+        }
+        this.validateSubstitute(main, sub);
+      }
     }
 
-    if (tournament.tournamentSlots !== null && tournament.tournamentSlots !== undefined) {
+    if (
+      tournament.tournamentSlots !== null &&
+      tournament.tournamentSlots !== undefined
+    ) {
       const currentCount = (tournament.teams ?? []).length;
       if (currentCount >= tournament.tournamentSlots) {
         throw new BadRequestException('Усі місця в турнірі зайняті');
@@ -151,35 +197,56 @@ export class QualificationService {
       throw new NotFoundException('Кваліфікацію турніру не знайдено');
     }
 
-    const existingTeams = (qualification.matches ?? []).reduce<Team[]>((acc, m) => {
-      if (!acc.find((t) => t.id === m.teamA.id)) acc.push(m.teamA);
-      if (!acc.find((t) => t.id === m.teamB.id)) acc.push(m.teamB);
-      return acc;
-    }, []);
+    const existingTeams = (tournament.teams ?? []).filter(
+      (t) => t.id !== team.id,
+    );
 
-    this.logger.log(`Team ${team.id} (dotaTeamId=${team.dotaTeamId}) joining qualification nodeGroupId=${qualification.nodeGroupId}`);
-    await this.dota2.addNodeGroupTeam(qualification.nodeGroupId, team.dotaTeamId);
-    this.logger.log(`Team added to qualification stage nodeGroupId=${qualification.nodeGroupId}`);
+    this.logger.log(
+      `Team ${team.id} (dotaTeamId=${team.dotaTeamId}) joining qualification nodeGroupId=${qualification.nodeGroupId}`,
+    );
+    if (team.dotaTeamId) {
+      await this.dota2.addNodeGroupTeam(
+        qualification.nodeGroupId,
+        team.dotaTeamId,
+      );
+      this.logger.log(
+        `Team added to qualification stage nodeGroupId=${qualification.nodeGroupId}`,
+      );
+    } else {
+      this.logger.warn(
+        `Team ${team.id} has no dotaTeamId — skipping addNodeGroupTeam`,
+      );
+    }
 
     const newMatches: QualificationMatch[] = [];
     for (const opponent of existingTeams) {
-      if (!opponent.dotaTeamId) continue;
+      if (!opponent.dotaTeamId || !team.dotaTeamId) continue;
 
-      this.logger.log(`Creating match node: containingNodeGroupId=${qualification.nodeGroupId} (team=${team.dotaTeamId} vs opponent=${opponent.dotaTeamId}), node_group_id empty — Dota2 auto-assigns`);
+      this.logger.log(
+        `Creating match node inside NodeGroup${qualification.nodeGroupId} (team=${team.dotaTeamId} vs opponent=${opponent.dotaTeamId})`,
+      );
       await this.dota2.addNodeGroup({
         nodeGroupId: '',
-        nodeGroupType: 7,
+        nodeGroupType: 2,
         teamCount: 2,
         containingNodeGroupId: qualification.nodeGroupId,
         phase: 0,
         defaultNodeType: 1,
       });
-      const matchNodeGroupId = await this.nextNodeGroupId();
-      this.logger.log(`Match node created — Dota2 assigned nodeGroupId=${matchNodeGroupId} — adding teams`);
+      const matchNodeGroupId = await this.dota2.resolveRoundRobinNodeGroupId(
+        qualification.nodeGroupId,
+      );
+      this.logger.log(
+        `Match node nodeGroupId=${matchNodeGroupId} (parsed from Dota2 page) — adding teams`,
+      );
       await this.dota2.addNodeGroupTeam(matchNodeGroupId, team.dotaTeamId);
-      this.logger.log(`Added team ${team.dotaTeamId} to match nodeGroupId=${matchNodeGroupId}`);
+      this.logger.log(
+        `Added team ${team.dotaTeamId} to match nodeGroupId=${matchNodeGroupId}`,
+      );
       await this.dota2.addNodeGroupTeam(matchNodeGroupId, opponent.dotaTeamId);
-      this.logger.log(`Added opponent ${opponent.dotaTeamId} to match nodeGroupId=${matchNodeGroupId}`);
+      this.logger.log(
+        `Added opponent ${opponent.dotaTeamId} to match nodeGroupId=${matchNodeGroupId}`,
+      );
 
       const match = this.qualMatchRepo.create({
         qualification,
@@ -193,7 +260,9 @@ export class QualificationService {
     }
 
     await this.dataSource.transaction(async (manager) => {
-      await manager.getRepository(Team).save({ ...team, tournament, isPlayingTournament: true });
+      await manager
+        .getRepository(Team)
+        .save({ ...team, tournament, isPlayingTournament: true });
       if (newMatches.length > 0) {
         await manager.getRepository(QualificationMatch).save(newMatches);
       }
@@ -221,12 +290,31 @@ export class QualificationService {
         relations: ['captain'],
       });
       if (teamA?.captain?.id !== playerId && teamB?.captain?.id !== playerId) {
-        throw new ForbiddenException('Тільки капітан однієї з команд може подати матч');
+        throw new ForbiddenException(
+          'Тільки капітан однієї з команд може подати матч',
+        );
       }
     }
 
     if (qualMatch.dotaMatchId !== null) {
       throw new BadRequestException('Результат цього матчу вже подано');
+    }
+
+    if (new Date() > qualMatch.qualification.endTime) {
+      throw new BadRequestException(
+        'Кваліфікаційний етап завершено — подача матчів заборонена',
+      );
+    }
+
+    if (!qualMatch.teamA.tournament) {
+      throw new BadRequestException(
+        `Команда ${qualMatch.teamA.id} більше не бере участь у турнірі`,
+      );
+    }
+    if (!qualMatch.teamB.tournament) {
+      throw new BadRequestException(
+        `Команда ${qualMatch.teamB.id} більше не бере участь у турнірі`,
+      );
     }
 
     const matchData = await this.dota2.getOpenDotaMatch(dotaMatchId);
@@ -247,9 +335,56 @@ export class QualificationService {
         ? qualMatch.teamB
         : qualMatch.teamA;
 
+    const loser =
+      winner.id === qualMatch.teamA.id ? qualMatch.teamB : qualMatch.teamA;
+    const winnerMainPlayers =
+      winner.id === qualMatch.teamA.id
+        ? qualMatch.teamA.mainPlayers
+        : qualMatch.teamB.mainPlayers;
+    const loserMainPlayers =
+      loser.id === qualMatch.teamA.id
+        ? qualMatch.teamA.mainPlayers
+        : qualMatch.teamB.mainPlayers;
+
+    const tournamentId = qualMatch.qualification.tournament.id;
+
     qualMatch.dotaMatchId = dotaMatchId;
     qualMatch.winner = winner;
-    return this.qualMatchRepo.save(qualMatch);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(QualificationMatch).save(qualMatch);
+      await this.awardPoints(
+        manager,
+        winnerMainPlayers ?? [],
+        tournamentId,
+        100,
+      );
+      await this.awardPoints(manager, loserMainPlayers ?? [], tournamentId, 40);
+    });
+
+    return qualMatch;
+  }
+
+  private async awardPoints(
+    manager: import('typeorm').EntityManager,
+    players: Player[],
+    tournamentId: string,
+    amount: number,
+  ): Promise<void> {
+    const repo = manager.getRepository(PlayerTournamentPoints);
+    for (const player of players) {
+      const existing = await repo.findOne({
+        where: { playerId: player.id, tournamentId },
+      });
+      if (existing) {
+        existing.points += amount;
+        await repo.save(existing);
+      } else {
+        await repo.save(
+          repo.create({ playerId: player.id, tournamentId, points: amount }),
+        );
+      }
+    }
   }
 
   private validateSubstitute(mainPlayers: Player[], sub: Player): void {
@@ -274,15 +409,11 @@ export class QualificationService {
     qualMatch: QualificationMatch,
   ): void {
     if (match.human_players !== 10) {
-      throw new UnprocessableEntityException(
-        'У лобі матчу було не 10 гравців',
-      );
+      throw new UnprocessableEntityException('У лобі матчу було не 10 гравців');
     }
 
     if (match.duration <= MIN_MATCH_DURATION_SEC) {
-      throw new UnprocessableEntityException(
-        'Матч тривав менше 15 хвилин',
-      );
+      throw new UnprocessableEntityException('Матч тривав менше 15 хвилин');
     }
 
     const qualEndUnix = Math.floor(
@@ -308,21 +439,23 @@ export class QualificationService {
       );
     }
 
-    const matchAccountIds = new Set(
-      match.players.map((p) => p.account_id),
+    // All roster players (main + reserve) for both teams
+    const allRosterPlayers = [
+      ...(qualMatch.teamA.mainPlayers ?? []),
+      ...(qualMatch.teamA.reservedPlayers ?? []),
+      ...(qualMatch.teamB.mainPlayers ?? []),
+      ...(qualMatch.teamB.reservedPlayers ?? []),
+    ];
+    const allowedAccountIds = new Set(
+      allRosterPlayers
+        .filter((p) => p.steamId)
+        .map((p) => steamId64ToAccountId(p.steamId!)),
     );
 
-    const allExpectedPlayers = [
-      ...(qualMatch.teamA.mainPlayers ?? []),
-      ...(qualMatch.teamB.mainPlayers ?? []),
-    ];
-
-    for (const player of allExpectedPlayers) {
-      if (!player.steamId) continue;
-      const accountId = steamId64ToAccountId(player.steamId);
-      if (!matchAccountIds.has(accountId)) {
+    for (const matchPlayer of match.players) {
+      if (!allowedAccountIds.has(matchPlayer.account_id)) {
         throw new UnprocessableEntityException(
-          `Гравець зі Steam ID ${player.steamId} не знайдений у матчі`,
+          `Гравець з account_id ${matchPlayer.account_id} не є учасником жодної з команд`,
         );
       }
     }

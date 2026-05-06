@@ -16,6 +16,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminGuard } from '../admin/guards/admin.guard';
 import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.guard';
 import { QualificationService } from '../qualification/qualification.service';
 import { SubmitMatchDto } from '../qualification/dto/submit-match.dto';
@@ -74,6 +75,8 @@ export class TournamentsController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.tournamentsService.remove(id);
   }
@@ -88,9 +91,10 @@ export class TournamentsController {
   @ApiBearerAuth()
   async join(
     @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { teamId?: string },
     @Req() req: RequestWithJwtActor,
   ): Promise<void> {
-    await this.qualificationService.joinTournament(id, req.user!.playerId);
+    await this.qualificationService.joinTournament(id, req.user!.playerId, body?.teamId);
   }
 
   @Post(':id/qualification/matches/:matchId/submit')

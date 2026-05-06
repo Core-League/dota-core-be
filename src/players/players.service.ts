@@ -74,7 +74,11 @@ export class PlayersService {
       }
     }
     // teamId is managed exclusively by TeamsService.syncPlayerTeamLinks — never accept it from outside
-    const { teamId: _teamId, verifiedAt: _verifiedAt, ...safePayload } = payload as Record<string, unknown>;
+    const {
+      teamId: _teamId,
+      verifiedAt: _verifiedAt,
+      ...safePayload
+    } = payload as Record<string, unknown>;
     Object.assign(player, safePayload);
     await this.playersRepo.save(player);
     const refreshed = await this.playersRepo.findOneById(id);

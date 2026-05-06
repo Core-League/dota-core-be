@@ -1,27 +1,66 @@
 import { HttpService } from '@nestjs/axios';
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
+import * as cheerio from 'cheerio';
 import { firstValueFrom } from 'rxjs';
 
 export interface OpenDotaPlayer {
+  match_id: number;
   player_slot: number;
   account_id: number;
+  hero_id: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  gold_per_min: number;
+  xp_per_min: number;
+  last_hits: number;
+  denies: number;
+  hero_damage: number;
+  tower_damage: number;
+  hero_healing: number;
+  level: number;
   isRadiant: boolean;
+  win: number;
+  lose: number;
+  personaname: string | null;
+  radiant_win: boolean;
+  duration: number;
+  start_time: number;
+  game_mode: number;
+  lobby_type: number;
+  lane: number | null;
+  lane_role: number | null;
+  rank_tier: number | null;
 }
 
 export interface OpenDotaTeam {
-  team_id: number;
+  team_id?: number;
   name?: string;
+  tag?: string;
+  logo_url?: string | null;
 }
 
 export interface OpenDotaMatch {
   match_id: number;
-  human_players: number;
   duration: number;
   start_time: number;
   radiant_win: boolean;
-  radiant_team: OpenDotaTeam;
-  dire_team: OpenDotaTeam;
+  human_players: number;
+  game_mode: number;
+  lobby_type: number;
+  cluster: number;
+  patch: number;
+  region: number;
+  radiant_score: number;
+  dire_score: number;
+  radiant_team?: OpenDotaTeam;
+  dire_team?: OpenDotaTeam;
   players: OpenDotaPlayer[];
+  replay_url?: string;
 }
 
 @Injectable()
@@ -104,7 +143,10 @@ export class Dota2Service {
     }
   }
 
-  async addNodeGroupTeam(nodeGroupId: string, dotaTeamId: string): Promise<void> {
+  async addNodeGroupTeam(
+    nodeGroupId: string,
+    dotaTeamId: string,
+  ): Promise<void> {
     const body = new URLSearchParams({
       sessionid: this.sessionId,
       node_group_id: nodeGroupId,
@@ -123,6 +165,110 @@ export class Dota2Service {
     }
   }
 
+  async removeNodeGroup(nodeGroupId: string): Promise<void> {
+    const body = new URLSearchParams({
+      sessionid: this.sessionId,
+      node_group_id: nodeGroupId,
+    });
+
+    try {
+      await firstValueFrom(
+        this.http.post(this.baseUrl('post_removenodegroup'), body.toString(), {
+          headers: this.commonHeaders(),
+        }),
+      );
+    } catch (err) {
+      this.logger.error('removeNodeGroup failed', err);
+      throw new InternalServerErrorException('Dota2 removeNodeGroup failed');
+    }
+  }
+
+  // ── HTML parsing ─────────────────────────────────────────────────────────
+
+  async fetchTournamentPage(): Promise<string> {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.get<string>(this.baseUrl('tournament'), {
+          headers: {
+            accept:
+              'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
+            cookie: this.cookie,
+            referer: `https://www.dota2.com/league/${this.leagueId}/tournament`,
+            'user-agent':
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+          responseType: 'text',
+        }),
+      );
+      return data;
+    } catch (err) {
+      this.logger.error('fetchTournamentPage failed', err);
+      throw new InternalServerErrorException(
+        'Failed to fetch Dota2 tournament page',
+      );
+    }
+  }
+
+  /**
+   * After calling addNodeGroup (nodeGroupType=1, organisational), fetch the
+   * tournament page and return the id of the last .TypeOrganizational.NodeGroup
+   * element — that is the node group Dota2 just created.
+   */
+  async resolveOrganizationalNodeGroupId(): Promise<string> {
+    const html = await this.fetchTournamentPage();
+    const $ = cheerio.load(html);
+    const el = $('.TypeOrganizational.NodeGroup').last();
+    const rawId = el.attr('id'); // e.g. "NodeGroup96"
+    const match = rawId?.match(/^NodeGroup(\d+)$/);
+    if (!match) {
+      this.logger.error(
+        `Could not find .TypeOrganizational.NodeGroup on page (last id="${rawId ?? 'none'}")`,
+      );
+      throw new InternalServerErrorException(
+        'Could not resolve organisational NodeGroup id from Dota2 page',
+      );
+    }
+    const id = match[1];
+    this.logger.log(
+      `Resolved organisational nodeGroupId=${id} from Dota2 page`,
+    );
+    return id;
+  }
+
+  /**
+   * After calling addNodeGroup (nodeGroupType=7, round-robin match) inside a
+   * qualification group, fetch the tournament page and return the id of the
+   * last .TypeRoundRobin.NodeGroup element that is a descendant of
+   * #NodeGroup{containingNodeGroupId}.
+   */
+  async resolveRoundRobinNodeGroupId(
+    containingNodeGroupId: string,
+  ): Promise<string> {
+    const html = await this.fetchTournamentPage();
+    const $ = cheerio.load(html);
+    const el = $(
+      `#NodeGroup${containingNodeGroupId} .TypeRoundRobin.NodeGroup`,
+    ).last();
+    const rawId = el.attr('id'); // e.g. "NodeGroup85"
+    const match = rawId?.match(/^NodeGroup(\d+)$/);
+    if (!match) {
+      this.logger.error(
+        `Could not find .TypeRoundRobin.NodeGroup inside #NodeGroup${containingNodeGroupId} (last id="${rawId ?? 'none'}")`,
+      );
+      throw new InternalServerErrorException(
+        `Could not resolve round-robin NodeGroup id inside NodeGroup${containingNodeGroupId} from Dota2 page`,
+      );
+    }
+    const id = match[1];
+    this.logger.log(
+      `Resolved round-robin nodeGroupId=${id} inside NodeGroup${containingNodeGroupId}`,
+    );
+    return id;
+  }
+
+  // ── OpenDota ─────────────────────────────────────────────────────────────
+
   async getOpenDotaMatch(matchId: string): Promise<OpenDotaMatch> {
     try {
       const { data } = await firstValueFrom(
@@ -133,7 +279,9 @@ export class Dota2Service {
       return data;
     } catch (err) {
       this.logger.error('OpenDota getMatch failed', err);
-      throw new InternalServerErrorException('Не вдалося отримати дані матчу з OpenDota');
+      throw new InternalServerErrorException(
+        'Не вдалося отримати дані матчу з OpenDota',
+      );
     }
   }
 }

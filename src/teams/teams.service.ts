@@ -12,6 +12,7 @@ import { TeamsRepository } from './teams.repository';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { SearchTeamsDto } from './dto/search-teams.dto';
 import { Tournament } from '../tournaments/tournaments.entity';
+import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role } from '../user-roles/role.constants';
@@ -103,18 +104,6 @@ export class TeamsService {
   async update(id: string, payload: Partial<Team>) {
     const team = await this.teamsRepo.findOneById(id);
     if (!team) throw new NotFoundException('Команду не знайдено');
-    const rosterFields: Array<keyof Team> = [
-      'mainPlayers',
-      'reservedPlayers',
-      'captain',
-      'coach',
-    ];
-    const touchesRoster = rosterFields.some((f) => f in payload);
-    if (touchesRoster && team.tournament !== null) {
-      throw new ForbiddenException(
-        'Склад команди заблоковано під час участі в турнірі',
-      );
-    }
     Object.assign(team, payload);
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(id);
@@ -149,12 +138,6 @@ export class TeamsService {
   ) {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) throw new NotFoundException('Команду не знайдено');
-
-    if (team.tournament !== null) {
-      throw new ForbiddenException(
-        'Склад команди заблоковано під час участі в турнірі',
-      );
-    }
 
     const player = await this.dataSource.getRepository(Player).findOne({
       where: { id: playerId },
@@ -198,10 +181,18 @@ export class TeamsService {
     if (!team) {
       throw new NotFoundException('Team not found');
     }
-    if (team.tournament !== null) {
-      throw new ForbiddenException(
-        'Склад команди заблоковано під час участі в турнірі',
-      );
+
+    // Deduct 70% of tournament points if team is in an active tournament
+    if (team.tournament?.id) {
+      const tournamentId = team.tournament.id;
+      const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
+      const record = await pointsRepo.findOne({
+        where: { playerId, tournamentId },
+      });
+      if (record && record.points > 0) {
+        record.points = Math.floor(record.points * 0.3);
+        await pointsRepo.save(record);
+      }
     }
 
     const wasCaptain = team.captain?.id === playerId;

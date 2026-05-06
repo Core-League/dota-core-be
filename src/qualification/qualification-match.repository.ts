@@ -28,10 +28,15 @@ export class QualificationMatchRepository {
       where: { id },
       relations: [
         'qualification',
+        'qualification.tournament',
         'teamA',
         'teamA.mainPlayers',
+        'teamA.reservedPlayers',
+        'teamA.tournament',
         'teamB',
         'teamB.mainPlayers',
+        'teamB.reservedPlayers',
+        'teamB.tournament',
         'winner',
       ],
     });

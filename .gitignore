@@ -46,6 +46,9 @@ lerna-debug.log*
 .temp
 .tmp
 
+# local DB snapshot — run `npm run db:dump` to regenerate
+scripts/initdb/seed.sql
+
 # Runtime data
 pids
 *.pid

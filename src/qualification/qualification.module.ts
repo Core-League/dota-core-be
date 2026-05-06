@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Dota2Module } from '../dota2/dota2.module';
 import { Team } from '../teams/team.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
+import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { QualificationMatchRepository } from './qualification-match.repository';
 import { QualificationMatch } from './qualification-match.entity';
 import { Qualification } from './qualification.entity';
@@ -11,7 +12,7 @@ import { QualificationService } from './qualification.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Qualification, QualificationMatch, Team, Tournament]),
+    TypeOrmModule.forFeature([Qualification, QualificationMatch, Team, Tournament, PlayerTournamentPoints]),
     Dota2Module,
   ],
   providers: [QualificationService, QualificationRepository, QualificationMatchRepository],
