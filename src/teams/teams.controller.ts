@@ -25,6 +25,7 @@ import {
 import { TeamsService } from './teams.service';
 import { AddPlayerDto } from './dto/add-player.dto';
 import { CreateTeamDto } from './dto/create-team.dto';
+import { CreateInviteDto } from './dto/create-invite.dto';
 import { SearchTeamsDto } from './dto/search-teams.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 
@@ -78,6 +79,17 @@ export class TeamsController {
   @Delete(':id')
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.teamsService.remove(id);
+  }
+
+  @Post(':id/invites')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  createInvite(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: CreateInviteDto,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<{ token: string; expiresAt: Date }> {
+    return this.teamsService.createInvite(id, req.user!.playerId, body.slot);
   }
 
   @Post(':id/players')

@@ -3,10 +3,15 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
+  GoneException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
 import { Team } from './team.entity';
+import { TeamInvite } from './team-invite.entity';
+import { TeamInviteRepository } from './team-invite.repository';
 import { TeamsRepository } from './teams.repository';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { SearchTeamsDto } from './dto/search-teams.dto';
@@ -16,10 +21,13 @@ import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role } from '../user-roles/role.constants';
 import { toPlayerRankDto } from '../players/dto/player-rank.dto';
 
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class TeamsService {
   constructor(
     private readonly teamsRepo: TeamsRepository,
+    private readonly inviteRepo: TeamInviteRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
@@ -279,5 +287,84 @@ export class TeamsService {
       await this.teamsRepo.save(team);
       await this.syncPlayerTeamLinks(team.id);
     }
+  }
+
+  async createInvite(
+    teamId: string,
+    captainPlayerId: string,
+    slot: 'main' | 'reserved' | 'coach',
+  ): Promise<{ token: string; expiresAt: Date }> {
+    const team = await this.teamsRepo.findOneWithRoster(teamId);
+    if (!team) throw new NotFoundException('Команду не знайдено');
+    if (team.captain?.id !== captainPlayerId) {
+      throw new ForbiddenException('Тільки капітан може створювати запрошення');
+    }
+
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+
+    const invite = this.inviteRepo.create({
+      token,
+      teamId,
+      createdById: captainPlayerId,
+      slot,
+      expiresAt,
+    });
+    await this.inviteRepo.save(invite);
+    return { token, expiresAt };
+  }
+
+  async getInviteInfo(token: string): Promise<{
+    teamId: string;
+    teamName: string;
+    logoUrl: string | null;
+    slot: 'main' | 'reserved' | 'coach';
+    expiresAt: Date;
+  }> {
+    const invite = await this.inviteRepo.findByToken(token);
+    if (!invite) throw new NotFoundException('Запрошення не знайдено');
+    if (invite.expiresAt < new Date()) {
+      throw new GoneException('Запрошення вже недійсне');
+    }
+    return {
+      teamId: invite.teamId,
+      teamName: invite.team.name,
+      logoUrl: invite.team.logoUrl,
+      slot: invite.slot,
+      expiresAt: invite.expiresAt,
+    };
+  }
+
+  async acceptInvite(token: string, playerId: string): Promise<void> {
+    const invite = await this.inviteRepo.findByToken(token);
+    if (!invite) throw new NotFoundException('Запрошення не знайдено');
+    if (invite.expiresAt < new Date()) {
+      throw new GoneException('Запрошення вже недійсне');
+    }
+
+    if (invite.slot === 'coach') {
+      const team = await this.teamsRepo.findOneWithRoster(invite.teamId);
+      if (!team) throw new NotFoundException('Команду не знайдено');
+
+      const player = await this.dataSource.getRepository(Player).findOne({
+        where: { id: playerId },
+      });
+      if (!player) throw new NotFoundException('Гравця не знайдено');
+
+      if (team.coach !== null) {
+        throw new ConflictException('У команді вже є тренер');
+      }
+      if (player.teamId !== null) {
+        throw new ConflictException('Гравець вже є учасником іншої команди');
+      }
+
+      team.coach = player;
+      await this.teamsRepo.save(team);
+      await this.syncPlayerTeamLinks(invite.teamId);
+    } else {
+      await this.addPlayerToTeam(invite.teamId, playerId, invite.slot);
+    }
+
+    await this.inviteRepo.remove(invite);
   }
 }

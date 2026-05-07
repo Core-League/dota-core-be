@@ -4,16 +4,20 @@ import { AuthModule } from '../auth/auth.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsService } from './teams.service';
 import { TeamsController } from './teams.controller';
+import { InvitesController } from './invites.controller';
 import { Team } from './team.entity';
+import { TeamInvite } from './team-invite.entity';
 import { Player } from '../players/player.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { TeamsRepository } from './teams.repository';
+import { TeamInviteRepository } from './team-invite.repository';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       Team,
+      TeamInvite,
       Player,
       Tournament,
       PlayerTournamentPoints,
@@ -21,7 +25,7 @@ import { TeamsRepository } from './teams.repository';
     AuthModule,
     UploadsModule,
   ],
-  providers: [TeamsService, TeamsRepository],
-  controllers: [TeamsController],
+  providers: [TeamsService, TeamsRepository, TeamInviteRepository],
+  controllers: [TeamsController, InvitesController],
 })
 export class TeamsModule {}
