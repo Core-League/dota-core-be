@@ -41,6 +41,12 @@ export class Team {
   @Column({ nullable: true, type: 'varchar' })
   dotaTeamId: string | null;
 
+  @Column({ nullable: true, type: 'varchar' })
+  discordRoleId: string | null;
+
+  @Column({ nullable: true, type: 'varchar' })
+  discordChannelId: string | null;
+
   @Column()
   isVerified: boolean;
 

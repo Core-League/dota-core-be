@@ -81,6 +81,21 @@ export class TeamsController {
     return this.teamsService.remove(id);
   }
 
+  @Post(':id/captain')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  changeCaptain(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { newCaptainPlayerId: string },
+    @Req() req: RequestWithJwtActor,
+  ) {
+    return this.teamsService.changeCaptain(
+      id,
+      body.newCaptainPlayerId,
+      req.user!.playerId,
+    );
+  }
+
   @Post(':id/invites')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
