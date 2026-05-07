@@ -5,18 +5,47 @@ import { firstValueFrom } from 'rxjs';
 
 const CAPTAIN_ROLE_ID = '1415420108318183565';
 
+// Roles that always get access to every team voice channel
+const STAFF_FULL_ACCESS_ROLE_ID = '1408215246589394964';
+const VIEW_JOIN_ROLE_IDS = ['1399031107835400385', '1399452821362966728'];
+
 const DIVISION_CATEGORY_IDS: Record<string, string> = {
   DIVISION_I: '1421318941875245129',
   DIVISION_II: '1476565539013922878',
   DIVISION_III: '1502067359542677625',
 };
 
-// Discord permission bit values as strings (Discord API expects string integers)
+// Discord permission bit values (Discord API expects string integers)
+const MANAGE_CHANNELS_BIT = 16n; // 1 << 4
+const PRIORITY_SPEAKER_BIT = 256n; // 1 << 8
+const STREAM_BIT = 512n; // 1 << 9
 const VIEW_CHANNEL_BIT = 1024n; // 1 << 10
 const CONNECT_BIT = 1048576n; // 1 << 20
 const SPEAK_BIT = 2097152n; // 1 << 21
+const MUTE_MEMBERS_BIT = 4194304n; // 1 << 22
+const DEAFEN_MEMBERS_BIT = 8388608n; // 1 << 23
+const MOVE_MEMBERS_BIT = 16777216n; // 1 << 24
+const USE_VAD_BIT = 33554432n; // 1 << 25
+
 const TEAM_CHANNEL_ALLOW = String(VIEW_CHANNEL_BIT + CONNECT_BIT + SPEAK_BIT); // '3147776'
 const TEAM_CHANNEL_DENY_EVERYONE = String(VIEW_CHANNEL_BIT); // '1024'
+
+// Staff role: full voice channel control
+const STAFF_CHANNEL_ALLOW = String(
+  MANAGE_CHANNELS_BIT +
+    PRIORITY_SPEAKER_BIT +
+    STREAM_BIT +
+    VIEW_CHANNEL_BIT +
+    CONNECT_BIT +
+    SPEAK_BIT +
+    MUTE_MEMBERS_BIT +
+    DEAFEN_MEMBERS_BIT +
+    MOVE_MEMBERS_BIT +
+    USE_VAD_BIT,
+); // '66062096'
+
+// Moderator roles: can see and join but not speak by default
+const VIEW_JOIN_ALLOW = String(VIEW_CHANNEL_BIT + CONNECT_BIT); // '1049600'
 
 @Injectable()
 export class DiscordBotService {
@@ -79,15 +108,29 @@ export class DiscordBotService {
             type: 2, // GUILD_VOICE
             parent_id: categoryId,
             permission_overwrites: [
-              // Deny VIEW_CHANNEL for @everyone (role ID == guild ID)
+              // @everyone: deny VIEW_CHANNEL (channel is private)
               {
                 id: this.guildId,
                 type: 0,
                 allow: '0',
                 deny: TEAM_CHANNEL_DENY_EVERYONE,
               },
-              // Allow VIEW_CHANNEL + CONNECT + SPEAK for the team role
+              // Team role: view + connect + speak
               { id: teamRoleId, type: 0, allow: TEAM_CHANNEL_ALLOW, deny: '0' },
+              // Staff role: full voice access
+              {
+                id: STAFF_FULL_ACCESS_ROLE_ID,
+                type: 0,
+                allow: STAFF_CHANNEL_ALLOW,
+                deny: '0',
+              },
+              // Moderator roles: view + connect
+              ...VIEW_JOIN_ROLE_IDS.map((id) => ({
+                id,
+                type: 0,
+                allow: VIEW_JOIN_ALLOW,
+                deny: '0',
+              })),
             ],
           },
           { headers: this.headers },
