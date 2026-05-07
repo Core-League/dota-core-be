@@ -57,6 +57,8 @@ export interface OpenDotaMatch {
   region: number;
   radiant_score: number;
   dire_score: number;
+  radiant_team_id?: number;
+  dire_team_id?: number;
   radiant_team?: OpenDotaTeam;
   dire_team?: OpenDotaTeam;
   players: OpenDotaPlayer[];

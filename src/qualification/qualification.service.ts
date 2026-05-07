@@ -276,8 +276,12 @@ export class QualificationService {
   ): Promise<QualificationMatch> {
     const matchData = await this.dota2.getOpenDotaMatch(dotaMatchId);
 
-    const radiantTeamId = String(matchData.radiant_team?.team_id ?? '');
-    const direTeamId = String(matchData.dire_team?.team_id ?? '');
+    const radiantTeamId = String(
+      matchData.radiant_team?.team_id ?? matchData.radiant_team_id ?? '',
+    );
+    const direTeamId = String(
+      matchData.dire_team?.team_id ?? matchData.dire_team_id ?? '',
+    );
 
     if (!radiantTeamId || !direTeamId) {
       throw new BadRequestException(
