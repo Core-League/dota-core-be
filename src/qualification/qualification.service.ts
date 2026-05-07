@@ -7,7 +7,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, In } from 'typeorm';
 import { Dota2Service, OpenDotaMatch } from '../dota2/dota2.service';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
@@ -266,6 +266,72 @@ export class QualificationService {
       if (newMatches.length > 0) {
         await manager.getRepository(QualificationMatch).save(newMatches);
       }
+    });
+  }
+
+  async leaveTournament(
+    tournamentId: string,
+    playerId: string,
+    overrideTeamId?: string,
+  ): Promise<void> {
+    const bypass = process.env.BYPASS_TEAM_VERIFICATION === 'true';
+
+    const teamRepo = this.dataSource.getRepository(Team);
+    const team =
+      bypass && overrideTeamId
+        ? await teamRepo.findOne({
+            where: { id: overrideTeamId },
+            relations: ['captain', 'mainPlayers', 'tournament'],
+          })
+        : await teamRepo.findOne({
+            where: { captain: { id: playerId } },
+            relations: ['captain', 'mainPlayers', 'tournament'],
+          });
+
+    if (!team) {
+      throw new ForbiddenException(
+        bypass && overrideTeamId
+          ? 'Команду не знайдено'
+          : 'Тільки капітан команди може залишити турнір',
+      );
+    }
+
+    if (!team.tournament || team.tournament.id !== tournamentId) {
+      throw new BadRequestException('Команда не бере участі у цьому турнірі');
+    }
+
+    const qualification = await this.qualRepo.findByTournamentId(tournamentId);
+    if (!qualification) {
+      throw new NotFoundException('Кваліфікацію турніру не знайдено');
+    }
+
+    const unplayedMatches = (qualification.matches ?? []).filter(
+      (m) =>
+        m.dotaMatchId === null &&
+        (m.teamA.id === team.id || m.teamB.id === team.id),
+    );
+
+    for (const match of unplayedMatches) {
+      this.logger.log(
+        `Removing unplayed match node group ${match.nodeGroupId} for leaving team ${team.id}`,
+      );
+      await this.dota2.removeNodeGroup(match.nodeGroupId);
+    }
+
+    const playerIds = (team.mainPlayers ?? []).map((p) => p.id);
+
+    await this.dataSource.transaction(async (manager) => {
+      if (unplayedMatches.length > 0) {
+        await manager.getRepository(QualificationMatch).remove(unplayedMatches);
+      }
+      if (playerIds.length > 0) {
+        await manager
+          .getRepository(PlayerTournamentPoints)
+          .delete({ tournamentId, playerId: In(playerIds) });
+      }
+      await manager
+        .getRepository(Team)
+        .save({ ...team, tournament: null, isPlayingTournament: false });
     });
   }
 

@@ -123,6 +123,21 @@ export class TournamentsController {
     );
   }
 
+  @Post(':id/leave')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async leave(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: JoinTournamentDto,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<void> {
+    await this.qualificationService.leaveTournament(
+      id,
+      req.user!.playerId,
+      body?.teamId,
+    );
+  }
+
   @Post(':id/qualification/submit')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
