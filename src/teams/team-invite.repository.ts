@@ -22,7 +22,12 @@ export class TeamInviteRepository {
   findByToken(token: string): Promise<TeamInvite | null> {
     return this.repo.findOne({
       where: { token },
-      relations: ['team', 'team.captain', 'team.mainPlayers', 'team.reservedPlayers'],
+      relations: [
+        'team',
+        'team.captain',
+        'team.mainPlayers',
+        'team.reservedPlayers',
+      ],
     });
   }
 

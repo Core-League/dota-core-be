@@ -510,7 +510,6 @@ export class TeamsService {
       await this.teamsRepo.save(team);
       await this.syncPlayerTeamLinks(invite.teamId);
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const teamRoleId: string | null = team.discordRoleId;
       if (teamRoleId && player.discordId) {
         await this.discord.addMemberRole(player.discordId, teamRoleId);

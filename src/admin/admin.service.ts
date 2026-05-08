@@ -1,10 +1,15 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, DeepPartial, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
-import { Role } from '../user-roles/role.constants';
+import { Role, RoleName } from '../user-roles/role.constants';
 import { TournamentDivision } from '../tournaments/tournaments.model';
 import { DiscordBotService } from '../discord/discord-bot.service';
 
@@ -34,6 +39,17 @@ export type VerifyResult = {
   verifiedAt: Date | null;
 };
 
+export type PlayerRoleResult = {
+  playerId: string;
+  name: RoleName;
+  verifiedAt: Date | null;
+};
+
+export type AdminRoleResult = {
+  playerId: string;
+  isAdmin: boolean;
+};
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -51,6 +67,79 @@ export class AdminService {
   }
 
   async verifyPlayer(playerId: string): Promise<VerifyResult> {
+    const result = await this.setPrimaryRole(playerId, Role.PLAYER);
+    return {
+      playerId: result.playerId,
+      verified: true,
+      verifiedAt: result.verifiedAt,
+    };
+  }
+
+  async unverifyPlayer(playerId: string): Promise<VerifyResult> {
+    const result = await this.setPrimaryRole(playerId, Role.GUEST);
+    return {
+      playerId: result.playerId,
+      verified: false,
+      verifiedAt: result.verifiedAt,
+    };
+  }
+
+  setPlayerRole(playerId: string, name: RoleName): Promise<PlayerRoleResult> {
+    return this.setPrimaryRole(playerId, name);
+  }
+
+  /**
+   * Idempotently ensures the player has an `isAdminRole=true` row. Does not
+   * touch the player's primary (non-admin) role row or `verifiedAt`. No
+   * Discord side-effects (no admin Discord role is wired today).
+   */
+  async grantAdmin(playerId: string): Promise<AdminRoleResult> {
+    const player = await this.findPlayerWithRoles(playerId);
+
+    const hasAdmin = (player.roles ?? []).some((r) => r.isAdminRole);
+    if (!hasAdmin) {
+      const adminRole = this.rolesRepo.create({
+        name: Role.ADMIN,
+        isAdminRole: true,
+      } as DeepPartial<UserRoles>);
+      adminRole.player = player;
+      await this.rolesRepo.save(adminRole);
+    }
+
+    return { playerId, isAdmin: true };
+  }
+
+  /**
+   * Removes all `isAdminRole=true` rows for the player. Throws 403 if the
+   * actor is revoking their own admin (avoids accidental lockout).
+   */
+  async revokeAdmin(
+    playerId: string,
+    actorPlayerId: string,
+  ): Promise<AdminRoleResult> {
+    if (playerId === actorPlayerId) {
+      throw new ForbiddenException('Cannot revoke your own admin role');
+    }
+
+    const player = await this.findPlayerWithRoles(playerId);
+    const adminRoles = (player.roles ?? []).filter((r) => r.isAdminRole);
+    if (adminRoles.length > 0) {
+      await this.rolesRepo.remove(adminRoles);
+    }
+
+    return { playerId, isAdmin: false };
+  }
+
+  /**
+   * Single source of truth for primary (non-admin) role mutations. Enforces
+   * the "one non-admin role row per player" invariant, syncs `verifiedAt` for
+   * Гравець/Гість, and toggles the Discord verified role accordingly.
+   * Other role names (Медіа, Капітан) leave `verifiedAt` and Discord state untouched.
+   */
+  private async setPrimaryRole(
+    playerId: string,
+    name: RoleName,
+  ): Promise<PlayerRoleResult> {
     const player = await this.findPlayerWithRoles(playerId);
 
     const nonAdminRoles = player.roles.filter((r) => !r.isAdminRole);
@@ -64,40 +153,26 @@ export class AdminService {
       } as DeepPartial<UserRoles>);
       role.player = player;
     }
-    role.name = Role.PLAYER;
+    role.name = name;
     await this.rolesRepo.save(role);
 
-    player.verifiedAt = new Date();
-    await this.playersRepo.save(player);
+    if (name === Role.PLAYER) {
+      player.verifiedAt = new Date();
+      await this.playersRepo.save(player);
+    } else if (name === Role.GUEST) {
+      player.verifiedAt = null;
+      await this.playersRepo.save(player);
+    }
 
     if (player.discordId) {
-      await this.discord.setVerifiedRole(player.discordId, true);
+      if (name === Role.PLAYER) {
+        await this.discord.setVerifiedRole(player.discordId, true);
+      } else if (name === Role.GUEST) {
+        await this.discord.setVerifiedRole(player.discordId, false);
+      }
     }
 
-    return { playerId, verified: true, verifiedAt: player.verifiedAt };
-  }
-
-  async unverifyPlayer(playerId: string): Promise<VerifyResult> {
-    const player = await this.findPlayerWithRoles(playerId);
-
-    const nonAdminRoles = player.roles.filter((r) => !r.isAdminRole);
-    if (nonAdminRoles.length > 1) {
-      await this.rolesRepo.remove(nonAdminRoles.slice(1));
-    }
-    const role = nonAdminRoles[0];
-    if (role) {
-      role.name = Role.GUEST;
-      await this.rolesRepo.save(role);
-    }
-
-    player.verifiedAt = null;
-    await this.playersRepo.save(player);
-
-    if (player.discordId) {
-      await this.discord.setVerifiedRole(player.discordId, false);
-    }
-
-    return { playerId, verified: false, verifiedAt: null };
+    return { playerId, name, verifiedAt: player.verifiedAt };
   }
 
   async syncDiscord(): Promise<DiscordSyncResult> {
@@ -126,7 +201,9 @@ export class AdminService {
         if (roleId) {
           rolesCreated++;
         } else {
-          this.logger.warn(`syncDiscord: failed to create role for team ${team.id}`);
+          this.logger.warn(
+            `syncDiscord: failed to create role for team ${team.id}`,
+          );
           skipped++;
           continue;
         }
@@ -146,9 +223,15 @@ export class AdminService {
 
       await this.discord.updateRoleColor(roleId, 0x43bfee);
 
-      if (roleId !== team.discordRoleId || channelId !== team.discordChannelId) {
+      if (
+        roleId !== team.discordRoleId ||
+        channelId !== team.discordChannelId
+      ) {
         await this.teamsRepo.save(
-          Object.assign(team, { discordRoleId: roleId, discordChannelId: channelId }),
+          Object.assign(team, {
+            discordRoleId: roleId,
+            discordChannelId: channelId,
+          }),
         );
       }
 
@@ -166,7 +249,12 @@ export class AdminService {
       }
     }
 
-    return { processed: teams.length - skipped, rolesCreated, channelsCreated, skipped };
+    return {
+      processed: teams.length - skipped,
+      rolesCreated,
+      channelsCreated,
+      skipped,
+    };
   }
 
   private async findPlayerWithRoles(playerId: string): Promise<Player> {
