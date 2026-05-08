@@ -10,6 +10,7 @@ import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { TournamentsRepository } from './tournaments.repository';
 import { UploadsModule } from '../uploads/uploads.module';
+import { TeamsModule } from '../teams/teams.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { UploadsModule } from '../uploads/uploads.module';
     UploadsModule,
     Dota2Module,
     QualificationModule,
+    TeamsModule,
   ],
   providers: [TournamentsService, TournamentsRepository],
   controllers: [TournamentsController],

@@ -29,5 +29,6 @@ import { TeamInviteRepository } from './team-invite.repository';
   ],
   providers: [TeamsService, TeamsRepository, TeamInviteRepository],
   controllers: [TeamsController, InvitesController],
+  exports: [TeamsService],
 })
 export class TeamsModule {}

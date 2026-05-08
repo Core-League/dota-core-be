@@ -4,6 +4,7 @@ import { QualificationService } from '../qualification/qualification.service';
 import { Tournament } from './tournaments.entity';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { TournamentsRepository } from './tournaments.repository';
+import { TeamsService } from '../teams/teams.service';
 
 @Injectable()
 export class TournamentsService {
@@ -13,6 +14,7 @@ export class TournamentsService {
     private readonly tournamentsRepo: TournamentsRepository,
     private readonly dota2: Dota2Service,
     private readonly qualificationService: QualificationService,
+    private readonly teamsService: TeamsService,
   ) {}
 
   async create(dto: CreateTournamentDto): Promise<Tournament> {
@@ -52,7 +54,7 @@ export class TournamentsService {
     return this.tournamentsRepo.findAll();
   }
 
-  async findOne(id: string): Promise<Tournament> {
+  private async findOneEntity(id: string): Promise<Tournament> {
     const tournament = await this.tournamentsRepo.findOneById(id);
     if (!tournament) {
       throw new NotFoundException('Турнір не знайдено');
@@ -60,14 +62,24 @@ export class TournamentsService {
     return tournament;
   }
 
+  async findOne(id: string) {
+    const tournament = await this.findOneEntity(id);
+    return {
+      ...tournament,
+      teams: (tournament.teams ?? []).map((t) =>
+        this.teamsService.toTeamResponse(t),
+      ),
+    };
+  }
+
   async update(id: string, payload: Partial<Tournament>): Promise<Tournament> {
-    const tournament = await this.findOne(id);
+    const tournament = await this.findOneEntity(id);
     Object.assign(tournament, payload);
     return this.tournamentsRepo.save(tournament);
   }
 
   async remove(id: string): Promise<void> {
-    const tournament = await this.findOne(id);
+    const tournament = await this.findOneEntity(id);
 
     try {
       const qualification =

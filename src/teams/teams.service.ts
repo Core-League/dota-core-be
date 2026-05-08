@@ -66,6 +66,11 @@ export class TeamsService {
     };
   }
 
+  /** Same shape as single-team API responses (includes computed `rank` on players). */
+  toTeamResponse(team: Team) {
+    return this.mapTeam(team);
+  }
+
   async createTeam(dto: CreateTeamDto, captainId: string) {
     const existingTeams = await this.teamsRepo.findByCaptainId(captainId);
     if (existingTeams.length > 0) {
