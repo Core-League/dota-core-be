@@ -76,7 +76,7 @@ export class DiscordBotService {
       const res = await firstValueFrom(
         this.http.post(
           `https://discord.com/api/v10/guilds/${this.guildId}/roles`,
-          { name: teamName, permissions: '0', mentionable: false },
+          { name: teamName, color: 0x43bfee, permissions: '0', mentionable: false },
           { headers: this.headers },
         ),
       );
