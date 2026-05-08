@@ -76,7 +76,12 @@ export class DiscordBotService {
       const res = await firstValueFrom(
         this.http.post(
           `https://discord.com/api/v10/guilds/${this.guildId}/roles`,
-          { name: teamName, color: 0x43bfee, permissions: '0', mentionable: false },
+          {
+            name: teamName,
+            color: 0x43bfee,
+            permissions: '0',
+            mentionable: false,
+          },
           { headers: this.headers },
         ),
       );
@@ -143,6 +148,21 @@ export class DiscordBotService {
     }
   }
 
+  async updateRoleColor(roleId: string, color: number): Promise<void> {
+    if (!this.ready()) return;
+    try {
+      await firstValueFrom(
+        this.http.patch(
+          `https://discord.com/api/v10/guilds/${this.guildId}/roles/${roleId}`,
+          { color },
+          { headers: this.headers },
+        ),
+      );
+    } catch (e) {
+      this.logger.warn(`updateRoleColor ${roleId} failed: ${this.errMsg(e)}`);
+    }
+  }
+
   async deleteRole(roleId: string): Promise<void> {
     if (!this.ready()) return;
     try {
@@ -190,9 +210,7 @@ export class DiscordBotService {
 
   private async putWithRetry(url: string, label: string): Promise<void> {
     try {
-      await firstValueFrom(
-        this.http.put(url, null, { headers: this.headers }),
-      );
+      await firstValueFrom(this.http.put(url, null, { headers: this.headers }));
     } catch (e) {
       const retryMs = this.retryAfterMs(e);
       if (retryMs !== null) {

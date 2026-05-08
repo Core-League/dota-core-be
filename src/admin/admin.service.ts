@@ -144,6 +144,8 @@ export class AdminService {
         }
       }
 
+      await this.discord.updateRoleColor(roleId, 0x43bfee);
+
       if (roleId !== team.discordRoleId || channelId !== team.discordChannelId) {
         await this.teamsRepo.save(
           Object.assign(team, { discordRoleId: roleId, discordChannelId: channelId }),
