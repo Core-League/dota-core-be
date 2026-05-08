@@ -172,35 +172,73 @@ export class DiscordBotService {
 
   async addMemberRole(discordId: string, roleId: string): Promise<void> {
     if (!this.ready() || !discordId) return;
-    try {
-      await firstValueFrom(
-        this.http.put(
-          `https://discord.com/api/v10/guilds/${this.guildId}/members/${discordId}/roles/${roleId}`,
-          null,
-          { headers: this.headers },
-        ),
-      );
-    } catch (e) {
-      this.logger.warn(
-        `addMemberRole discordId=${discordId} roleId=${roleId} failed: ${this.errMsg(e)}`,
-      );
-    }
+    const url = `https://discord.com/api/v10/guilds/${this.guildId}/members/${discordId}/roles/${roleId}`;
+    await this.putWithRetry(
+      url,
+      `addMemberRole discordId=${discordId} roleId=${roleId}`,
+    );
   }
 
   async removeMemberRole(discordId: string, roleId: string): Promise<void> {
     if (!this.ready() || !discordId) return;
+    const url = `https://discord.com/api/v10/guilds/${this.guildId}/members/${discordId}/roles/${roleId}`;
+    await this.deleteWithRetry(
+      url,
+      `removeMemberRole discordId=${discordId} roleId=${roleId}`,
+    );
+  }
+
+  private async putWithRetry(url: string, label: string): Promise<void> {
     try {
       await firstValueFrom(
-        this.http.delete(
-          `https://discord.com/api/v10/guilds/${this.guildId}/members/${discordId}/roles/${roleId}`,
-          { headers: this.headers },
-        ),
+        this.http.put(url, null, { headers: this.headers }),
       );
     } catch (e) {
-      this.logger.warn(
-        `removeMemberRole discordId=${discordId} roleId=${roleId} failed: ${this.errMsg(e)}`,
-      );
+      const retryMs = this.retryAfterMs(e);
+      if (retryMs !== null) {
+        this.logger.warn(`${label} rate limited, retrying in ${retryMs}ms`);
+        await new Promise((r) => setTimeout(r, retryMs));
+        try {
+          await firstValueFrom(
+            this.http.put(url, null, { headers: this.headers }),
+          );
+        } catch (e2) {
+          this.logger.warn(`${label} retry failed: ${this.errMsg(e2)}`);
+        }
+      } else {
+        this.logger.warn(`${label} failed: ${this.errMsg(e)}`);
+      }
     }
+  }
+
+  private async deleteWithRetry(url: string, label: string): Promise<void> {
+    try {
+      await firstValueFrom(this.http.delete(url, { headers: this.headers }));
+    } catch (e) {
+      const retryMs = this.retryAfterMs(e);
+      if (retryMs !== null) {
+        this.logger.warn(`${label} rate limited, retrying in ${retryMs}ms`);
+        await new Promise((r) => setTimeout(r, retryMs));
+        try {
+          await firstValueFrom(
+            this.http.delete(url, { headers: this.headers }),
+          );
+        } catch (e2) {
+          this.logger.warn(`${label} retry failed: ${this.errMsg(e2)}`);
+        }
+      } else {
+        this.logger.warn(`${label} failed: ${this.errMsg(e)}`);
+      }
+    }
+  }
+
+  /** Returns retry delay in ms if the error is a 429, otherwise null. */
+  private retryAfterMs(e: unknown): number | null {
+    const err = e as AxiosError;
+    if (err.response?.status !== 429) return null;
+    const body = err.response.data as { retry_after?: number };
+    const seconds = body?.retry_after ?? 1;
+    return Math.ceil(seconds * 1000) + 100; // +100ms buffer
   }
 
   async addCaptainRole(discordId: string): Promise<void> {
