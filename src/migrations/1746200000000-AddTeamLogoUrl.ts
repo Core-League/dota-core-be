@@ -8,6 +8,8 @@ export class AddTeamLogoUrl1746200000000 implements MigrationInterface {
   }
 
   async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "team" DROP COLUMN IF EXISTS "logoUrl"`);
+    await queryRunner.query(
+      `ALTER TABLE "team" DROP COLUMN IF EXISTS "logoUrl"`,
+    );
   }
 }

@@ -26,7 +26,14 @@ export class TournamentsRepository {
   findOneById(id: string): Promise<Tournament | null> {
     return this.repo.findOne({
       where: { id },
-      relations: ['teams', 'eligibleRoles'],
+      relations: [
+        'teams',
+        'teams.captain',
+        'teams.coach',
+        'teams.mainPlayers',
+        'teams.reservedPlayers',
+        'eligibleRoles',
+      ],
     });
   }
 

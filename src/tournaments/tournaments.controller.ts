@@ -8,20 +8,21 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import {
-  ApiBearerAuth,
-  ApiBody,
-  ApiConsumes,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminGuard } from '../admin/guards/admin.guard';
+import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.guard';
+import { QualificationService } from '../qualification/qualification.service';
+import { SubmitMatchDto } from '../qualification/dto/submit-match.dto';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
+import { JoinTournamentDto } from './dto/join-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import {
   createDiskStorage,
@@ -48,6 +49,7 @@ export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
     private readonly uploadsService: UploadsService,
+    private readonly qualificationService: QualificationService,
   ) {}
 
   @Post()
@@ -70,12 +72,85 @@ export class TournamentsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateTournamentDto,
   ) {
-    return this.tournamentsService.update(id, body);
+    const {
+      registrationStartsAt,
+      registrationEndsAt,
+      tournamentStartsAt,
+      tournamentEndsAt,
+      ...rest
+    } = body;
+    return this.tournamentsService.update(id, {
+      ...rest,
+      ...(registrationStartsAt !== undefined && {
+        registrationStartsAt: new Date(registrationStartsAt),
+      }),
+      ...(registrationEndsAt !== undefined && {
+        registrationEndsAt: new Date(registrationEndsAt),
+      }),
+      ...(tournamentStartsAt !== undefined && {
+        tournamentStartsAt: new Date(tournamentStartsAt),
+      }),
+      ...(tournamentEndsAt !== undefined && {
+        tournamentEndsAt: new Date(tournamentEndsAt),
+      }),
+    });
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.tournamentsService.remove(id);
+  }
+
+  @Get(':id/qualification')
+  getQualification(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.qualificationService.getByTournamentId(id);
+  }
+
+  @Post(':id/join')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async join(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: JoinTournamentDto,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<void> {
+    await this.qualificationService.joinTournament(
+      id,
+      req.user!.playerId,
+      body?.teamId,
+    );
+  }
+
+  @Post(':id/leave')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async leave(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: JoinTournamentDto,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<void> {
+    await this.qualificationService.leaveTournament(
+      id,
+      req.user!.playerId,
+      body?.teamId,
+    );
+  }
+
+  @Post(':id/qualification/submit')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async submitMatch(
+    @Param('id', new ParseUUIDPipe()) tournamentId: string,
+    @Body() body: SubmitMatchDto,
+    @Req() req: RequestWithJwtActor,
+  ) {
+    return this.qualificationService.submitMatch(
+      tournamentId,
+      body.dotaMatchId,
+      req.user!.playerId,
+    );
   }
 
   @Post(':id/header-banner')

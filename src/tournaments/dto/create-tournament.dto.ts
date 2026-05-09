@@ -1,37 +1,75 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TournamentStatus } from '../tournaments.model';
+import {
+  IsDateString,
+  IsEnum,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
+import { TournamentDivision, TournamentStatus } from '../tournaments.model';
 
 export class CreateTournamentDto {
   @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
   name: string;
 
-  @ApiProperty()
-  prizePool: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  prizePool?: number | null;
+
+  @ApiProperty({ enum: TournamentDivision, enumName: 'TournamentDivision' })
+  @IsEnum(TournamentDivision)
+  division: TournamentDivision;
 
   @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   headerBannerUrl?: string;
 
   @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   listBannerUrl?: string;
 
   @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
   tournamentSlots?: number;
 
   @ApiProperty()
-  registrationStartsAt: Date;
+  @IsDateString()
+  registrationStartsAt: string;
 
   @ApiProperty()
-  registrationEndsAt: Date;
+  @IsDateString()
+  registrationEndsAt: string;
 
   @ApiProperty()
-  tournamentStartsAt: Date;
+  @IsDateString()
+  tournamentStartsAt: string;
 
   @ApiProperty()
-  tournamentEndsAt: Date;
+  @IsDateString()
+  tournamentEndsAt: string;
 
-  @ApiProperty({ enum: TournamentStatus, enumName: 'TournamentStatus' })
+  @ApiProperty({
+    enum: [TournamentStatus.QUALIFICATIONS, TournamentStatus.PLAYOFF],
+    enumName: 'TournamentStatus',
+    description: 'COMPLETED cannot be set on creation',
+  })
+  @IsIn([TournamentStatus.QUALIFICATIONS, TournamentStatus.PLAYOFF])
   tournamentStatus: TournamentStatus;
 
   @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   tournamentGridUrl?: string;
 }

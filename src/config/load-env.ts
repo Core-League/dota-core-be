@@ -17,4 +17,11 @@ if (
       process.env[key] = value;
     }
   }
+  console.log('[env] Loaded .env.dev (NODE_ENV=%s)', nodeEnv);
+} else {
+  console.log('[env] Skipped .env.dev (NODE_ENV=%s)', nodeEnv);
 }
+
+console.log('[env] NODE_ENV             =', process.env.NODE_ENV);
+console.log('[env] DISCORD_REDIRECT_URI =', process.env.DISCORD_REDIRECT_URI);
+console.log('[env] DISCORD_CLIENT_ID    =', process.env.DISCORD_CLIENT_ID);

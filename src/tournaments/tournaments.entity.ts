@@ -6,7 +6,7 @@ import {
   ManyToMany,
   JoinTable,
 } from 'typeorm';
-import { TournamentStatus } from './tournaments.model';
+import { TournamentDivision, TournamentStatus } from './tournaments.model';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 
@@ -18,8 +18,11 @@ export class Tournament {
   @Column()
   name: string;
 
-  @Column()
-  prizePool: number;
+  @Column({ nullable: true, type: 'int' })
+  prizePool: number | null;
+
+  @Column({ type: 'enum', enum: TournamentDivision, nullable: true })
+  division: TournamentDivision | null;
 
   @Column({ nullable: true })
   headerBannerUrl: string;

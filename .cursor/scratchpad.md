@@ -2,44 +2,126 @@
 
 ## Background and Motivation
 
-NestJS + TypeORM backend (`core-backend`). Executor mode is engaged to implement agreed changes in code.
+NestJS + TypeORM backend (`core-backend`). New planning task: **add admin endpoint(s) to change player roles**.
+
+Existing admin surface (`src/admin/admin.controller.ts`):
+
+- `POST /admin/discord/sync` — re-sync Discord roles/voice channels for verified teams.
+- `POST /admin/players/:playerId/verify` — set player's primary role to «Гравець», stamp `verifiedAt`, add Discord verified role.
+- `DELETE /admin/players/:playerId/verify` — revert primary role to «Гість», clear `verifiedAt`, remove Discord verified role.
+
+Role catalog (`src/user-roles/role.constants.ts`): `Гість`, `Гравець`, `Капітан`, `Медіа`, `Адмін` (`isAdminRole=true` only for `Адмін`). Each player typically has one non-admin "primary" role row plus an optional admin row. `verifyPlayer`/`unverifyPlayer` enforce the single-primary-role invariant.
+
+Gap: there is no admin endpoint to set a player to «Капітан» or «Медіа», or to grant/revoke «Адмін». Captain assignment is currently a side effect of team management; media + admin promotions cannot be done via API.
 
 ## Key Challenges and Analysis
 
-- Planner artifact (this file) was missing at handoff; **High-level Task Breakdown** needs to be filled from the user’s requirements.
+1. **Side-effect parity with verify/unverify.** Setting `Гравець` should match `verifyPlayer` (stamp `verifiedAt`, Discord verified ON); setting `Гість` should match `unverifyPlayer` (clear `verifiedAt`, Discord verified OFF). Other roles (`Капітан`, `Медіа`) should leave `verifiedAt` untouched (a captain is implicitly verified; media is editorial). No Discord wiring exists for `Медіа` or `Адмін`, so no Discord call for those.
+2. **Admin role is additive, not exclusive.** Granting `Адмін` should add an `isAdminRole=true` row alongside the existing primary role, not replace it. Revoking should remove only admin rows. Mixing this into a single "set role" endpoint overloads semantics, so a separate grant/revoke pair (mirroring the existing `verify`/`unverify` POST/DELETE pattern) keeps things clean.
+3. **Captain interaction with `TeamsService`.** `TeamsService` already creates/maintains a `Капітан` row when a player is set as a team captain, and Discord captain role is managed by team flows. The admin endpoint should *not* duplicate Discord captain wiring (avoid drift); it should only update the user_roles row. Worth flagging in the response/docs that this does not change team captaincy.
+4. **Single non-admin role invariant.** Reuse the same dedupe pattern as `verifyPlayer` (`nonAdminRoles.slice(1)` removal) so the data model stays consistent.
+5. **Authorization.** Reuse `JwtAuthGuard` + `AdminGuard` (already applied at controller level).
+6. **Validation.** Body must restrict `name` to the four assignable primary roles (exclude `Адмін`, since admin has its own dedicated grant/revoke endpoints).
+7. **Self-protection (optional, recommended).** Prevent an admin from revoking their own admin role to avoid lockout. Easy to enforce by comparing `req.user.playerId` with `:playerId`.
 
 ## High-level Task Breakdown
 
-- [x] Add Player ↔ UserRoles one-to-many relation (Player has roles, role references player). **Success:** Entities compile and expose FK `playerId` on roles with cascade delete.
-- [x] Wire repositories in modules. **Success:** `PlayersModule` and `UserRolesModule` register TypeORM features for Player/UserRoles.
-- [x] Add Team ↔ Player relations (captain/coach OneToOne, main/reserved players join tables). **Success:** Team entity compiles with `captain`, `coach`, `mainPlayers`, `reservedPlayers` relations and generates FK/through tables.
-- [x] Enforce non-null captain and auto-promote first main player on captain removal. **Success:** Team entity captain relation is non-nullable; TeamsService exposes removal logic that reassigns captain or errors if none available.
-- [x] Add Tournament ↔ Team relation (Tournament has many teams; Team has optional tournament). **Success:** Entities compile with FK `tournamentId` and repositories registered.
-- [x] Add Match ↔ Team relations for teamA/teamB/winner. **Success:** Match uses Team relations with FKs `teamAId`, `teamBId`, `winnerId`; Team exposes inverse collections.
-- [x] Add Tournament ↔ UserRoles relation for join eligibility. **Success:** Tournament lists eligible roles via join table; UserRoles exposes inverse relation; repositories registered.
-- [x] Add CRUD (Data Mapper) controllers/services for Player, UserRoles, Team, Match, Tournament with repository-backed methods. **Success:** Basic create/find/update/remove endpoints wired with TypeORM repositories and lint clean.
+Tasks are intentionally small and verifiable. Executor completes one at a time and waits for verification before proceeding.
+
+- [ ] **Task 1 — Add DTO `SetPlayerRoleDto`.**
+  - File: `src/admin/dto/set-player-role.dto.ts` (new).
+  - Single field `name: RoleName` validated with `@IsIn([Role.GUEST, Role.PLAYER, Role.MEDIA])` (deliberately excludes `Адмін` — has its own grant/revoke routes — and `Капітан` — managed by `TeamsService`). `@ApiProperty({ enum: [...] })` for Swagger.
+  - **Success:** File compiles; validation rejects `Адмін`, `Капітан`, and arbitrary strings; Swagger schema lists exactly three options.
+
+- [ ] **Task 2 — Extract role-mutation helper in `AdminService`.**
+  - Refactor `verifyPlayer`/`unverifyPlayer` to call a new private helper `setPrimaryRole(playerId, name: RoleName): Promise<PlayerRoleResult>`.
+  - Helper:
+    - Loads player with roles (existing `findPlayerWithRoles`).
+    - Removes duplicate non-admin rows (`slice(1)`).
+    - Renames or creates the single primary row to `name`.
+    - Updates `verifiedAt`: `Гравець` → `now`; `Гість` → `null`; otherwise leave unchanged.
+    - Calls `discord.setVerifiedRole(player.discordId, true|false)` only for `Гравець`/`Гість`.
+    - Returns `{ playerId, name, verifiedAt }`.
+  - `verifyPlayer` and `unverifyPlayer` keep their existing return type `VerifyResult`; they internally call the helper and translate (or stay as-is and we simply share the body via a private util — choose whichever yields the smallest diff).
+  - **Success:** Existing verify/unverify behavior unchanged (same DB writes, same Discord calls, same response shape). Build green.
+
+- [ ] **Task 3 — Add `setPlayerRole` service method.**
+  - Public wrapper: `setPlayerRole(playerId, name): Promise<PlayerRoleResult>` that calls `setPrimaryRole`.
+  - **Success:** Method compiles; returns `PlayerRoleResult`.
+
+- [ ] **Task 4 — Add controller route `PUT /admin/players/:playerId/role`.**
+  - In `src/admin/admin.controller.ts`:
+    ```ts
+    @Put('players/:playerId/role')
+    @ApiOperation({ summary: "Set player's primary role (Гість/Гравець/Медіа)" })
+    setPlayerRole(
+      @Param('playerId', ParseUUIDPipe) playerId: string,
+      @Body() body: SetPlayerRoleDto,
+    ): Promise<PlayerRoleResult> {
+      return this.adminService.setPlayerRole(playerId, body.name);
+    }
+    ```
+  - Add `Put`, `Body` to `@nestjs/common` imports.
+  - **Success:** Swagger lists the new endpoint with the correct three-value enum body; happy-path call to set `Медіа` writes a single non-admin row named `Медіа` and leaves `verifiedAt` untouched.
+
+- [ ] **Task 5 — Add admin grant/revoke service + routes.**
+  - Service:
+    - `grantAdmin(playerId): Promise<{ playerId; isAdmin: true }>` — idempotently ensures an `isAdminRole=true` row exists (do not duplicate; if a row already exists, return as-is).
+    - `revokeAdmin(playerId, actorPlayerId): Promise<{ playerId; isAdmin: false }>` — removes all `isAdminRole=true` rows; throws `ForbiddenException('Cannot revoke your own admin role')` if `playerId === actorPlayerId`.
+  - Controller:
+    - `POST /admin/players/:playerId/admin` → `grantAdmin`.
+    - `DELETE /admin/players/:playerId/admin` → `revokeAdmin` (passes `req.user.playerId`).
+  - Add `Req` and the same authed `Request` typing as in `user-roles.controller.ts`.
+  - **Success:** Granting twice is a no-op; revoking removes admin row(s); self-revoke returns 403; non-admin response code 403 from `AdminGuard` is unaffected.
+
+- [ ] **Task 6 — Manual smoke test via Swagger / curl.**
+  - As an admin, set a test player's role to `Медіа`, then `Капітан`, then back to `Гравець`; verify DB and that `verifiedAt` updates only on `Гравець`/`Гість`.
+  - Grant admin to a non-admin user, confirm both rows exist, then revoke.
+  - Try self-revoke: expect 403.
+  - **Success:** Behaviors match expectations end-to-end.
+
+- [ ] **Task 7 — Lint + build.**
+  - `npm run lint` and `npm run build` both clean.
+  - **Success:** No new errors.
+
+## Decisions (locked in)
+
+1. **Endpoint shape:** Option A — `PUT /admin/players/:playerId/role` + `POST`/`DELETE /admin/players/:playerId/admin`.
+2. **`Капітан` excluded** from primary-role assignment (managed by `TeamsService`); DTO accepts only `Гість`, `Гравець`, `Медіа`.
+3. **Self-revoke admin guard:** kept (403 if `req.user.playerId === :playerId`).
+4. **Discord side-effects (default):** only `Гравець`↔`Гість` toggle Discord verified; `Медіа`/`Адмін` make no Discord calls; captain wiring stays in `TeamsService`.
+5. **Response shape (default):** new `PlayerRoleResult { playerId, name, verifiedAt }` for the new endpoint; existing `verify`/`unverify` continue to return `VerifyResult` (no breaking change).
 
 ## Project Status Board
 
-- [x] Executor mode acknowledged (user switched to implementation)
-- [x] Step 1: Add Player ↔ UserRoles relation
-- [x] Step 2: Wire repositories in modules
-- [x] Step 3: Add Team ↔ Player relations (captain/coach/main/reserved)
-- [x] Step 4: Enforce captain non-null and auto-promotion logic
-- [x] Step 5: Add Tournament ↔ Team relation
-- [x] Step 6: Add Match ↔ Team relation (teamA/teamB/winner)
-- [x] Step 7: Add Tournament ↔ UserRoles eligibility relation
-- [x] Step 8: Add CRUD controllers/services using repositories
+- [x] Planner: gathered context (controller, service, role catalog, Discord service, teams interaction)
+- [x] Planner: user approved Option A; Captain excluded; self-revoke guard kept; defaults locked for Discord side-effects and response shape
+- [x] Executor: Task 1 — `SetPlayerRoleDto`
+- [x] Executor: Task 2 — extract `setPrimaryRole` helper
+- [x] Executor: Task 3 — `setPlayerRole` service method
+- [x] Executor: Task 4 — `PUT /admin/players/:playerId/role` route
+- [x] Executor: Task 5 — admin grant/revoke service + routes
+- [ ] Executor: Task 6 — manual smoke test (deferred to user)
+- [x] Executor: Task 7 — lint + build clean
 
 ## Current Status / Progress Tracking
 
-- **Mode:** Executor (implementation)
-- **Recent work:** Added repository-backed CRUD endpoints for Player, UserRoles, Team, Match, Tournament; resolved lint issues.
+- **Mode:** Executor. All code tasks complete. `npm run lint` and `npm run build` both green. Awaiting user smoke test (Task 6).
 
-## Executor’s Feedback or Assistance Requests
+## Executor's Feedback or Assistance Requests
 
-No blockers. Consider DTO validation/whitelisting for payloads and authorization on CRUD endpoints.
+- Implementation complete. New endpoints under `/admin` (all guarded by `JwtAuthGuard + AdminGuard`):
+  - `PUT  /admin/players/:playerId/role` — body `{ name: 'Гість'|'Гравець'|'Медіа' }` → returns `PlayerRoleResult`.
+  - `POST /admin/players/:playerId/admin` → returns `AdminRoleResult { isAdmin: true }`. Idempotent.
+  - `DELETE /admin/players/:playerId/admin` → returns `AdminRoleResult { isAdmin: false }`. Returns 403 on self-revoke.
+- `verifyPlayer` / `unverifyPlayer` now share a private `setPrimaryRole` helper; behavior + response shape unchanged.
+- Captain is intentionally NOT in the `SetPlayerRoleDto` enum (managed by `TeamsService`).
+- Build hit one TS1272 (decorated signature requires `import type` for `RoleName`); resolved by splitting the import.
 
 ## Lessons
 
-_(Executor: add fixes and gotchas here as they appear.)_
+- After adding a `Role` enum value, keep `ROLE_NAMES`, `ROLE_CATALOG_IDS`, `ROLE_CATALOG_DISPLAY_ORDER`, and `ROLE_COLOR_HEX` in sync or `Record<RoleName, string>` fails the build.
+- Catalog listing should query `playerId IS NULL` via QueryBuilder; `find` + `relations: ['player']` can interact badly with nullable `ManyToOne` in some cases.
+- `verifyPlayer`/`unverifyPlayer` enforce a single-non-admin-role invariant by deduping `nonAdminRoles.slice(1)`. Any new role-mutation flow should follow the same pattern.
+- Discord wiring exists only for `verified` (per-player) and `Капітан` (per-team-captain via `TeamsService`); there is no Discord role wired for `Медіа` or `Адмін`.
+- TS1272 with `isolatedModules + emitDecoratorMetadata`: type aliases used in decorated DTO field signatures (e.g. `name: RoleName` under `@IsIn(...)`) must be imported via `import type` (or via a namespace import). Mixed `import { Role, RoleName }` will fail the build even when the type is used purely as a type annotation.

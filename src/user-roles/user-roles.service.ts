@@ -2,11 +2,13 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { UserRoles } from './user-roles.entity';
 import {
   getRoleColorByName,
+  getSystemCatalogRoleSpec,
   ROLE_CATALOG_DISPLAY_ORDER,
   ROLE_NAMES,
 } from './role.constants';
@@ -54,9 +56,26 @@ export class UserRolesService {
 
   async findAll(): Promise<UserRoleResponseDto[]> {
     const rows = await this.userRolesRepo.findAllCatalog();
-    const order = ROLE_CATALOG_DISPLAY_ORDER;
-    rows.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
-    return rows.map((r) => this.toResponse(r));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const merged = ROLE_CATALOG_DISPLAY_ORDER.map((id) => {
+      const existing = byId.get(id);
+      if (existing) {
+        return existing;
+      }
+      const spec = getSystemCatalogRoleSpec(id);
+      if (!spec) {
+        throw new InternalServerErrorException(
+          `Missing catalog spec for role id ${id}`,
+        );
+      }
+      return this.userRolesRepo.create({
+        id,
+        name: spec.name,
+        isAdminRole: spec.isAdminRole,
+        player: null,
+      });
+    });
+    return merged.map((r) => this.toResponse(r));
   }
 
   async findOne(id: string): Promise<UserRoleResponseDto> {

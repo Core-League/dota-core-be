@@ -14,12 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import {
-  ApiBearerAuth,
-  ApiBody,
-  ApiConsumes,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.guard';
 import {
@@ -28,7 +23,10 @@ import {
   UploadsService,
 } from '../uploads/uploads.service';
 import { TeamsService } from './teams.service';
+import { AddPlayerDto } from './dto/add-player.dto';
 import { CreateTeamDto } from './dto/create-team.dto';
+import { CreateInviteDto } from './dto/create-invite.dto';
+import { SearchTeamsDto } from './dto/search-teams.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 
 const FILE_API_BODY = {
@@ -59,6 +57,12 @@ export class TeamsController {
     return this.teamsService.findAll();
   }
 
+  @Post('search')
+  @ApiBody({ type: SearchTeamsDto, required: false })
+  search(@Body() body?: SearchTeamsDto) {
+    return this.teamsService.search(body ?? {});
+  }
+
   @Get(':id')
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.teamsService.findOne(id);
@@ -75,6 +79,52 @@ export class TeamsController {
   @Delete(':id')
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.teamsService.remove(id);
+  }
+
+  @Post(':id/captain')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  changeCaptain(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { newCaptainPlayerId: string },
+    @Req() req: RequestWithJwtActor,
+  ) {
+    return this.teamsService.changeCaptain(
+      id,
+      body.newCaptainPlayerId,
+      req.user!.playerId,
+    );
+  }
+
+  @Post(':id/invites')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  createInvite(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: CreateInviteDto,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<{ token: string; expiresAt: Date }> {
+    return this.teamsService.createInvite(id, req.user!.playerId, body.slot);
+  }
+
+  @Post(':id/players')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  addPlayer(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: AddPlayerDto,
+  ) {
+    return this.teamsService.addPlayerToTeam(id, body.playerId, body.slot);
+  }
+
+  @Delete(':id/players/:playerId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  removePlayer(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('playerId', new ParseUUIDPipe()) playerId: string,
+  ) {
+    return this.teamsService.removePlayerFromTeam(id, playerId);
   }
 
   @Post(':id/logo')
@@ -95,7 +145,7 @@ export class TeamsController {
   ): Promise<{ url: string }> {
     if (!file) throw new BadRequestException('No file uploaded');
     const url = this.uploadsService.buildUrl('teams', file.filename);
-    await this.teamsService.update(id, { logoUrl: url } as any);
+    await this.teamsService.update(id, { logoUrl: url });
     return { url };
   }
 }
