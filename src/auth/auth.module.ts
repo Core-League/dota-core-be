@@ -35,6 +35,7 @@ const defaultJwtTtlSec = 60 * 60 * 24 * 7;
   ],
   exports: [
     JwtModule,
+    AuthService,
     JwtAuthGuard,
     OwnPlayerOrAdminGuard,
     AdminGuard,

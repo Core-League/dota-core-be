@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   GoneException,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
@@ -18,10 +19,17 @@ import { SearchTeamsDto } from './dto/search-teams.dto';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
-import { Role } from '../user-roles/role.constants';
+import { Role, getRoleColorByName } from '../user-roles/role.constants';
 import { toPlayerRankDto } from '../players/dto/player-rank.dto';
 import { TournamentDivision } from '../tournaments/tournaments.model';
 import { DiscordBotService } from '../discord/discord-bot.service';
+import { AuthService } from '../auth/auth.service';
+import {
+  TeamResponseDto,
+  TeamTournamentEmbeddedDto,
+} from './dto/team-response.dto';
+import { PlayerResponseDto } from '../players/dto/player-response.dto';
+import { Tournament } from '../tournaments/tournaments.entity';
 
 function computeTeamDivision(
   players: { rating: number }[],
@@ -47,31 +55,18 @@ export class TeamsService {
     private readonly inviteRepo: TeamInviteRepository,
     private readonly discord: DiscordBotService,
     @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly authService: AuthService,
   ) {}
 
-  private withRank(player: Player | null | undefined) {
-    if (!player) return player ?? null;
-    return { ...player, rank: toPlayerRankDto(player.rating) };
+  /** Для інших модулів (напр. турніри) — той самий DTO, що й у REST. */
+  toTeamResponse(team: Team): TeamResponseDto {
+    return this.mapTeamResponse(team);
   }
 
-  private mapTeam(team: Team) {
-    return {
-      ...team,
-      captain: this.withRank(team.captain),
-      coach: this.withRank(team.coach),
-      mainPlayers: (team.mainPlayers ?? []).map((p) => this.withRank(p)!),
-      reservedPlayers: (team.reservedPlayers ?? []).map(
-        (p) => this.withRank(p)!,
-      ),
-    };
-  }
-
-  /** Same shape as single-team API responses (includes computed `rank` on players). */
-  toTeamResponse(team: Team) {
-    return this.mapTeam(team);
-  }
-
-  async createTeam(dto: CreateTeamDto, captainId: string) {
+  async createTeam(
+    dto: CreateTeamDto,
+    captainId: string,
+  ): Promise<TeamResponseDto> {
     const existingTeams = await this.teamsRepo.findByCaptainId(captainId);
     if (existingTeams.length > 0) {
       throw new ConflictException('Ви вже є капітаном іншої команди');
@@ -101,20 +96,23 @@ export class TeamsService {
       );
     }
 
-    return this.mapTeam(team);
+    await this.syncDiscordGuildRolesForPlayer(captainId);
+
+    const full = await this.teamsRepo.findOneById(team.id);
+    if (!full) {
+      throw new InternalServerErrorException('Не вдалося завантажити команду');
+    }
+    return this.mapTeamResponse(full);
   }
 
-  async findAll() {
+  async findAll(): Promise<TeamResponseDto[]> {
     const teams = await this.teamsRepo.findAll();
-    return teams.map((t) => this.mapTeam(t));
+    return teams.map((t) => this.mapTeamResponse(t));
   }
 
-  /**
-   * Lists teams with optional `tournaments` array (from `team.tournament`, ManyToOne).
-   */
   async search(dto: SearchTeamsDto = {}) {
     const teams = await this.teamsRepo.findAll();
-    const mapped = teams.map((t) => this.mapTeam(t));
+    const mapped = teams.map((t) => this.mapTeamResponse(t));
     if (!dto.withTournaments) {
       return mapped;
     }
@@ -124,15 +122,15 @@ export class TeamsService {
     }));
   }
 
-  async findOne(id: string) {
+  async findOne(id: string): Promise<TeamResponseDto> {
     const team = await this.teamsRepo.findOneById(id);
     if (!team) {
       throw new NotFoundException('Команду не знайдено');
     }
-    return this.mapTeam(team);
+    return this.mapTeamResponse(team);
   }
 
-  async update(id: string, payload: Partial<Team>) {
+  async update(id: string, payload: Partial<Team>): Promise<TeamResponseDto> {
     const team = await this.teamsRepo.findOneById(id);
     if (!team) throw new NotFoundException('Команду не знайдено');
 
@@ -145,7 +143,9 @@ export class TeamsService {
       void this.onTeamVerified(saved);
     }
 
-    return this.mapTeam(saved);
+    const reloaded = await this.teamsRepo.findOneById(id);
+    if (!reloaded) throw new NotFoundException('Команду не знайдено');
+    return this.mapTeamResponse(reloaded);
   }
 
   private async onTeamVerified(team: Team): Promise<void> {
@@ -210,6 +210,7 @@ export class TeamsService {
       if (captainRole) {
         await rolesRepo.remove(captainRole);
       }
+      await this.syncDiscordGuildRolesForPlayer(captainId);
     }
 
     if (discordChannelId) {
@@ -227,7 +228,7 @@ export class TeamsService {
     teamId: string,
     newCaptainPlayerId: string,
     actorPlayerId: string,
-  ): Promise<ReturnType<TeamsService['mapTeam']>> {
+  ): Promise<TeamResponseDto> {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) throw new NotFoundException('Команду не знайдено');
 
@@ -262,14 +263,16 @@ export class TeamsService {
       await this.discord.addCaptainRole(newCaptain.discordId);
     }
 
-    return this.mapTeam(saved);
+    const reloaded = await this.teamsRepo.findOneById(saved.id);
+    if (!reloaded) throw new NotFoundException('Команду не знайдено');
+    return this.mapTeamResponse(reloaded);
   }
 
   async addPlayerToTeam(
     teamId: string,
     playerId: string,
     slot: 'main' | 'reserved',
-  ) {
+  ): Promise<TeamResponseDto> {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) throw new NotFoundException('Команду не знайдено');
 
@@ -299,29 +302,33 @@ export class TeamsService {
     } else {
       if (reserved.length >= 3) {
         throw new BadRequestException(
-          'Список запасних вже заповнений (максимум 3 гравці)',
+          'Список запасних вже заповнений (максимум 3 гравців)',
         );
       }
       team.reservedPlayers = [...reserved, player];
     }
 
-    const saved = await this.teamsRepo.save(team);
+    await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(teamId);
 
     if (team.discordRoleId && player.discordId) {
       await this.discord.addMemberRole(player.discordId, team.discordRoleId);
     }
 
-    return this.mapTeam(saved);
+    const reloaded = await this.teamsRepo.findOneById(teamId);
+    if (!reloaded) throw new NotFoundException('Команду не знайдено');
+    return this.mapTeamResponse(reloaded);
   }
 
-  async removePlayerFromTeam(teamId: string, playerId: string) {
+  async removePlayerFromTeam(
+    teamId: string,
+    playerId: string,
+  ): Promise<TeamResponseDto> {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) {
       throw new NotFoundException('Team not found');
     }
 
-    // Deduct 70% of tournament points if team is in an active tournament
     if (team.tournament?.id) {
       const tournamentId = team.tournament.id;
       const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
@@ -379,7 +386,9 @@ export class TeamsService {
       }
     }
 
-    return this.mapTeam(saved);
+    const reloaded = await this.teamsRepo.findOneById(teamId);
+    if (!reloaded) throw new NotFoundException('Team not found');
+    return this.mapTeamResponse(reloaded);
   }
 
   private async resetPlayersTeamIdColumn(
@@ -394,10 +403,16 @@ export class TeamsService {
       .execute();
   }
 
-  /**
-   * Вирівнює player.teamId з поточним ростером (капітан, тренер, основа, запасні).
-   * У кого був цей teamId, але гравця вже немає в команді — ставить null.
-   */
+  private async syncDiscordGuildRolesForPlayer(playerId: string): Promise<void> {
+    const player = await this.dataSource.getRepository(Player).findOne({
+      where: { id: playerId },
+      relations: ['roles'],
+    });
+    if (player) {
+      await this.authService.syncPlayerGuildRoles(player);
+    }
+  }
+
   private async syncPlayerTeamLinks(teamId: string): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
       await this.resetPlayersTeamIdColumn(teamId, manager);
@@ -524,5 +539,73 @@ export class TeamsService {
     }
 
     await this.inviteRepo.remove(invite);
+  }
+
+  private mapPlayerForTeamResponse(player: Player): PlayerResponseDto {
+    const rating = player.rating ?? 0;
+    return {
+      id: player.id,
+      steamId: player.steamId ?? null,
+      discordId: player.discordId ?? null,
+      telegramId: player.telegramId ?? null,
+      avatarUrl: player.avatarUrl ?? null,
+      discordName: player.discordName ?? null,
+      discordUsername: player.discordUsername ?? null,
+      rating,
+      rank: toPlayerRankDto(rating),
+      positions: player.positions ?? null,
+      verifiedAt: player.verifiedAt ?? null,
+      teamId: player.teamId ?? null,
+      roles: (player.roles ?? []).map((r) => ({
+        id: r.id,
+        name: r.name,
+        isAdminRole: r.isAdminRole,
+        color: getRoleColorByName(r.name) ?? '#64748B',
+      })),
+    };
+  }
+
+  private mapTournamentEmbedded(
+    t: Tournament | null | undefined,
+  ): TeamTournamentEmbeddedDto | null {
+    if (!t) return null;
+    return {
+      id: t.id,
+      name: t.name,
+      prizePool: t.prizePool ?? 0,
+      headerBannerUrl: t.headerBannerUrl ?? null,
+      listBannerUrl: t.listBannerUrl ?? null,
+      tournamentSlots: t.tournamentSlots ?? null,
+      registrationStartsAt: t.registrationStartsAt,
+      registrationEndsAt: t.registrationEndsAt,
+      tournamentStartsAt: t.tournamentStartsAt,
+      tournamentEndsAt: t.tournamentEndsAt,
+      tournamentStatus: t.tournamentStatus,
+      tournamentGridUrl: t.tournamentGridUrl ?? null,
+    };
+  }
+
+  private mapTeamResponse(team: Team): TeamResponseDto {
+    if (!team.captain) {
+      throw new InternalServerErrorException('Команда без капітана');
+    }
+    return {
+      id: team.id,
+      name: team.name,
+      logoUrl: team.logoUrl ?? null,
+      dotaTeamId: team.dotaTeamId ?? null,
+      isVerified: team.isVerified,
+      isPlayingTournament: team.isPlayingTournament,
+      verifiedAt: team.verifiedAt ?? null,
+      captain: this.mapPlayerForTeamResponse(team.captain),
+      coach: team.coach ? this.mapPlayerForTeamResponse(team.coach) : null,
+      mainPlayers: (team.mainPlayers ?? []).map((p) =>
+        this.mapPlayerForTeamResponse(p),
+      ),
+      reservedPlayers: (team.reservedPlayers ?? []).map((p) =>
+        this.mapPlayerForTeamResponse(p),
+      ),
+      tournament: this.mapTournamentEmbedded(team.tournament),
+    };
   }
 }
