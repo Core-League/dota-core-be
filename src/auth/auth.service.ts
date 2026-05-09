@@ -52,9 +52,6 @@ type DiscordGuildMemberRest = {
   };
 };
 
-/** Fallback для verified-ролі в Discord, якщо не задано DISCORD_VERIFIED_ROLE_ID. */
-const DEFAULT_DISCORD_VERIFIED_ROLE_ID = '1498458326839591126';
-
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
@@ -556,79 +553,6 @@ export class AuthService implements OnModuleInit {
         `Discord GET guild member failed (HTTP ${status}): ${body}`,
       );
       return null;
-    }
-  }
-
-  /**
-   * REST як у `fetchGuildMemberForSync`: Put/Delete роль учасника гільдії за станом гравця в БД.
-   * Використовуйте після змін `user_roles` / `verifiedAt` (верифікація, адмінка, команди).
-   */
-  async syncPlayerGuildRoles(player: Player): Promise<void> {
-    const discordId = player.discordId;
-    if (!discordId) return;
-    const token = process.env.DISCORD_BOT_TOKEN?.trim();
-    const guildId = process.env.DISCORD_SYNC_GUILD_ID?.trim();
-    if (!token || !guildId) return;
-
-    const verifiedRoleId =
-      process.env.DISCORD_VERIFIED_ROLE_ID?.trim() ??
-      DEFAULT_DISCORD_VERIFIED_ROLE_ID;
-    await this.patchGuildMemberRole(
-      discordId,
-      token,
-      guildId,
-      verifiedRoleId,
-      player.verifiedAt != null,
-    );
-
-    const captainRoleId = process.env.DISCORD_ROLE_ID_CAPTAIN?.trim();
-    if (captainRoleId) {
-      const hasCaptain = (player.roles ?? []).some(
-        (r) => r.name === Role.CAPTAIN,
-      );
-      await this.patchGuildMemberRole(
-        discordId,
-        token,
-        guildId,
-        captainRoleId,
-        hasCaptain,
-      );
-    }
-
-    const adminRoleId = process.env.DISCORD_ROLE_ID_ADMIN?.trim();
-    if (adminRoleId) {
-      const hasAdmin = (player.roles ?? []).some((r) => r.isAdminRole);
-      await this.patchGuildMemberRole(
-        discordId,
-        token,
-        guildId,
-        adminRoleId,
-        hasAdmin,
-      );
-    }
-  }
-
-  private async patchGuildMemberRole(
-    discordUserId: string,
-    token: string,
-    guildId: string,
-    roleId: string,
-    add: boolean,
-  ): Promise<void> {
-    const url = `https://discord.com/api/v10/guilds/${guildId}/members/${discordUserId}/roles/${roleId}`;
-    const headers = { Authorization: `Bot ${token}` };
-    try {
-      if (add) {
-        await firstValueFrom(this.http.put(url, null, { headers }));
-      } else {
-        await firstValueFrom(this.http.delete(url, { headers }));
-      }
-    } catch (e) {
-      const err = e as AxiosError;
-      const status = err.response?.status ?? 'unknown';
-      this.logger.warn(
-        `Discord guild role ${add ? 'add' : 'remove'} failed for ${discordUserId}, role ${roleId} (HTTP ${status})`,
-      );
     }
   }
 
