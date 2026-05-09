@@ -18,6 +18,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -30,6 +31,7 @@ import {
 import { TeamsService } from './teams.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
+import { TeamResponseDto } from './dto/team-response.dto';
 
 const FILE_API_BODY = {
   schema: {
@@ -50,21 +52,25 @@ export class TeamsController {
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @ApiOkResponse({ type: TeamResponseDto })
   create(@Body() body: CreateTeamDto, @Req() req: RequestWithJwtActor) {
     return this.teamsService.createTeam(body, req.user!.playerId);
   }
 
   @Get()
+  @ApiOkResponse({ type: TeamResponseDto, isArray: true })
   findAll() {
     return this.teamsService.findAll();
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: TeamResponseDto })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.teamsService.findOne(id);
   }
 
   @Patch(':id')
+  @ApiOkResponse({ type: TeamResponseDto })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateTeamDto,

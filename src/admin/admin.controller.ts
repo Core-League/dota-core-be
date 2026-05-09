@@ -1,13 +1,16 @@
 import {
+  Body,
   Controller,
   Delete,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
@@ -15,6 +18,8 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from './guards/admin.guard';
 import { AdminService, VerifyResult } from './admin.service';
+import { AdminSetPlayerRolesDto } from './dto/admin-set-player-roles.dto';
+import { AdminPlayerRolesResultDto } from './dto/admin-player-roles-result.dto';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -22,6 +27,21 @@ import { AdminService, VerifyResult } from './admin.service';
 @Controller('admin')
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
+
+  @Patch('players/:playerId/admin')
+  @ApiOkResponse({ type: AdminPlayerRolesResultDto })
+  @ApiOperation({
+    summary: 'Встановити повний набір ролей гравця',
+    description:
+      'Замінює записи user_roles для гравця (наприклад «Гравець» + «Капітан» + «Адмін»). Оновлює verifiedAt і синхронізує ролі в Discord за змінними DISCORD_*.',
+  })
+  @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
+  setPlayerRoles(
+    @Param('playerId', ParseUUIDPipe) playerId: string,
+    @Body() body: AdminSetPlayerRolesDto,
+  ): Promise<AdminPlayerRolesResultDto> {
+    return this.adminService.setPlayerRoles(playerId, body);
+  }
 
   @Post('players/:playerId/verify')
   @ApiOperation({
