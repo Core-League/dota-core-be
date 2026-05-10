@@ -22,6 +22,11 @@ import { QualificationMatchRepository } from './qualification-match.repository';
 import { Qualification } from './qualification.entity';
 import { QualificationRepository } from './qualification.repository';
 
+/** Qualification GET payload: tournament standings are per-player in this list. */
+export type QualificationWithPlayerPoints = Qualification & {
+  playerTournamentPoints: Array<{ playerId: string; points: number }>;
+};
+
 const STEAM_ID_OFFSET = 76561197960265728n;
 const MIN_MATCH_DURATION_SEC = 900;
 const MAX_RESERVED_PLAYERS = 3;
@@ -52,14 +57,30 @@ export class QualificationService {
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
-  async getByTournamentId(tournamentId: string): Promise<Qualification> {
+  async getByTournamentId(
+    tournamentId: string,
+  ): Promise<QualificationWithPlayerPoints> {
     const qualification = await this.qualRepo.findByTournamentId(tournamentId);
     if (!qualification)
       throw new NotFoundException('Кваліфікацію турніру не знайдено');
     qualification.matches = (qualification.matches ?? []).filter(
       (m) => m.dotaMatchId !== null,
     );
-    return qualification;
+
+    const pointRows = await this.dataSource
+      .getRepository(PlayerTournamentPoints)
+      .find({
+        where: { tournamentId },
+        select: ['playerId', 'points'],
+        order: { playerId: 'ASC' },
+      });
+
+    return Object.assign(qualification, {
+      playerTournamentPoints: pointRows.map((r) => ({
+        playerId: r.playerId,
+        points: r.points,
+      })),
+    });
   }
 
   async createForTournament(
