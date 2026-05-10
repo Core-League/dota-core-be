@@ -513,8 +513,8 @@ export class QualificationService {
       );
     }
 
-    const radiantId = String(match.radiant_team?.team_id ?? '');
-    const direId = String(match.dire_team?.team_id ?? '');
+    const radiantId = String(match.radiant_team_id ?? '');
+    const direId = String(match.dire_team_id ?? '');
     const teamAId = qualMatch.teamA.dotaTeamId ?? '';
     const teamBId = qualMatch.teamB.dotaTeamId ?? '';
 
