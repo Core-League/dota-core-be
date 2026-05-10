@@ -4,6 +4,7 @@ import {
   Delete,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Put,
   Req,
@@ -12,6 +13,7 @@ import {
 import type { Request } from 'express';
 import {
   ApiBearerAuth,
+  ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiTags,
@@ -26,6 +28,8 @@ import {
   VerifyResult,
 } from './admin.service';
 import { SetPlayerRoleDto } from './dto/set-player-role.dto';
+import { AdminSetPlayerRolesDto } from './dto/admin-set-player-roles.dto';
+import { AdminPlayerRolesResultDto } from './dto/admin-player-roles-result.dto';
 
 type AuthedRequest = Request & { user: { playerId: string } };
 
@@ -46,11 +50,26 @@ export class AdminController {
     return this.adminService.syncDiscord();
   }
 
+  @Patch('players/:playerId/roles')
+  @ApiOkResponse({ type: AdminPlayerRolesResultDto })
+  @ApiOperation({
+    summary: 'Встановити повний набір ролей гравця',
+    description:
+      'Замінює записи user_roles. Оновлює verifiedAt і синхронізує ролі в Discord (DISCORD_*). Шлях відрізняється від POST/DELETE …/admin (grant/revoke admin).',
+  })
+  @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
+  setPlayerRoles(
+    @Param('playerId', ParseUUIDPipe) playerId: string,
+    @Body() body: AdminSetPlayerRolesDto,
+  ): Promise<AdminPlayerRolesResultDto> {
+    return this.adminService.setPlayerRoles(playerId, body);
+  }
+
   @Post('players/:playerId/verify')
   @ApiOperation({
     summary: 'Verify a player',
     description:
-      "Sets the player's role to «Гравець» and stamps verifiedAt. Requires admin role.",
+      "Sets the player's primary role to «Гравець» and stamps verifiedAt. Requires admin role.",
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   verifyPlayer(
@@ -63,7 +82,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Unverify a player',
     description:
-      "Reverts the player's role to «Гість» and clears verifiedAt. Requires admin role.",
+      "Reverts the player's primary role to «Гість» and clears verifiedAt. Requires admin role.",
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   unverifyPlayer(
@@ -76,7 +95,7 @@ export class AdminController {
   @ApiOperation({
     summary: "Set player's primary role (Гість/Гравець/Медіа)",
     description:
-      "Replaces the player's primary (non-admin) role row. Гравець stamps verifiedAt and adds the Discord verified role; Гість clears verifiedAt and removes it; Медіа leaves verifiedAt and Discord state untouched. Адмін is granted via POST /admin/players/:playerId/admin. Капітан is managed by team flows.",
+      "Replaces the primary (non-admin) tier row. Гравець stamps verifiedAt; Гість clears verifiedAt; Медіа leaves verifiedAt unchanged. Адмін — POST/DELETE …/admin. Капітан — команди.",
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   setPlayerRole(
@@ -90,7 +109,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Grant admin role to a player',
     description:
-      'Idempotently adds an admin role row for the player; the existing primary role and verifiedAt are preserved. Requires admin role.',
+      'Idempotently adds an admin role row; primary role and verifiedAt preserved.',
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   grantAdmin(
@@ -103,7 +122,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Revoke admin role from a player',
     description:
-      'Removes all admin role rows for the player. The acting admin cannot revoke their own admin role (returns 403).',
+      'Removes admin role rows. Acting admin cannot revoke own admin (403).',
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   revokeAdmin(

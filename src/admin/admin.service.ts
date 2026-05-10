@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -9,9 +10,19 @@ import { DataSource, DeepPartial, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
-import { Role, RoleName } from '../user-roles/role.constants';
+import {
+  getRoleColorByName,
+  Role,
+  RoleName,
+  ROLE_NAMES,
+} from '../user-roles/role.constants';
 import { TournamentDivision } from '../tournaments/tournaments.model';
 import { DiscordBotService } from '../discord/discord-bot.service';
+import { AuthService } from '../auth/auth.service';
+import {
+  AdminPlayerRoleItemDto,
+  AdminSetPlayerRolesDto,
+} from './dto/admin-set-player-roles.dto';
 
 function computeTeamDivision(
   players: { rating: number }[],
@@ -24,6 +35,17 @@ function computeTeamDivision(
   if (avg <= 4500 && max <= 5500) return TournamentDivision.DIVISION_II;
   if (avg <= 7000) return TournamentDivision.DIVISION_III;
   return null;
+}
+
+/** Одна «базова» роль: Гість / Гравець / Медіа. Капітан — окремий рядок, не чіпаємо тут. */
+const PRIMARY_TIER_NAMES = new Set<RoleName>([
+  Role.GUEST,
+  Role.PLAYER,
+  Role.MEDIA,
+]);
+
+function isPrimaryTierName(name: string): boolean {
+  return PRIMARY_TIER_NAMES.has(name as RoleName);
 }
 
 export type DiscordSyncResult = {
@@ -50,6 +72,17 @@ export type AdminRoleResult = {
   isAdmin: boolean;
 };
 
+export type AdminPlayerRolesResult = {
+  playerId: string;
+  verifiedAt: Date | null;
+  roles: {
+    id: string;
+    name: string;
+    isAdminRole: boolean;
+    color: string;
+  }[];
+};
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -58,12 +91,105 @@ export class AdminService {
   private readonly teamsRepo: Repository<Team>;
 
   constructor(
-    @InjectDataSource() dataSource: DataSource,
+    @InjectDataSource() private readonly dataSource: DataSource,
     private readonly discord: DiscordBotService,
+    private readonly authService: AuthService,
   ) {
     this.playersRepo = dataSource.getRepository(Player);
     this.rolesRepo = dataSource.getRepository(UserRoles);
     this.teamsRepo = dataSource.getRepository(Team);
+  }
+
+  async setPlayerRoles(
+    playerId: string,
+    dto: AdminSetPlayerRolesDto,
+  ): Promise<AdminPlayerRolesResult> {
+    const items = dto.roles ?? [];
+    this.assertValidRoleAssignmentList(items);
+
+    await this.dataSource.transaction(async (manager) => {
+      const players = manager.getRepository(Player);
+      const roles = manager.getRepository(UserRoles);
+
+      const player = await players.findOne({
+        where: { id: playerId },
+        relations: ['roles'],
+      });
+      if (!player) throw new NotFoundException('Player not found');
+
+      await roles.delete({ player: { id: playerId } });
+
+      for (const row of items) {
+        const created = roles.create({
+          name: row.name,
+          isAdminRole: row.isAdminRole,
+          player: { id: playerId } as Player,
+        } as DeepPartial<UserRoles>);
+        await roles.save(created);
+      }
+
+      const hasPlayerTier = items.some(
+        (r) => !r.isAdminRole && r.name === Role.PLAYER,
+      );
+      if (hasPlayerTier) {
+        player.verifiedAt = player.verifiedAt ?? new Date();
+      } else {
+        player.verifiedAt = null;
+      }
+      await players.save(player);
+    });
+
+    const updated = await this.findPlayerWithRoles(playerId);
+    await this.authService.syncPlayerGuildRoles(updated);
+    return this.toAdminRolesResult(updated);
+  }
+
+  private toAdminRolesResult(player: Player): AdminPlayerRolesResult {
+    return {
+      playerId: player.id,
+      verifiedAt: player.verifiedAt ?? null,
+      roles: (player.roles ?? []).map((r) => ({
+        id: r.id,
+        name: r.name,
+        isAdminRole: r.isAdminRole,
+        color: getRoleColorByName(r.name) ?? '#64748B',
+      })),
+    };
+  }
+
+  private assertValidRoleAssignmentList(items: AdminPlayerRoleItemDto[]): void {
+    for (const row of items) {
+      if (!(ROLE_NAMES as readonly string[]).includes(row.name)) {
+        throw new BadRequestException(
+          `Невідома роль: ${row.name}. Допустимі: ${ROLE_NAMES.join(', ')}`,
+        );
+      }
+    }
+
+    const nonAdmin = items.filter((r) => !r.isAdminRole);
+    const tierRows = nonAdmin.filter((r) => isPrimaryTierName(r.name));
+    if (tierRows.length > 1) {
+      throw new BadRequestException(
+        'Не більше одного рядка з базовою роллю (Гість / Гравець / Медіа)',
+      );
+    }
+
+    const captainCount = nonAdmin.filter((r) => r.name === Role.CAPTAIN).length;
+    if (captainCount > 1) {
+      throw new BadRequestException('Не більше одного призначення «Капітан»');
+    }
+
+    const adminRows = items.filter((r) => r.isAdminRole);
+    if (adminRows.length > 1) {
+      throw new BadRequestException('Не більше одного адмінського призначення');
+    }
+    for (const r of adminRows) {
+      if (r.name !== Role.ADMIN) {
+        throw new BadRequestException(
+          'Для isAdminRole: true очікується лише роль «Адмін»',
+        );
+      }
+    }
   }
 
   async verifyPlayer(playerId: string): Promise<VerifyResult> {
@@ -88,11 +214,6 @@ export class AdminService {
     return this.setPrimaryRole(playerId, name);
   }
 
-  /**
-   * Idempotently ensures the player has an `isAdminRole=true` row. Does not
-   * touch the player's primary (non-admin) role row or `verifiedAt`. No
-   * Discord side-effects (no admin Discord role is wired today).
-   */
   async grantAdmin(playerId: string): Promise<AdminRoleResult> {
     const player = await this.findPlayerWithRoles(playerId);
 
@@ -106,13 +227,12 @@ export class AdminService {
       await this.rolesRepo.save(adminRole);
     }
 
+    const refreshed = await this.findPlayerWithRoles(playerId);
+    await this.authService.syncPlayerGuildRoles(refreshed);
+
     return { playerId, isAdmin: true };
   }
 
-  /**
-   * Removes all `isAdminRole=true` rows for the player. Throws 403 if the
-   * actor is revoking their own admin (avoids accidental lockout).
-   */
   async revokeAdmin(
     playerId: string,
     actorPlayerId: string,
@@ -127,34 +247,34 @@ export class AdminService {
       await this.rolesRepo.remove(adminRoles);
     }
 
+    const refreshed = await this.findPlayerWithRoles(playerId);
+    await this.authService.syncPlayerGuildRoles(refreshed);
+
     return { playerId, isAdmin: false };
   }
 
-  /**
-   * Single source of truth for primary (non-admin) role mutations. Enforces
-   * the "one non-admin role row per player" invariant, syncs `verifiedAt` for
-   * Гравець/Гість, and toggles the Discord verified role accordingly.
-   * Other role names (Медіа, Капітан) leave `verifiedAt` and Discord state untouched.
-   */
   private async setPrimaryRole(
     playerId: string,
     name: RoleName,
   ): Promise<PlayerRoleResult> {
     const player = await this.findPlayerWithRoles(playerId);
 
-    const nonAdminRoles = player.roles.filter((r) => !r.isAdminRole);
-    if (nonAdminRoles.length > 1) {
-      await this.rolesRepo.remove(nonAdminRoles.slice(1));
+    const nonAdmin = player.roles.filter((r) => !r.isAdminRole);
+    const tierRows = nonAdmin.filter((r) => isPrimaryTierName(r.name));
+
+    if (tierRows.length > 1) {
+      await this.rolesRepo.remove(tierRows.slice(1));
     }
-    let role = nonAdminRoles[0];
-    if (!role) {
-      role = this.rolesRepo.create({
+
+    let tier = tierRows[0];
+    if (!tier) {
+      tier = this.rolesRepo.create({
         isAdminRole: false,
       } as DeepPartial<UserRoles>);
-      role.player = player;
+      tier.player = player;
     }
-    role.name = name;
-    await this.rolesRepo.save(role);
+    tier.name = name;
+    await this.rolesRepo.save(tier);
 
     if (name === Role.PLAYER) {
       player.verifiedAt = new Date();
@@ -164,15 +284,14 @@ export class AdminService {
       await this.playersRepo.save(player);
     }
 
-    if (player.discordId) {
-      if (name === Role.PLAYER) {
-        await this.discord.setVerifiedRole(player.discordId, true);
-      } else if (name === Role.GUEST) {
-        await this.discord.setVerifiedRole(player.discordId, false);
-      }
-    }
+    const refreshed = await this.findPlayerWithRoles(playerId);
+    await this.authService.syncPlayerGuildRoles(refreshed);
 
-    return { playerId, name, verifiedAt: player.verifiedAt };
+    return {
+      playerId,
+      name,
+      verifiedAt: refreshed.verifiedAt,
+    };
   }
 
   async syncDiscord(): Promise<DiscordSyncResult> {

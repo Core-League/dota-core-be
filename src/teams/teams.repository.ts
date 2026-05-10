@@ -23,9 +23,13 @@ export class TeamsRepository {
     return this.repo.find({
       relations: [
         'captain',
+        'captain.roles',
         'coach',
+        'coach.roles',
         'mainPlayers',
+        'mainPlayers.roles',
         'reservedPlayers',
+        'reservedPlayers.roles',
         'tournament',
       ],
     });
@@ -36,9 +40,13 @@ export class TeamsRepository {
       where: { id },
       relations: [
         'captain',
+        'captain.roles',
         'coach',
+        'coach.roles',
         'mainPlayers',
+        'mainPlayers.roles',
         'reservedPlayers',
+        'reservedPlayers.roles',
         'tournament',
       ],
     });
@@ -49,9 +57,13 @@ export class TeamsRepository {
       where: { id },
       relations: [
         'captain',
+        'captain.roles',
         'coach',
+        'coach.roles',
         'mainPlayers',
+        'mainPlayers.roles',
         'reservedPlayers',
+        'reservedPlayers.roles',
         'tournament',
       ],
     });

@@ -14,7 +14,13 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.guard';
 import {
@@ -28,6 +34,7 @@ import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { SearchTeamsDto } from './dto/search-teams.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
+import { TeamResponseDto } from './dto/team-response.dto';
 
 const FILE_API_BODY = {
   schema: {
@@ -48,11 +55,13 @@ export class TeamsController {
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @ApiOkResponse({ type: TeamResponseDto })
   create(@Body() body: CreateTeamDto, @Req() req: RequestWithJwtActor) {
     return this.teamsService.createTeam(body, req.user!.playerId);
   }
 
   @Get()
+  @ApiOkResponse({ type: TeamResponseDto, isArray: true })
   findAll() {
     return this.teamsService.findAll();
   }
@@ -64,11 +73,13 @@ export class TeamsController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: TeamResponseDto })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.teamsService.findOne(id);
   }
 
   @Patch(':id')
+  @ApiOkResponse({ type: TeamResponseDto })
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateTeamDto,
