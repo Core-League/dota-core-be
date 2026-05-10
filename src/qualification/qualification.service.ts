@@ -21,11 +21,7 @@ import { QualificationMatch } from './qualification-match.entity';
 import { QualificationMatchRepository } from './qualification-match.repository';
 import { Qualification } from './qualification.entity';
 import { QualificationRepository } from './qualification.repository';
-
-/** Qualification GET payload: tournament standings are per-player in this list. */
-export type QualificationWithPlayerPoints = Qualification & {
-  playerTournamentPoints: Array<{ playerId: string; points: number }>;
-};
+import { QualificationResponseDto } from './dto/qualification-response.dto';
 
 const STEAM_ID_OFFSET = 76561197960265728n;
 const MIN_MATCH_DURATION_SEC = 900;
@@ -59,7 +55,7 @@ export class QualificationService {
 
   async getByTournamentId(
     tournamentId: string,
-  ): Promise<QualificationWithPlayerPoints> {
+  ): Promise<QualificationResponseDto> {
     const qualification = await this.qualRepo.findByTournamentId(tournamentId);
     if (!qualification)
       throw new NotFoundException('Кваліфікацію турніру не знайдено');

@@ -14,12 +14,19 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../admin/guards/admin.guard';
 import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.guard';
 import { QualificationService } from '../qualification/qualification.service';
 import { SubmitMatchDto } from '../qualification/dto/submit-match.dto';
+import { QualificationResponseDto } from '../qualification/dto/qualification-response.dto';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { JoinTournamentDto } from './dto/join-tournament.dto';
@@ -104,6 +111,7 @@ export class TournamentsController {
   }
 
   @Get(':id/qualification')
+  @ApiOkResponse({ type: QualificationResponseDto })
   getQualification(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.qualificationService.getByTournamentId(id);
   }
