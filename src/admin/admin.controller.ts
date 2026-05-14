@@ -30,6 +30,7 @@ import {
 import { SetPlayerRoleDto } from './dto/set-player-role.dto';
 import { AdminSetPlayerRolesDto } from './dto/admin-set-player-roles.dto';
 import { AdminPlayerRolesResultDto } from './dto/admin-player-roles-result.dto';
+import { OverrideMatchResultDto } from './dto/override-match-result.dto';
 
 type AuthedRequest = Request & { user: { playerId: string } };
 
@@ -39,6 +40,20 @@ type AuthedRequest = Request & { user: { playerId: string } };
 @Controller('admin')
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
+
+  @Post('matches/:matchId/result')
+  @ApiOperation({
+    summary: 'Manually set match result (bypasses OpenDota verification)',
+    description:
+      'Sets the winner directly and awards points. winnerPoints defaults to 100, loserPoints to 40. Throws 409 if the match already has a result.',
+  })
+  @ApiParam({ name: 'matchId', type: String, format: 'uuid' })
+  overrideMatchResult(
+    @Param('matchId', ParseUUIDPipe) matchId: string,
+    @Body() body: OverrideMatchResultDto,
+  ): Promise<{ matchId: string; winnerId: string }> {
+    return this.adminService.overrideMatchResult(matchId, body);
+  }
 
   @Post('discord/sync')
   @ApiOperation({

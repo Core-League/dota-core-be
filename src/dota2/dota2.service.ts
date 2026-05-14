@@ -3,6 +3,7 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import * as cheerio from 'cheerio';
 import { firstValueFrom } from 'rxjs';
@@ -280,9 +281,31 @@ export class Dota2Service {
       );
       return data;
     } catch (err) {
+      const status = (err as { response?: { status?: number } }).response
+        ?.status;
+      if (status === 404) {
+        await this.requestOpenDotaParse(matchId);
+        throw new ServiceUnavailableException(
+          'Дані про матч оновлюються. Спробуйте за кілька хвилин',
+        );
+      }
       this.logger.error('OpenDota getMatch failed', err);
       throw new InternalServerErrorException(
         'Не вдалося отримати дані матчу з OpenDota',
+      );
+    }
+  }
+
+  private async requestOpenDotaParse(matchId: string): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.http.post(`https://api.opendota.com/api/request/${matchId}`, null),
+      );
+      this.logger.log(`OpenDota parse requested for match ${matchId}`);
+    } catch (err) {
+      this.logger.warn(
+        `OpenDota parse request failed for match ${matchId}`,
+        err,
       );
     }
   }

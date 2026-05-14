@@ -1,12 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, DeepPartial, Repository } from 'typeorm';
+import { DataSource, DeepPartial, EntityManager, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
@@ -17,7 +18,10 @@ import {
   ROLE_NAMES,
 } from '../user-roles/role.constants';
 import { TournamentDivision } from '../tournaments/tournaments.model';
+import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
+import { QualificationMatch } from '../qualification/qualification-match.entity';
 import { DiscordBotService } from '../discord/discord-bot.service';
+import { OverrideMatchResultDto } from './dto/override-match-result.dto';
 import { AuthService } from '../auth/auth.service';
 import {
   AdminPlayerRoleItemDto,
@@ -374,6 +378,90 @@ export class AdminService {
       channelsCreated,
       skipped,
     };
+  }
+
+  async overrideMatchResult(
+    matchId: string,
+    dto: OverrideMatchResultDto,
+  ): Promise<{ matchId: string; winnerId: string }> {
+    const matchRepo = this.dataSource.getRepository(QualificationMatch);
+
+    const match = await matchRepo.findOne({
+      where: { id: matchId },
+      relations: [
+        'qualification',
+        'qualification.tournament',
+        'teamA',
+        'teamA.mainPlayers',
+        'teamB',
+        'teamB.mainPlayers',
+      ],
+    });
+    if (!match) throw new NotFoundException('Match not found');
+
+    if (match.dotaMatchId !== null) {
+      throw new ConflictException(
+        'Match result already recorded — use a different match or clear the existing result first',
+      );
+    }
+
+    if (
+      dto.winnerTeamId !== match.teamA.id &&
+      dto.winnerTeamId !== match.teamB.id
+    ) {
+      throw new BadRequestException(
+        'winnerTeamId must be one of the two teams in this match',
+      );
+    }
+
+    const tournamentId = match.qualification.tournament.id;
+    const winner =
+      dto.winnerTeamId === match.teamA.id ? match.teamA : match.teamB;
+    const loser =
+      dto.winnerTeamId === match.teamA.id ? match.teamB : match.teamA;
+
+    match.winner = winner;
+    match.dotaMatchId = `manual_${matchId}`;
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(QualificationMatch).save(match);
+      await this.awardPoints(
+        manager,
+        winner.mainPlayers ?? [],
+        tournamentId,
+        dto.winnerPoints ?? 100,
+      );
+      await this.awardPoints(
+        manager,
+        loser.mainPlayers ?? [],
+        tournamentId,
+        dto.loserPoints ?? 40,
+      );
+    });
+
+    return { matchId, winnerId: winner.id };
+  }
+
+  private async awardPoints(
+    manager: EntityManager,
+    players: Player[],
+    tournamentId: string,
+    amount: number,
+  ): Promise<void> {
+    const repo = manager.getRepository(PlayerTournamentPoints);
+    for (const player of players) {
+      const existing = await repo.findOne({
+        where: { playerId: player.id, tournamentId },
+      });
+      if (existing) {
+        existing.points += amount;
+        await repo.save(existing);
+      } else {
+        await repo.save(
+          repo.create({ playerId: player.id, tournamentId, points: amount }),
+        );
+      }
+    }
   }
 
   private async findPlayerWithRoles(playerId: string): Promise<Player> {
