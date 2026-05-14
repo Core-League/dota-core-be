@@ -32,13 +32,11 @@ function steamId64ToAccountId(steamId64: string): number {
 }
 
 function computeDivision(mainPlayers: Player[]): TournamentDivision | null {
-  const ratings = mainPlayers.map((p) => p.rating);
-  const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
-  const max = Math.max(...ratings);
-
-  if (avg <= 2500 && max <= 3500) return TournamentDivision.DIVISION_I;
-  if (avg <= 4500 && max <= 5500) return TournamentDivision.DIVISION_II;
-  if (avg <= 7000) return TournamentDivision.DIVISION_III;
+  if (!mainPlayers.length) return null;
+  const maxRating = Math.max(...mainPlayers.map((p) => p.rating));
+  if (maxRating <= 3500) return TournamentDivision.DIVISION_I;
+  if (maxRating <= 5500) return TournamentDivision.DIVISION_II;
+  if (maxRating <= 7000) return TournamentDivision.DIVISION_III;
   return null;
 }
 
