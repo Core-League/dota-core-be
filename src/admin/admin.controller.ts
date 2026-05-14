@@ -65,6 +65,18 @@ export class AdminController {
     return this.adminService.syncDiscord();
   }
 
+  @Delete('teams/:teamId/verify')
+  @ApiOperation({
+    summary: 'Remove team verification',
+    description: 'Sets isVerified=false and clears verifiedAt. Does not remove Discord role/channel.',
+  })
+  @ApiParam({ name: 'teamId', type: String, format: 'uuid' })
+  unverifyTeam(
+    @Param('teamId', ParseUUIDPipe) teamId: string,
+  ): Promise<{ teamId: string; isVerified: boolean }> {
+    return this.adminService.unverifyTeam(teamId);
+  }
+
   @Patch('players/:playerId/roles')
   @ApiOkResponse({ type: AdminPlayerRolesResultDto })
   @ApiOperation({
@@ -110,7 +122,7 @@ export class AdminController {
   @ApiOperation({
     summary: "Set player's primary role (Гість/Гравець/Медіа)",
     description:
-      "Replaces the primary (non-admin) tier row. Гравець stamps verifiedAt; Гість clears verifiedAt; Медіа leaves verifiedAt unchanged. Адмін — POST/DELETE …/admin. Капітан — команди.",
+      'Replaces the primary (non-admin) tier row. Гравець stamps verifiedAt; Гість clears verifiedAt; Медіа leaves verifiedAt unchanged. Адмін — POST/DELETE …/admin. Капітан — команди.',
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   setPlayerRole(

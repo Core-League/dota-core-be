@@ -296,6 +296,17 @@ export class AdminService {
     };
   }
 
+  async unverifyTeam(
+    teamId: string,
+  ): Promise<{ teamId: string; isVerified: boolean }> {
+    const team = await this.teamsRepo.findOne({ where: { id: teamId } });
+    if (!team) throw new NotFoundException('Team not found');
+    team.isVerified = false;
+    team.verifiedAt = null;
+    await this.teamsRepo.save(team);
+    return { teamId, isVerified: false };
+  }
+
   async syncDiscord(): Promise<DiscordSyncResult> {
     const teams = await this.teamsRepo.find({
       where: { isVerified: true },

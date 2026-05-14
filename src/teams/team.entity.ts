@@ -54,7 +54,7 @@ export class Team {
   isPlayingTournament: boolean;
 
   @Column({ nullable: true })
-  verifiedAt: Date;
+  verifiedAt: Date | null;
 
   @ManyToMany(() => Player)
   @JoinTable({
