@@ -53,7 +53,7 @@ export class Team {
   @Column()
   isPlayingTournament: boolean;
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;
 
   @ManyToMany(() => Player)
