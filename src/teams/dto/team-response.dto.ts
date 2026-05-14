@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TournamentStatus } from '../../tournaments/tournaments.model';
+import { TournamentDivision, TournamentStatus } from '../../tournaments/tournaments.model';
 import { PlayerResponseDto } from '../../players/dto/player-response.dto';
 
 /** Підмножина турніру без `teams` / `eligibleRoles`, щоб уникнути циклічного JSON. */
@@ -80,4 +80,7 @@ export class TeamResponseDto {
     nullable: true,
   })
   tournament: TeamTournamentEmbeddedDto | null;
+
+  @ApiPropertyOptional({ enum: TournamentDivision, nullable: true })
+  division: TournamentDivision | null;
 }

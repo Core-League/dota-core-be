@@ -401,7 +401,9 @@ export class TeamsService {
       .execute();
   }
 
-  private async syncDiscordGuildRolesForPlayer(playerId: string): Promise<void> {
+  private async syncDiscordGuildRolesForPlayer(
+    playerId: string,
+  ): Promise<void> {
     const player = await this.dataSource.getRepository(Player).findOne({
       where: { id: playerId },
       relations: ['roles'],
@@ -604,6 +606,7 @@ export class TeamsService {
         this.mapPlayerForTeamResponse(p),
       ),
       tournament: this.mapTournamentEmbedded(team.tournament),
+      division: computeTeamDivision(team.mainPlayers ?? []),
     };
   }
 }
