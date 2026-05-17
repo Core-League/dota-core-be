@@ -1,20 +1,20 @@
-name: Deploy to Production
+name: Deploy to Staging
 
 on:
   push:
     branches:
-      - main
+      - dev
 
 jobs:
-  deploy-production:
-    if: github.ref == 'refs/heads/main'
+  deploy-staging:
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
-    environment: production
+    environment: staging
     env:
-      APP_DIR: /home/ubuntu/apps/dota-core-be
-      BRANCH: main
+      APP_DIR: /home/ubuntu/apps/dota-core-be-staging
+      BRANCH: dev
     steps:
-      - name: Deploy to production
+      - name: Deploy to staging
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -31,4 +31,4 @@ jobs:
             git pull origin "$BRANCH"
             npm ci
             npm run build
-            pm2 restart core-backend
+            pm2 restart core-backend-staging
