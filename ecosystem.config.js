@@ -24,7 +24,7 @@ module.exports = {
         DB_HOST: '127.0.0.1',
         DB_PORT: '5432',
         DB_USER: 'staging_user',
-        DB_PASS: 'change_me',
+        DB_PASS: 'strong_password_staging',
         DB_NAME: 'staging_db',
       },
     },
