@@ -5,7 +5,7 @@ module.exports = {
       script: 'dist/main.js',
       cwd: '/home/ubuntu/apps/dota-core-be',
       env: {
-        NODE_ENV: 'staging',
+        NODE_ENV: 'production',
         PORT: '3000',
         DB_HOST: '127.0.0.1',
         DB_PORT: '5432',
