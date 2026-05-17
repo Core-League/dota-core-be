@@ -21,7 +21,6 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          known_hosts: ${{ secrets.KNOWN_HOSTS }}
           script_stop: true
           envs: APP_DIR,BRANCH
           script: |
