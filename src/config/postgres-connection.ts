@@ -8,17 +8,7 @@ import type { DataSourceOptions } from 'typeorm';
  * For Supabase + TypeORM, use **Session pooler** or **direct (5432)** connection from the dashboard.
  * Transaction pooler (6543) can break some ORM features.
  */
-export function getPostgresDataSourceOptions(): Pick<
-  DataSourceOptions,
-  | 'type'
-  | 'url'
-  | 'host'
-  | 'port'
-  | 'username'
-  | 'password'
-  | 'database'
-  | 'ssl'
-> {
+export function getPostgresDataSourceOptions(): DataSourceOptions & { type: 'postgres' } {
   const url = process.env.DATABASE_URL?.trim();
   if (url) {
     return {
