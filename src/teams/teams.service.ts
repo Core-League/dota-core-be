@@ -38,8 +38,10 @@ function computeTeamDivision(
   const ratings = players.map((p) => p.rating);
   const maxRating = Math.max(...ratings);
   const avgRating = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
-  if (avgRating <= 2500 && maxRating <= 3500) return TournamentDivision.DIVISION_I;
-  if (avgRating <= 4500 && maxRating <= 5500) return TournamentDivision.DIVISION_II;
+  if (avgRating <= 2500 && maxRating <= 3500)
+    return TournamentDivision.DIVISION_I;
+  if (avgRating <= 4500 && maxRating <= 5500)
+    return TournamentDivision.DIVISION_II;
   if (avgRating <= 7000) return TournamentDivision.DIVISION_III;
   return null;
 }
