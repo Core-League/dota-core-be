@@ -35,20 +35,22 @@ Lives in `src/playoff/playoff-match.entity.ts`. Mirrors `QualificationMatch` pat
 | `winnerId` | UUID FK nullable | → `team.id` |
 | `dotaMatchId` | varchar nullable | Dota2 match ID submitted |
 | `challongeMatchId` | varchar | Challonge match ID |
+| `createdAt` | timestamptz | Set on insert; used to replay results in order after disqualification |
 
 ### Modified entity: `TournamentPlayoffTeam`
 
-Add one column:
+Add two columns:
 
 | Column | Type | Notes |
 |---|---|---|
 | `challongeParticipantId` | varchar nullable | Set when bracket is created |
+| `isDisqualified` | boolean | Default false; set by disqualification endpoint |
 
 ### Migrations
 
 Two new migrations:
 1. `1746900000000-AddPlayoff` — creates `playoff` and `playoff_match` tables
-2. `1746900000001-AddChallongeParticipantId` — adds `challongeParticipantId` column to `tournament_playoff_team`
+2. `1746900000001-AddChallongeParticipantId` — adds `challongeParticipantId` and `isDisqualified` columns to `tournament_playoff_team`
 
 ---
 
@@ -91,6 +93,7 @@ All methods append `api_key` as a query param and use `Content-Type: application
 | `startTournament(url)` | `POST /tournaments/{url}/start.json` | Generates bracket |
 | `findOpenMatch(url, participantIdA, participantIdB)` | `GET /tournaments/{url}/matches.json?state=open` | Returns the open match between these two participants |
 | `reportMatchResult(url, matchId, winnerParticipantId)` | `PUT /tournaments/{url}/matches/{matchId}.json` `match[winner_id]`, `match[scores_csv]=1-0` | Advances bracket |
+| `deleteTournament(url)` | `DELETE /tournaments/{url}.json` | Used during disqualification to tear down old bracket |
 
 Embed URL is constructed as: `https://challonge.com/{url}/module`
 
@@ -137,11 +140,32 @@ Flow:
 
 No points are awarded during playoff.
 
+### `POST /tournaments/:id/playoff/disqualify`
+
+**Auth:** Admin only (`JwtAuthGuard + AdminGuard`)
+**Body:** `{ teamId: string }`
+
+Disqualifies a team mid-playoff and rebuilds the Challonge bracket without them. Because Challonge does not support retroactive bracket rewinding, the tournament is deleted and recreated.
+
+Flow:
+1. 404 if tournament or `Playoff` not found
+2. 404 if `teamId` is not a playoff participant
+3. 400 if team is already disqualified
+4. Set `TournamentPlayoffTeam.isDisqualified = true` for the team
+5. Clear all `PlayoffMatch` records where the disqualified team appears as `teamA` or `teamB` — delete those rows
+6. Delete the existing Challonge tournament (`DELETE /tournaments/{url}.json`)
+7. Create a new Challonge tournament (same name, new slug: `core-{tournamentId}-{timestamp}`)
+8. Bulk-add all non-disqualified playoff teams with their original seeds; update `challongeParticipantId` on each `TournamentPlayoffTeam`
+9. Start the new Challonge tournament
+10. Re-report all remaining valid `PlayoffMatch` records in chronological order by `createdAt` (matches where neither team is disqualified) — this rebuilds the bracket state
+11. Update `Playoff` entity with new `challongeTournamentId`, `challongeUrl`, `challongeEmbedUrl`
+12. Return `{ embedUrl: string, teams: TeamResponseDto[] }` (teams excludes disqualified team)
+
 ### `GET /tournaments/:id/playoff`
 
 **Auth:** None (public)
 
-Returns `{ embedUrl: string, teams: TeamResponseDto[] }` or 404 if playoff not started.
+Returns `{ embedUrl: string, teams: TeamResponseDto[] }` (only non-disqualified teams) or 404 if playoff not started.
 
 ---
 
