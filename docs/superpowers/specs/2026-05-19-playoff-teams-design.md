@@ -30,7 +30,16 @@ A separate `tournament_playoff_team` join table tracks which teams are selected 
 
 ## Endpoints
 
-All three endpoints are added to `TournamentsController`. The two mutation endpoints require `AdminGuard`.
+All endpoints are added to `TournamentsController`. The two mutation endpoints require `AdminGuard`.
+
+### `GET /tournaments/:id/qualification/teams`
+
+Returns teams that have at least one verified qualification match in this tournament (i.e., they appear as `teamA` or `teamB` in a `QualificationMatch` where `winner IS NOT NULL`). This is the eligibility list the FE uses to populate the admin's team picker.
+
+- **Auth:** None (public)
+- **Returns:** `200` with array of teams.
+
+---
 
 ### `POST /tournaments/:id/playoff/teams`
 
@@ -38,7 +47,7 @@ Adds teams to the playoff roster.
 
 - **Auth:** Admin only
 - **Body:** `{ teamIds: string[] }`
-- **Behaviour:** Idempotent — teams already in the list are ignored (no error).
+- **Behavior:** Idempotent — teams already in the list are ignored (no error).
 - **Returns:** `201` with the full updated playoff team list.
 
 ### `DELETE /tournaments/:id/playoff/teams`
@@ -47,7 +56,7 @@ Removes teams from the playoff roster.
 
 - **Auth:** Admin only
 - **Body:** `{ teamIds: string[] }`
-- **Behaviour:** Idempotent — team IDs not in the list are ignored (no error).
+- **Behavior:** Idempotent — team IDs not in the list are ignored (no error).
 - **Returns:** `200` with the full updated playoff team list.
 
 ### `GET /tournaments/:id/playoff/teams`
@@ -78,6 +87,7 @@ New methods on `TournamentsService`:
 - `addPlayoffTeams(tournamentId, teamIds)` — validates, inserts rows, returns updated list.
 - `removePlayoffTeams(tournamentId, teamIds)` — removes rows, returns updated list.
 - `getPlayoffTeams(tournamentId)` — returns current list.
+- `getQualificationTeams(tournamentId)` — returns teams with at least one verified match.
 
 ---
 
