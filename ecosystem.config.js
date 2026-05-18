@@ -5,7 +5,7 @@ module.exports = {
       script: 'dist/main.js',
       cwd: '/home/ubuntu/apps/dota-core-be',
       env: {
-        NODE_ENV: 'staging',
+        NODE_ENV: 'production',
         PORT: '3000',
         DB_HOST: '193.169.241.19',
         DB_PORT: '5432',
@@ -24,7 +24,7 @@ module.exports = {
         DB_HOST: '127.0.0.1',
         DB_PORT: '5432',
         DB_USER: 'staging_user',
-        DB_PASS: 'change_me',
+        DB_PASS: 'strong_password_staging',
         DB_NAME: 'staging_db',
       },
     },
