@@ -179,6 +179,13 @@ export class AdminService {
       }
     }
 
+    const names = items.map((r) => r.name);
+    if (new Set(names).size !== names.length) {
+      throw new BadRequestException(
+        'Список ролей містить дублікати — кожна роль може зустрічатися лише один раз',
+      );
+    }
+
     const nonAdmin = items.filter((r) => !r.isAdminRole);
     const tierRows = nonAdmin.filter((r) => isPrimaryTierName(r.name));
     if (tierRows.length > 1) {

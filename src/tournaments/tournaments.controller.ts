@@ -27,15 +27,21 @@ import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.gua
 import { QualificationService } from '../qualification/qualification.service';
 import { SubmitMatchDto } from '../qualification/dto/submit-match.dto';
 import { QualificationResponseDto } from '../qualification/dto/qualification-response.dto';
+import { TeamResponseDto } from '../teams/dto/team-response.dto';
 import { TournamentsService } from './tournaments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { JoinTournamentDto } from './dto/join-tournament.dto';
+import { PlayoffTeamsDto } from './dto/playoff-teams.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import {
   createDiskStorage,
   imageFileFilter,
   UploadsService,
 } from '../uploads/uploads.service';
+import { PlayoffService } from '../playoff/playoff.service';
+import { PlayoffResponseDto } from '../playoff/dto/playoff-response.dto';
+import { SubmitPlayoffMatchDto } from '../playoff/dto/submit-playoff-match.dto';
+import { DisqualifyTeamDto } from '../playoff/dto/disqualify-team.dto';
 
 const IMAGE_INTERCEPTOR_OPTIONS = {
   fileFilter: imageFileFilter,
@@ -57,6 +63,7 @@ export class TournamentsController {
     private readonly tournamentsService: TournamentsService,
     private readonly uploadsService: UploadsService,
     private readonly qualificationService: QualificationService,
+    private readonly playoffService: PlayoffService,
   ) {}
 
   @Post()
@@ -159,6 +166,78 @@ export class TournamentsController {
       body.dotaMatchId,
       req.user!.playerId,
     );
+  }
+
+  @Get(':id/qualification/teams')
+  @ApiOkResponse({ type: [TeamResponseDto] })
+  getQualificationTeams(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.tournamentsService.getQualificationTeams(id);
+  }
+
+  @Get(':id/playoff/teams')
+  @ApiOkResponse({ type: [TeamResponseDto] })
+  getPlayoffTeams(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.tournamentsService.getPlayoffTeams(id);
+  }
+
+  @Post(':id/playoff/teams')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: [TeamResponseDto] })
+  addPlayoffTeams(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: PlayoffTeamsDto,
+  ) {
+    return this.tournamentsService.addPlayoffTeams(id, body.teamIds);
+  }
+
+  @Delete(':id/playoff/teams')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: [TeamResponseDto] })
+  removePlayoffTeams(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: PlayoffTeamsDto,
+  ) {
+    return this.tournamentsService.removePlayoffTeams(id, body.teamIds);
+  }
+
+  @Post(':id/playoff/start')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: PlayoffResponseDto })
+  startPlayoff(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: PlayoffTeamsDto,
+  ) {
+    return this.playoffService.startPlayoff(id, body.teamIds);
+  }
+
+  @Post(':id/playoff/submit')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  submitPlayoffMatch(
+    @Param('id', new ParseUUIDPipe()) tournamentId: string,
+    @Body() body: SubmitPlayoffMatchDto,
+  ) {
+    return this.playoffService.submitMatch(tournamentId, body.dotaMatchId);
+  }
+
+  @Post(':id/playoff/disqualify')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: PlayoffResponseDto })
+  disqualifyTeam(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: DisqualifyTeamDto,
+  ) {
+    return this.playoffService.disqualifyTeam(id, body.teamId);
+  }
+
+  @Get(':id/playoff')
+  @ApiOkResponse({ type: PlayoffResponseDto })
+  getPlayoff(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.playoffService.getPlayoff(id);
   }
 
   @Post(':id/header-banner')

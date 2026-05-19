@@ -1,0 +1,23 @@
+// src/playoff/playoff.module.ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ChallongeModule } from '../challonge/challonge.module';
+import { Dota2Module } from '../dota2/dota2.module';
+import { TeamsModule } from '../teams/teams.module';
+import { PlayoffMatch } from './playoff-match.entity';
+import { PlayoffMatchRepository } from './playoff-match.repository';
+import { Playoff } from './playoff.entity';
+import { PlayoffRepository } from './playoff.repository';
+import { PlayoffService } from './playoff.service';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([Playoff, PlayoffMatch]),
+    ChallongeModule,
+    Dota2Module,
+    TeamsModule,
+  ],
+  providers: [PlayoffService, PlayoffRepository, PlayoffMatchRepository],
+  exports: [PlayoffService],
+})
+export class PlayoffModule {}

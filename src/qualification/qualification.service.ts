@@ -9,6 +9,7 @@ import {
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In } from 'typeorm';
 import { Dota2Service, OpenDotaMatch } from '../dota2/dota2.service';
+import { DueloService } from '../duelo/duelo.service';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
@@ -33,10 +34,14 @@ function steamId64ToAccountId(steamId64: string): number {
 
 function computeDivision(mainPlayers: Player[]): TournamentDivision | null {
   if (!mainPlayers.length) return null;
-  const maxRating = Math.max(...mainPlayers.map((p) => p.rating));
-  if (maxRating <= 3500) return TournamentDivision.DIVISION_I;
-  if (maxRating <= 5500) return TournamentDivision.DIVISION_II;
-  if (maxRating <= 7000) return TournamentDivision.DIVISION_III;
+  const ratings = mainPlayers.map((p) => p.rating);
+  const maxRating = Math.max(...ratings);
+  const avgRating = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
+  if (avgRating <= 2500 && maxRating <= 3500)
+    return TournamentDivision.DIVISION_I;
+  if (avgRating <= 4500 && maxRating <= 5500)
+    return TournamentDivision.DIVISION_II;
+  if (avgRating <= 7000) return TournamentDivision.DIVISION_III;
   return null;
 }
 
@@ -48,6 +53,7 @@ export class QualificationService {
     private readonly qualRepo: QualificationRepository,
     private readonly qualMatchRepo: QualificationMatchRepository,
     private readonly dota2: Dota2Service,
+    private readonly duelo: DueloService,
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
@@ -464,6 +470,8 @@ export class QualificationService {
       );
       await this.awardPoints(manager, loserMainPlayers ?? [], tournamentId, 40);
     });
+
+    void this.duelo.sendMatchResult(matchData);
 
     return qualMatch;
   }

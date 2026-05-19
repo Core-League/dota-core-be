@@ -1,10 +1,17 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Dota2Service } from '../dota2/dota2.service';
 import { QualificationService } from '../qualification/qualification.service';
 import { Tournament } from './tournaments.entity';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { TournamentsRepository } from './tournaments.repository';
+import { TournamentPlayoffTeamRepository } from './tournament-playoff-team.repository';
 import { TeamsService } from '../teams/teams.service';
+import { TeamResponseDto } from '../teams/dto/team-response.dto';
 
 @Injectable()
 export class TournamentsService {
@@ -12,6 +19,7 @@ export class TournamentsService {
 
   constructor(
     private readonly tournamentsRepo: TournamentsRepository,
+    private readonly playoffTeamRepo: TournamentPlayoffTeamRepository,
     private readonly dota2: Dota2Service,
     private readonly qualificationService: QualificationService,
     private readonly teamsService: TeamsService,
@@ -101,5 +109,49 @@ export class TournamentsService {
     }
 
     await this.tournamentsRepo.remove(tournament);
+  }
+
+  async getQualificationTeams(
+    tournamentId: string,
+  ): Promise<TeamResponseDto[]> {
+    await this.findOneEntity(tournamentId);
+    const teams =
+      await this.playoffTeamRepo.findQualificationTeams(tournamentId);
+    return teams.map((t) => this.teamsService.toTeamResponse(t));
+  }
+
+  async getPlayoffTeams(tournamentId: string): Promise<TeamResponseDto[]> {
+    await this.findOneEntity(tournamentId);
+    const rows = await this.playoffTeamRepo.findByTournamentId(tournamentId);
+    return rows.map((row) => this.teamsService.toTeamResponse(row.team));
+  }
+
+  async addPlayoffTeams(
+    tournamentId: string,
+    teamIds: string[],
+  ): Promise<TeamResponseDto[]> {
+    await this.findOneEntity(tournamentId);
+
+    const eligibleIds =
+      await this.playoffTeamRepo.findVerifiedQualificationTeamIds(tournamentId);
+    const eligibleSet = new Set(eligibleIds);
+    const invalid = teamIds.filter((id) => !eligibleSet.has(id));
+    if (invalid.length) {
+      throw new BadRequestException(
+        `Teams have no verified qualification matches in this tournament: ${invalid.join(', ')}`,
+      );
+    }
+
+    await this.playoffTeamRepo.addTeams(tournamentId, teamIds);
+    return this.getPlayoffTeams(tournamentId);
+  }
+
+  async removePlayoffTeams(
+    tournamentId: string,
+    teamIds: string[],
+  ): Promise<TeamResponseDto[]> {
+    await this.findOneEntity(tournamentId);
+    await this.playoffTeamRepo.removeTeams(tournamentId, teamIds);
+    return this.getPlayoffTeams(tournamentId);
   }
 }
