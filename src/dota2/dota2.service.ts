@@ -8,6 +8,38 @@ import {
 import * as cheerio from 'cheerio';
 import { firstValueFrom } from 'rxjs';
 
+export interface StratzMatchPlayer {
+  steamAccountId: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  numLastHits: number;
+  goldPerMinute: number;
+  experiencePerMinute: number;
+  heroDamage: number;
+  towerDamage: number;
+  heroHealing: number;
+}
+
+export interface StratzTeam {
+  id: number;
+  name?: string;
+  tag?: string;
+}
+
+export interface StratzMatch {
+  id: number;
+  didRadiantWin: boolean;
+  durationSeconds: number;
+  startDateTime: number;
+  numHumanPlayers: number;
+  radiantTeamId?: number;
+  direTeamId?: number;
+  radiantTeam?: StratzTeam;
+  direTeam?: StratzTeam;
+  players: StratzMatchPlayer[];
+}
+
 export interface OpenDotaPlayer {
   match_id: number;
   player_slot: number;
@@ -284,7 +316,9 @@ export class Dota2Service {
       const status = (err as { response?: { status?: number } }).response
         ?.status;
       if (status === 404) {
-        await this.requestOpenDotaParse(matchId);
+        void this.requestOpenDotaParse(matchId);
+        const stratz = await this.getStratzMatch(matchId);
+        if (stratz) return this.stratzToOpenDota(stratz);
         throw new ServiceUnavailableException(
           'Дані про матч оновлюються. Спробуйте за кілька хвилин',
         );
@@ -294,6 +328,119 @@ export class Dota2Service {
         'Не вдалося отримати дані матчу з OpenDota',
       );
     }
+  }
+
+  async getStratzMatch(matchId: string): Promise<StratzMatch | null> {
+    const apiKey = process.env.STARTZ_API_KEY ?? '';
+    const query = `{
+      match(id: ${matchId}) {
+        id
+        didRadiantWin
+        durationSeconds
+        startDateTime
+        numHumanPlayers
+        radiantTeamId
+        direTeamId
+        radiantTeam { id name tag }
+        direTeam { id name tag }
+        players {
+          steamAccountId
+          kills
+          deaths
+          assists
+          numLastHits
+          goldPerMinute
+          experiencePerMinute
+          heroDamage
+          towerDamage
+          heroHealing
+        }
+      }
+    }`;
+
+    try {
+      const { data } = await firstValueFrom(
+        this.http.post<{ data?: { match?: StratzMatch } }>(
+          'https://api.stratz.com/graphql',
+          { query },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
+              'User-Agent': 'STRATZ_API',
+            },
+          },
+        ),
+      );
+      const match = data?.data?.match ?? null;
+      if (!match) {
+        this.logger.warn(`Stratz returned no data for match ${matchId}`);
+        return null;
+      }
+      this.logger.log(`Stratz match ${matchId} fetched successfully`);
+      return match;
+    } catch (err) {
+      this.logger.warn(`Stratz getMatch failed for match ${matchId}`, err);
+      return null;
+    }
+  }
+
+  private stratzToOpenDota(s: StratzMatch): OpenDotaMatch {
+    return {
+      match_id: s.id,
+      duration: s.durationSeconds,
+      start_time: s.startDateTime,
+      radiant_win: s.didRadiantWin,
+      human_players: s.numHumanPlayers,
+      game_mode: 0,
+      lobby_type: 0,
+      cluster: 0,
+      patch: 0,
+      region: 0,
+      radiant_score: 0,
+      dire_score: 0,
+      radiant_team_id: s.radiantTeamId,
+      dire_team_id: s.direTeamId,
+      radiant_team: s.radiantTeam
+        ? {
+            team_id: s.radiantTeam.id,
+            name: s.radiantTeam.name,
+            tag: s.radiantTeam.tag,
+          }
+        : undefined,
+      dire_team: s.direTeam
+        ? { team_id: s.direTeam.id, name: s.direTeam.name, tag: s.direTeam.tag }
+        : undefined,
+      players: (s.players ?? []).map((p) => ({
+        match_id: s.id,
+        player_slot: 0,
+        account_id: p.steamAccountId,
+        hero_id: 0,
+        kills: p.kills,
+        deaths: p.deaths,
+        assists: p.assists,
+        gold_per_min: p.goldPerMinute,
+        xp_per_min: p.experiencePerMinute,
+        last_hits: p.numLastHits,
+        denies: 0,
+        hero_damage: p.heroDamage,
+        tower_damage: p.towerDamage,
+        hero_healing: p.heroHealing,
+        level: 0,
+        isRadiant: false,
+        win: 0,
+        lose: 0,
+        personaname: null,
+        radiant_win: s.didRadiantWin,
+        duration: s.durationSeconds,
+        start_time: s.startDateTime,
+        game_mode: 0,
+        lobby_type: 0,
+        lane: null,
+        lane_role: null,
+        rank_tier: null,
+      })),
+    };
   }
 
   private async requestOpenDotaParse(matchId: string): Promise<void> {
