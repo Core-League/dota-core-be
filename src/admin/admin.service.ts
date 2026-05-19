@@ -126,18 +126,15 @@ export class AdminService {
         .execute();
 
       if (items.length > 0) {
-        await manager
-          .createQueryBuilder()
-          .insert()
-          .into(UserRoles)
-          .values(
-            items.map((row) => ({
-              name: row.name,
-              isAdminRole: row.isAdminRole,
-              player: { id: playerId } as Player,
-            })),
-          )
-          .execute();
+        const roles = manager.getRepository(UserRoles);
+        const entities = items.map((row) =>
+          roles.create({
+            name: row.name,
+            isAdminRole: row.isAdminRole,
+            player: { id: playerId } as Player,
+          } as DeepPartial<UserRoles>),
+        );
+        await roles.save(entities);
       }
 
       const hasPlayerTier = items.some(
