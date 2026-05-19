@@ -116,7 +116,12 @@ export class AdminService {
         .getOne();
       if (!player) throw new NotFoundException('Player not found');
 
-      await roles.delete({ player: { id: playerId } });
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(UserRoles)
+        .where('"playerId" = :playerId', { playerId })
+        .execute();
 
       if (items.length > 0) {
         const placeholders = items
