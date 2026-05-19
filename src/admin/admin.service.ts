@@ -127,13 +127,14 @@ export class AdminService {
 
       if (items.length > 0) {
         const roles = manager.getRepository(UserRoles);
-        const entities = items.map((row) =>
-          roles.create({
+        const entities = items.map((row) => {
+          const role = roles.create({
             name: row.name,
             isAdminRole: row.isAdminRole,
-            player: { id: playerId } as Player,
-          } as DeepPartial<UserRoles>),
-        );
+          } as DeepPartial<UserRoles>);
+          role.player = player;
+          return role;
+        });
         await roles.save(entities);
       }
 
