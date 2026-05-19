@@ -278,12 +278,14 @@ export class AdminService {
     tier.name = name;
     await this.rolesRepo.save(tier);
 
-    if (name === Role.PLAYER) {
-      player.verifiedAt = new Date();
-      await this.playersRepo.save(player);
-    } else if (name === Role.GUEST) {
-      player.verifiedAt = null;
-      await this.playersRepo.save(player);
+    if (name === Role.PLAYER || name === Role.GUEST) {
+      const newVerifiedAt = name === Role.PLAYER ? new Date() : null;
+      await this.dataSource
+        .createQueryBuilder()
+        .update(Player)
+        .set({ verifiedAt: newVerifiedAt })
+        .where('id = :playerId', { playerId })
+        .execute();
     }
 
     const refreshed = await this.findPlayerWithRoles(playerId);
