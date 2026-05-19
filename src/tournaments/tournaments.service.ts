@@ -83,7 +83,17 @@ export class TournamentsService {
   async update(id: string, payload: Partial<Tournament>): Promise<Tournament> {
     const tournament = await this.findOneEntity(id);
     Object.assign(tournament, payload);
-    return this.tournamentsRepo.save(tournament);
+    const saved = await this.tournamentsRepo.save(tournament);
+
+    if (payload.registrationStartsAt !== undefined || payload.registrationEndsAt !== undefined) {
+      await this.qualificationService.syncDatesToTournament(
+        id,
+        saved.registrationStartsAt,
+        saved.registrationEndsAt,
+      );
+    }
+
+    return saved;
   }
 
   async remove(id: string): Promise<void> {

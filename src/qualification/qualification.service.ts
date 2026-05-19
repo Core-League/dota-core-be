@@ -103,6 +103,22 @@ export class QualificationService {
     return saved;
   }
 
+  async syncDatesToTournament(
+    tournamentId: string,
+    registrationStartsAt: Date,
+    registrationEndsAt: Date,
+  ): Promise<void> {
+    const qualification =
+      await this.qualRepo.findByTournamentId(tournamentId);
+    if (!qualification) return;
+    qualification.startTime = registrationStartsAt;
+    qualification.endTime = registrationEndsAt;
+    await this.qualRepo.save(qualification);
+    this.logger.log(
+      `Qualification ${qualification.id}: synced dates to tournament ${tournamentId}`,
+    );
+  }
+
   async joinTournament(
     tournamentId: string,
     playerId: string,
