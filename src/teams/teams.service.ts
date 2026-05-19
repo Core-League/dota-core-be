@@ -42,8 +42,7 @@ function computeTeamDivision(
     return TournamentDivision.DIVISION_I;
   if (avgRating <= 4500 && maxRating <= 5500)
     return TournamentDivision.DIVISION_II;
-  if (avgRating <= 7000) return TournamentDivision.DIVISION_III;
-  return null;
+  return TournamentDivision.DIVISION_III;
 }
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
