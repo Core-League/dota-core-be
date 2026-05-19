@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { DiscordBotModule } from '../discord/discord-bot.module';
+import { DueloModule } from '../duelo/duelo.module';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
@@ -13,6 +14,7 @@ import { AdminService } from './admin.service';
     TypeOrmModule.forFeature([Player, Team, UserRoles]),
     AuthModule,
     DiscordBotModule,
+    DueloModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

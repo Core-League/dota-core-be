@@ -9,6 +9,7 @@ import {
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In } from 'typeorm';
 import { Dota2Service, OpenDotaMatch } from '../dota2/dota2.service';
+import { DueloService } from '../duelo/duelo.service';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
@@ -52,6 +53,7 @@ export class QualificationService {
     private readonly qualRepo: QualificationRepository,
     private readonly qualMatchRepo: QualificationMatchRepository,
     private readonly dota2: Dota2Service,
+    private readonly duelo: DueloService,
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
@@ -468,6 +470,8 @@ export class QualificationService {
       );
       await this.awardPoints(manager, loserMainPlayers ?? [], tournamentId, 40);
     });
+
+    void this.duelo.sendMatchResult(matchData);
 
     return qualMatch;
   }

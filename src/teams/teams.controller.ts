@@ -23,6 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { RequestWithJwtActor } from '../auth/guards/own-player-or-admin.guard';
+import type { Player } from '../players/player.entity';
 import {
   createDiskStorage,
   imageFileFilter,
@@ -87,7 +88,7 @@ export class TeamsController {
     const { coachId, ...rest } = body;
     return this.teamsService.update(id, {
       ...rest,
-      ...(coachId !== undefined && { coach: { id: coachId } as any }),
+      ...(coachId !== undefined && { coach: { id: coachId } as Player }),
     });
   }
 

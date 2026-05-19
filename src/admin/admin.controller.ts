@@ -27,6 +27,7 @@ import {
   PlayerRoleResult,
   VerifyResult,
 } from './admin.service';
+import { DueloService } from '../duelo/duelo.service';
 import { SetPlayerRoleDto } from './dto/set-player-role.dto';
 import { AdminSetPlayerRolesDto } from './dto/admin-set-player-roles.dto';
 import { AdminPlayerRolesResultDto } from './dto/admin-player-roles-result.dto';
@@ -39,7 +40,10 @@ type AuthedRequest = Request & { user: { playerId: string } };
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly dueloService: DueloService,
+  ) {}
 
   @Post('matches/:matchId/result')
   @ApiOperation({
@@ -158,5 +162,15 @@ export class AdminController {
     @Param('playerId', ParseUUIDPipe) playerId: string,
   ): Promise<AdminRoleResult> {
     return this.adminService.revokeAdmin(playerId, req.user.playerId);
+  }
+
+  @Post('sync-partner-matches')
+  @ApiOperation({
+    summary: 'Sync all historical matches to Duelo.gg partner webhook',
+    description:
+      'Re-fetches every verified qualification match from OpenDota and sends it to the Duelo.gg webhook. Returns counts of sent and errored matches.',
+  })
+  syncPartnerMatches(): Promise<{ sent: number; errors: number }> {
+    return this.dueloService.syncAllMatches();
   }
 }
