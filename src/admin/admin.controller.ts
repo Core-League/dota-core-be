@@ -68,7 +68,8 @@ export class AdminController {
   @Delete('teams/:teamId/verify')
   @ApiOperation({
     summary: 'Remove team verification',
-    description: 'Sets isVerified=false and clears verifiedAt. Does not remove Discord role/channel.',
+    description:
+      'Sets isVerified=false and clears verifiedAt. Does not remove Discord role/channel.',
   })
   @ApiParam({ name: 'teamId', type: String, format: 'uuid' })
   unverifyTeam(
