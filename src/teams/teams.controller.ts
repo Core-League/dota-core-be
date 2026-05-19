@@ -84,7 +84,11 @@ export class TeamsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateTeamDto,
   ) {
-    return this.teamsService.update(id, body);
+    const { coachId, ...rest } = body;
+    return this.teamsService.update(id, {
+      ...rest,
+      ...(coachId !== undefined && { coach: { id: coachId } as any }),
+    });
   }
 
   @Delete(':id')
