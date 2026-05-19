@@ -111,7 +111,6 @@ export class AdminService {
 
     await this.dataSource.transaction(async (manager) => {
       const players = manager.getRepository(Player);
-      const roles = manager.getRepository(UserRoles);
 
       const player = await players.findOne({
         where: { id: playerId },
@@ -119,15 +118,26 @@ export class AdminService {
       });
       if (!player) throw new NotFoundException('Player not found');
 
-      await roles.delete({ player: { id: playerId } });
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(UserRoles)
+        .where('"playerId" = :playerId', { playerId })
+        .execute();
 
-      for (const row of items) {
-        const created = roles.create({
-          name: row.name,
-          isAdminRole: row.isAdminRole,
-          player: { id: playerId } as Player,
-        } as DeepPartial<UserRoles>);
-        await roles.save(created);
+      if (items.length > 0) {
+        await manager
+          .createQueryBuilder()
+          .insert()
+          .into(UserRoles)
+          .values(
+            items.map((row) => ({
+              name: row.name,
+              isAdminRole: row.isAdminRole,
+              player: { id: playerId } as Player,
+            })),
+          )
+          .execute();
       }
 
       const hasPlayerTier = items.some(
@@ -166,6 +176,13 @@ export class AdminService {
           `Невідома роль: ${row.name}. Допустимі: ${ROLE_NAMES.join(', ')}`,
         );
       }
+    }
+
+    const names = items.map((r) => r.name);
+    if (new Set(names).size !== names.length) {
+      throw new BadRequestException(
+        'Список ролей містить дублікати — кожна роль може зустрічатися лише один раз',
+      );
     }
 
     const nonAdmin = items.filter((r) => !r.isAdminRole);
