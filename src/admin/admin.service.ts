@@ -110,12 +110,10 @@ export class AdminService {
     this.assertValidRoleAssignmentList(items);
 
     await this.dataSource.transaction(async (manager) => {
-      const players = manager.getRepository(Player);
-
-      const player = await players.findOne({
-        where: { id: playerId },
-        relations: ['roles'],
-      });
+      const player = await manager
+        .createQueryBuilder(Player, 'p')
+        .where('p.id = :playerId', { playerId })
+        .getOne();
       if (!player) throw new NotFoundException('Player not found');
 
       await manager
@@ -126,27 +124,32 @@ export class AdminService {
         .execute();
 
       if (items.length > 0) {
-        const roles = manager.getRepository(UserRoles);
-        const entities = items.map((row) => {
-          const role = roles.create({
-            name: row.name,
-            isAdminRole: row.isAdminRole,
-          } as DeepPartial<UserRoles>);
-          role.player = player;
-          return role;
-        });
-        await roles.save(entities);
+        const placeholders = items
+          .map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`)
+          .join(', ');
+        const params = items.flatMap((row) => [
+          row.name,
+          row.isAdminRole,
+          playerId,
+        ]);
+        await manager.query(
+          `INSERT INTO "user_roles" (name, "isAdminRole", "playerId") VALUES ${placeholders}`,
+          params,
+        );
       }
 
       const hasPlayerTier = items.some(
         (r) => !r.isAdminRole && r.name === Role.PLAYER,
       );
-      if (hasPlayerTier) {
-        player.verifiedAt = player.verifiedAt ?? new Date();
-      } else {
-        player.verifiedAt = null;
-      }
-      await players.save(player);
+      const newVerifiedAt = hasPlayerTier
+        ? (player.verifiedAt ?? new Date())
+        : null;
+      await manager
+        .createQueryBuilder()
+        .update(Player)
+        .set({ verifiedAt: newVerifiedAt })
+        .where('id = :playerId', { playerId })
+        .execute();
     });
 
     const updated = await this.findPlayerWithRoles(playerId);
