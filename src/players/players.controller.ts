@@ -105,7 +105,9 @@ export class PlayersController {
     @Req() req: RequestWithJwtActor,
   ): Promise<{ url: string }> {
     if (!file) {
-      throw new BadRequestException('No file uploaded');
+      throw new BadRequestException(
+        'Файл не отримано. Переконайтеся, що поле multipart називається «file», і ви дійсно обрали зображення.',
+      );
     }
     const url = this.uploadsService.buildUrl('avatars', file.filename);
     await this.playersService.update(req.user!.playerId, { avatarUrl: url });

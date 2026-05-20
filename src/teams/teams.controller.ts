@@ -159,7 +159,11 @@ export class TeamsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @UploadedFile() file: Express.Multer.File,
   ): Promise<{ url: string }> {
-    if (!file) throw new BadRequestException('No file uploaded');
+    if (!file) {
+      throw new BadRequestException(
+        'Файл не отримано. Переконайтеся, що поле multipart називається «file», і ви дійсно обрали зображення.',
+      );
+    }
     const url = this.uploadsService.buildUrl('teams', file.filename);
     await this.teamsService.update(id, { logoUrl: url });
     return { url };
