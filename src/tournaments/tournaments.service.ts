@@ -85,11 +85,18 @@ export class TournamentsService {
     Object.assign(tournament, payload);
     const saved = await this.tournamentsRepo.save(tournament);
 
-    if (payload.registrationStartsAt !== undefined || payload.registrationEndsAt !== undefined) {
-      await this.qualificationService.syncDatesToTournament(
-        id,
-        saved.registrationStartsAt,
-        saved.registrationEndsAt,
+    const qualDateKeys: Array<
+      keyof Pick<
+        Tournament,
+        'registrationStartsAt' | 'registrationEndsAt' | 'tournamentStartsAt'
+      >
+    > = ['registrationStartsAt', 'registrationEndsAt', 'tournamentStartsAt'];
+    const shouldSyncQualification = qualDateKeys.some(
+      (k) => payload[k] !== undefined,
+    );
+    if (shouldSyncQualification) {
+      await this.qualificationService.syncQualificationWindowFromTournament(
+        saved,
       );
     }
 

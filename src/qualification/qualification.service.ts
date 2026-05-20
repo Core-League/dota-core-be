@@ -90,10 +90,13 @@ export class QualificationService {
     this.logger.log(
       `Creating qualification for tournament ${tournament.id} with nodeGroupId=${nodeGroupId}`,
     );
+    const qualificationEndBound =
+      QualificationService.qualificationEndBound(tournament);
+
     const q = this.qualRepo.create({
       tournament,
       startTime: tournament.registrationStartsAt,
-      endTime: tournament.registrationEndsAt,
+      endTime: qualificationEndBound,
       nodeGroupId,
     });
     const saved = await this.qualRepo.save(q);
@@ -103,19 +106,27 @@ export class QualificationService {
     return saved;
   }
 
-  async syncDatesToTournament(
-    tournamentId: string,
-    registrationStartsAt: Date,
-    registrationEndsAt: Date,
+  /**
+   * Кінець кваліфікації — найраніший з двох моментів: закриття реєстрації або старт основного турніру.
+   * Так OpenDota/перевірки матчів узгоджені з актуальними датами турніру, а не лише колонки реєстрації.
+   */
+  private static qualificationEndBound(t: Tournament): Date {
+    return new Date(
+      Math.min(t.registrationEndsAt.getTime(), t.tournamentStartsAt.getTime()),
+    );
+  }
+
+  async syncQualificationWindowFromTournament(
+    tournament: Tournament,
   ): Promise<void> {
-    const qualification =
-      await this.qualRepo.findByTournamentId(tournamentId);
+    const qualification = await this.qualRepo.findByTournamentId(tournament.id);
     if (!qualification) return;
-    qualification.startTime = registrationStartsAt;
-    qualification.endTime = registrationEndsAt;
+    qualification.startTime = tournament.registrationStartsAt;
+    qualification.endTime =
+      QualificationService.qualificationEndBound(tournament);
     await this.qualRepo.save(qualification);
     this.logger.log(
-      `Qualification ${qualification.id}: synced dates to tournament ${tournamentId}`,
+      `Qualification ${qualification.id}: synced window from tournament ${tournament.id}`,
     );
   }
 
