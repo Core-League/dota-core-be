@@ -43,12 +43,17 @@ export class DueloService {
     return process.env.DUELO_API_KEY ?? '';
   }
 
-  private get isProdEnv(): boolean {
-    return process.env.NODE_ENV === 'production';
+  /**
+   * Live deploy uses `NODE_ENV=staging` (see ecosystem.config.js). Partner webhook
+   * must run there too — same constraint as TypeORM prod-like mode in app.module.
+   */
+  private get isPartnerWebhookEnv(): boolean {
+    const env = process.env.NODE_ENV;
+    return env === 'production' || env === 'staging';
   }
 
   async sendMatchResult(match: OpenDotaMatch): Promise<void> {
-    if (!this.isProdEnv) return;
+    if (!this.isPartnerWebhookEnv) return;
 
     const playedAt = new Date(
       (match.start_time + match.duration) * 1000,
@@ -105,8 +110,10 @@ export class DueloService {
   }
 
   async syncAllMatches(): Promise<{ sent: number; errors: number }> {
-    if (!this.isProdEnv) {
-      this.logger.warn('[Duelo] Sync skipped — not a production environment');
+    if (!this.isPartnerWebhookEnv) {
+      this.logger.warn(
+        `[Duelo] Sync skipped — enabled only for NODE_ENV=production or staging (current=${process.env.NODE_ENV ?? 'undefined'})`,
+      );
       return { sent: 0, errors: 0 };
     }
 
