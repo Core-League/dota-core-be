@@ -9,6 +9,7 @@ import { MatchesModule } from './matches/matches.module';
 import { HealthController } from './health.controller';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
+import { DevModule } from './dev/dev.module';
 
 /**
  * Live deploy uses `NODE_ENV=staging` (see `ecosystem.config.js`). For TypeORM,
@@ -39,6 +40,7 @@ const typeOrmProdLike =
     MatchesModule,
     AuthModule,
     AdminModule,
+    DevModule,
   ],
   controllers: [HealthController],
 })

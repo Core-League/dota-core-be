@@ -78,11 +78,8 @@ export class TeamResponseDto {
   @ApiProperty({ type: [PlayerResponseDto] })
   reservedPlayers: PlayerResponseDto[];
 
-  @ApiPropertyOptional({
-    type: TeamTournamentEmbeddedDto,
-    nullable: true,
-  })
-  tournament: TeamTournamentEmbeddedDto | null;
+  @ApiProperty({ type: [TeamTournamentEmbeddedDto] })
+  tournaments: TeamTournamentEmbeddedDto[];
 
   @ApiPropertyOptional({ enum: TournamentDivision, nullable: true })
   division: TournamentDivision | null;

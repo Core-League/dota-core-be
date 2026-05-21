@@ -14,7 +14,7 @@ const TEAM_RELATIONS = [
   'mainPlayers.roles',
   'reservedPlayers',
   'reservedPlayers.roles',
-  'tournament',
+  'tournaments',
 ];
 
 @Injectable()

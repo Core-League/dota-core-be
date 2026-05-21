@@ -57,7 +57,7 @@ export class PlayoffService {
 
     const seeds = await this.computeSeeds(tournamentId, teamIds);
 
-    const slug = `core-${tournamentId.replace(/-/g, '').slice(0, 8)}`;
+    const slug = `core_${tournamentId.replace(/-/g, '').slice(0, 8)}`;
     const { id: challongeTournamentId, url: challongeUrl } =
       await this.challonge.createTournament(tournament.name, slug);
 
@@ -177,12 +177,6 @@ export class PlayoffService {
       Number(loserRow.challongeParticipantId),
     );
 
-    await this.challonge.reportMatchResult(
-      playoff.challongeUrl,
-      challongeMatch.id,
-      Number(winnerRow.challongeParticipantId),
-    );
-
     const match = this.playoffMatchRepo.create({
       playoffId: playoff.id,
       teamAId: winnerRow.teamId,
@@ -191,8 +185,52 @@ export class PlayoffService {
       dotaMatchId,
       challongeMatchId: String(challongeMatch.id),
     });
+    await this.playoffMatchRepo.save(match);
 
-    return this.playoffMatchRepo.save(match);
+    const bo3Rounds = await this.challonge.getBO3Rounds(playoff.challongeUrl);
+
+    if (!bo3Rounds.has(challongeMatch.round)) {
+      // BO1 — report immediately
+      await this.challonge.reportMatchResult(
+        playoff.challongeUrl,
+        challongeMatch.id,
+        Number(winnerRow.challongeParticipantId),
+        challongeMatch.player1_id,
+        challongeMatch.player2_id,
+      );
+    } else {
+      // BO3 — tally series wins and report only when someone reaches 2
+      const allGames = await this.dataSource
+        .getRepository(PlayoffMatch)
+        .find({ where: { playoffId: playoff.id, challongeMatchId: String(challongeMatch.id) } });
+
+      const wins = new Map<string, number>();
+      for (const g of allGames) {
+        if (g.winnerId) wins.set(g.winnerId, (wins.get(g.winnerId) ?? 0) + 1);
+      }
+
+      const seriesWinnerId = [...wins.entries()].find(([, w]) => w >= 2)?.[0];
+      if (seriesWinnerId) {
+        const seriesWinnerRow =
+          seriesWinnerId === winnerRow.teamId ? winnerRow : loserRow;
+        const seriesLoserRow =
+          seriesWinnerId === winnerRow.teamId ? loserRow : winnerRow;
+        const seriesWinnerWins = wins.get(seriesWinnerId) ?? 0;
+        const seriesLoserWins = wins.get(seriesLoserRow.teamId) ?? 0;
+
+        await this.challonge.reportMatchResult(
+          playoff.challongeUrl,
+          challongeMatch.id,
+          Number(seriesWinnerRow.challongeParticipantId),
+          challongeMatch.player1_id,
+          challongeMatch.player2_id,
+          seriesWinnerWins,
+          seriesLoserWins,
+        );
+      }
+    }
+
+    return match;
   }
 
   async disqualifyTeam(
@@ -223,7 +261,7 @@ export class PlayoffService {
       .findOne({ where: { id: tournamentId } });
     if (!tournament) throw new NotFoundException('Tournament not found');
 
-    const newSlug = `core-${tournamentId.replace(/-/g, '').slice(0, 8)}-${Date.now().toString(36)}`;
+    const newSlug = `core_${tournamentId.replace(/-/g, '').slice(0, 8)}_${Date.now().toString(36)}`;
     const { id: newChallongeTournamentId, url: newChallongeUrl } =
       await this.challonge.createTournament(tournament.name, newSlug);
 
@@ -287,6 +325,8 @@ export class PlayoffService {
         newChallongeUrl,
         challongeMatch.id,
         Number(winnerRow.challongeParticipantId),
+        challongeMatch.player1_id,
+        challongeMatch.player2_id,
       );
     }
 
@@ -324,7 +364,18 @@ export class PlayoffService {
     const tptRepo = this.dataSource.getRepository(TournamentPlayoffTeam);
     const rows = await tptRepo.find({
       where: { tournamentId, isDisqualified: false },
-      relations: ['team'],
+      relations: [
+        'team',
+        'team.captain',
+        'team.captain.roles',
+        'team.coach',
+        'team.coach.roles',
+        'team.mainPlayers',
+        'team.mainPlayers.roles',
+        'team.reservedPlayers',
+        'team.reservedPlayers.roles',
+        'team.tournaments',
+      ],
     });
     const teams = rows.map((r) => this.teamsService.toTeamResponse(r.team));
     return { embedUrl, teams };

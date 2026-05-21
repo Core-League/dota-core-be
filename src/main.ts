@@ -3,6 +3,7 @@ import './config/load-env';
 import type { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { LoggingInterceptor } from './logging.interceptor';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { join } from 'path';
@@ -39,6 +40,8 @@ async function createHttpApplication(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors(buildCorsOptions());
+
+  app.useGlobalInterceptors(new LoggingInterceptor());
 
   app.useGlobalPipes(
     new ValidationPipe({

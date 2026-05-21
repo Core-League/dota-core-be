@@ -4,7 +4,6 @@ import {
   Column,
   OneToOne,
   ManyToMany,
-  ManyToOne,
   OneToMany,
   JoinColumn,
   JoinTable,
@@ -72,12 +71,8 @@ export class Team {
   })
   reservedPlayers: Player[];
 
-  @ManyToOne(() => Tournament, (tournament) => tournament.teams, {
-    onDelete: 'SET NULL',
-    nullable: true,
-  })
-  @JoinColumn({ name: 'tournamentId' })
-  tournament: Tournament | null;
+  @ManyToMany(() => Tournament, (tournament) => tournament.teams)
+  tournaments: Tournament[];
 
   @OneToMany(() => Match, (match) => match.teamA)
   matchesAsTeamA: Match[];

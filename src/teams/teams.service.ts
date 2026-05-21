@@ -114,13 +114,7 @@ export class TeamsService {
   async search(dto: SearchTeamsDto = {}) {
     const teams = await this.teamsRepo.findAll();
     const mapped = teams.map((t) => this.mapTeamResponse(t));
-    if (!dto.withTournaments) {
-      return mapped;
-    }
-    return mapped.map((t) => ({
-      ...t,
-      tournaments: t.tournament ? [t.tournament] : [],
-    }));
+    return mapped;
   }
 
   async findOne(id: string): Promise<TeamResponseDto> {
@@ -330,11 +324,10 @@ export class TeamsService {
       throw new NotFoundException('Team not found');
     }
 
-    if (team.tournament?.id) {
-      const tournamentId = team.tournament.id;
-      const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
+    const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
+    for (const t of team.tournaments ?? []) {
       const record = await pointsRepo.findOne({
-        where: { playerId, tournamentId },
+        where: { playerId, tournamentId: t.id },
       });
       if (record && record.points > 0) {
         record.points = Math.floor(record.points * 0.3);
@@ -568,10 +561,7 @@ export class TeamsService {
     };
   }
 
-  private mapTournamentEmbedded(
-    t: Tournament | null | undefined,
-  ): TeamTournamentEmbeddedDto | null {
-    if (!t) return null;
+  private mapTournamentEmbedded(t: Tournament): TeamTournamentEmbeddedDto {
     return {
       id: t.id,
       name: t.name,
@@ -608,7 +598,9 @@ export class TeamsService {
       reservedPlayers: (team.reservedPlayers ?? []).map((p) =>
         this.mapPlayerForTeamResponse(p),
       ),
-      tournament: this.mapTournamentEmbedded(team.tournament),
+      tournaments: (team.tournaments ?? []).map((t) =>
+        this.mapTournamentEmbedded(t),
+      ),
       division: computeTeamDivision(team.mainPlayers ?? []),
     };
   }

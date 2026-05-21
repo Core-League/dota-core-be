@@ -2,7 +2,6 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   Column,
-  OneToMany,
   ManyToMany,
   JoinTable,
 } from 'typeorm';
@@ -51,7 +50,12 @@ export class Tournament {
   @Column({ nullable: true })
   tournamentGridUrl: string;
 
-  @OneToMany(() => Team, (team) => team.tournament)
+  @ManyToMany(() => Team, (team) => team.tournaments)
+  @JoinTable({
+    name: 'tournament_team',
+    joinColumn: { name: 'tournamentId', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'teamId', referencedColumnName: 'id' },
+  })
   teams: Team[];
 
   @ManyToMany(() => UserRoles, { cascade: false })
