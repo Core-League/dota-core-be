@@ -1,3 +1,6 @@
+import './config/load-env';
+
+import type { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -16,6 +19,7 @@ function buildCorsOptions(): CorsOptions {
     'http://127.0.0.1:3000',
     'http://localhost:4200',
   ];
+
   const origin = raw
     ? raw
         .split(',')
@@ -31,7 +35,7 @@ function buildCorsOptions(): CorsOptions {
   };
 }
 
-async function bootstrap() {
+async function createHttpApplication(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors(buildCorsOptions());
@@ -57,6 +61,19 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
-  await app.listen(process.env.PORT ?? 3000);
+  return app;
 }
-void bootstrap();
+
+/** PM2, Docker, локально: довгоживучий HTTP-сервер */
+async function bootstrapHttpServer(): Promise<void> {
+  const app = await createHttpApplication();
+  const port = Number(process.env.PORT ?? 3000);
+  await app.listen(port);
+}
+
+const isDirectNodeEntry =
+  typeof require !== 'undefined' && require.main === module;
+
+if (isDirectNodeEntry) {
+  void bootstrapHttpServer();
+}

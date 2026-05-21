@@ -7,7 +7,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '3000',
-        DB_HOST: '127.0.0.1',
+        DB_HOST: '193.169.241.19',
         DB_PORT: '5432',
         DB_USER: 'stage_user',
         DB_PASS: 'strong_password_here',

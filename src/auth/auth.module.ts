@@ -8,6 +8,7 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OwnPlayerOrAdminGuard } from './guards/own-player-or-admin.guard';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { getJwtSecretOrThrow } from '../config/jwt-env';
 
 /** Default access-token lifetime in seconds (7 days). Override with JWT_EXPIRES_SEC. */
 const defaultJwtTtlSec = 60 * 60 * 24 * 7;
@@ -17,7 +18,7 @@ const defaultJwtTtlSec = 60 * 60 * 24 * 7;
     HttpModule.register({ timeout: 15000, maxRedirects: 3 }),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
-      secret: process.env.JWT_SECRET,
+      secret: getJwtSecretOrThrow(),
       signOptions: {
         expiresIn: process.env.JWT_EXPIRES_SEC
           ? Number(process.env.JWT_EXPIRES_SEC)
