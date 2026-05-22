@@ -145,17 +145,17 @@ export class TournamentsService {
 
   async addPlayoffTeams(
     tournamentId: string,
-    teamIds: string[] = [],
+    teamIds: string[],
   ): Promise<TeamResponseDto[]> {
     await this.findOneEntity(tournamentId);
 
     const eligibleIds =
-      await this.playoffTeamRepo.findEligibleQualificationTeamIds(tournamentId);
+      await this.playoffTeamRepo.findVerifiedQualificationTeamIds(tournamentId);
     const eligibleSet = new Set(eligibleIds);
     const invalid = teamIds.filter((id) => !eligibleSet.has(id));
     if (invalid.length) {
       throw new BadRequestException(
-        `Teams must be registered for this tournament or present in its qualification bracket: ${invalid.join(', ')}`,
+        `Teams have no verified qualification matches in this tournament: ${invalid.join(', ')}`,
       );
     }
 
@@ -165,7 +165,7 @@ export class TournamentsService {
 
   async removePlayoffTeams(
     tournamentId: string,
-    teamIds: string[] = [],
+    teamIds: string[],
   ): Promise<TeamResponseDto[]> {
     await this.findOneEntity(tournamentId);
     await this.playoffTeamRepo.removeTeams(tournamentId, teamIds);

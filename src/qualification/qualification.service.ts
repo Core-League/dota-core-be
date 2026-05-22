@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -131,33 +130,12 @@ export class QualificationService {
     );
   }
 
-  private async playerHasAdminRole(playerId: string): Promise<boolean> {
-    const row = await this.dataSource.getRepository(Player).findOne({
-      where: { id: playerId },
-      relations: ['roles'],
-    });
-    return (row?.roles ?? []).some((r) => r.isAdminRole);
-  }
-
   async joinTournament(
     tournamentId: string,
     playerId: string,
-    requestedTeamId?: string,
+    overrideTeamId?: string,
   ): Promise<void> {
-    const bypassEnv = process.env.BYPASS_TEAM_VERIFICATION === 'true';
-    const isAdmin = await this.playerHasAdminRole(playerId);
-
-    if (requestedTeamId && !bypassEnv && !isAdmin) {
-      throw new ForbiddenException(
-        'Лише адміністратор може вказувати teamId при приєднанні команди до турніру',
-      );
-    }
-
-    const useExplicitTeamId = !!(requestedTeamId && (bypassEnv || isAdmin));
-
-    /** Skip captain/Dota/div checks for dev bypass or admin assigning another team */
-    const bypassParticipantChecks =
-      bypassEnv || (Boolean(requestedTeamId) && isAdmin);
+    const bypass = process.env.BYPASS_TEAM_VERIFICATION === 'true';
 
     const tournament = await this.dataSource.getRepository(Tournament).findOne({
       where: { id: tournamentId },
@@ -166,48 +144,47 @@ export class QualificationService {
     if (!tournament) throw new NotFoundException('Турнір не знайдено');
 
     if (
-      !bypassEnv &&
+      !bypass &&
       tournament.tournamentStatus !== TournamentStatus.QUALIFICATIONS
     ) {
       throw new BadRequestException('Реєстрація на турнір закрита');
     }
 
     const teamRepo = this.dataSource.getRepository(Team);
-    const team = useExplicitTeamId
-      ? await teamRepo.findOne({
-          where: { id: requestedTeamId },
-          relations: [
-            'captain',
-            'mainPlayers',
-            'reservedPlayers',
-            'tournament',
-          ],
-        })
-      : await teamRepo.findOne({
-          where: { captain: { id: playerId } },
-          relations: [
-            'captain',
-            'mainPlayers',
-            'reservedPlayers',
-            'tournament',
-          ],
-        });
+    const team =
+      bypass && overrideTeamId
+        ? await teamRepo.findOne({
+            where: { id: overrideTeamId },
+            relations: [
+              'captain',
+              'mainPlayers',
+              'reservedPlayers',
+              'tournament',
+            ],
+          })
+        : await teamRepo.findOne({
+            where: { captain: { id: playerId } },
+            relations: [
+              'captain',
+              'mainPlayers',
+              'reservedPlayers',
+              'tournament',
+            ],
+          });
 
     if (!team) {
-      throw useExplicitTeamId
-        ? new NotFoundException('Команду не знайдено')
-        : new ForbiddenException(
-            'Тільки капітан команди може приєднатися до турніру',
-          );
-    }
-
-    if (team.tournament !== null) {
-      throw new ConflictException(
-        'Команда вже бере участь у турнірі (або в іншому турнірі)',
+      throw new ForbiddenException(
+        bypass && overrideTeamId
+          ? 'Команду не знайдено'
+          : 'Тільки капітан команди може приєднатися до турніру',
       );
     }
 
-    if (!bypassParticipantChecks) {
+    if (team.tournament !== null) {
+      throw new BadRequestException('Команда вже бере участь у турнірі');
+    }
+
+    if (!bypass) {
       if (!team.isVerified) {
         throw new BadRequestException('Команда не верифікована');
       }
@@ -259,7 +236,7 @@ export class QualificationService {
     ) {
       const currentCount = (tournament.teams ?? []).length;
       if (currentCount >= tournament.tournamentSlots) {
-        throw new ConflictException('Усі місця в турнірі зайняті');
+        throw new BadRequestException('Усі місця в турнірі зайняті');
       }
     }
 
@@ -343,34 +320,28 @@ export class QualificationService {
   async leaveTournament(
     tournamentId: string,
     playerId: string,
-    requestedTeamId?: string,
+    overrideTeamId?: string,
   ): Promise<void> {
-    const bypassEnv = process.env.BYPASS_TEAM_VERIFICATION === 'true';
-    const isAdmin = await this.playerHasAdminRole(playerId);
-
-    if (requestedTeamId && !bypassEnv && !isAdmin) {
-      throw new ForbiddenException(
-        'Лише адміністратор може вказувати teamId при виходу команди з турніру',
-      );
-    }
-
-    const useExplicitTeamId = !!(requestedTeamId && (bypassEnv || isAdmin));
+    const bypass = process.env.BYPASS_TEAM_VERIFICATION === 'true';
 
     const teamRepo = this.dataSource.getRepository(Team);
-    const team = useExplicitTeamId
-      ? await teamRepo.findOne({
-          where: { id: requestedTeamId },
-          relations: ['captain', 'mainPlayers', 'tournament'],
-        })
-      : await teamRepo.findOne({
-          where: { captain: { id: playerId } },
-          relations: ['captain', 'mainPlayers', 'tournament'],
-        });
+    const team =
+      bypass && overrideTeamId
+        ? await teamRepo.findOne({
+            where: { id: overrideTeamId },
+            relations: ['captain', 'mainPlayers', 'tournament'],
+          })
+        : await teamRepo.findOne({
+            where: { captain: { id: playerId } },
+            relations: ['captain', 'mainPlayers', 'tournament'],
+          });
 
     if (!team) {
-      throw useExplicitTeamId
-        ? new NotFoundException('Команду не знайдено')
-        : new ForbiddenException('Тільки капітан команди може залишити турнір');
+      throw new ForbiddenException(
+        bypass && overrideTeamId
+          ? 'Команду не знайдено'
+          : 'Тільки капітан команди може залишити турнір',
+      );
     }
 
     if (!team.tournament || team.tournament.id !== tournamentId) {

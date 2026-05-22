@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { In } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { findEligibleQualificationTeamIds } from './tournament-playoff-team.eligibility';
 import { TournamentPlayoffTeam } from './tournament-playoff-team.entity';
 import { Team } from '../teams/team.entity';
 
@@ -33,26 +32,30 @@ export class TournamentPlayoffTeamRepository {
     });
   }
 
-  /**
-   * IDs of teams drawn into qualification and/or registered on this tournament
-   * (`findEligibleQualificationTeamIds`).
-   */
-  async findEligibleQualificationTeamIds(
-    tournamentId: string,
-  ): Promise<string[]> {
-    return findEligibleQualificationTeamIds(this.dataSource, tournamentId);
-  }
-
-  /** @deprecated Use findEligibleQualificationTeamIds */
+  /** Returns team IDs that appear in at least one verified match (winner IS NOT NULL). */
   async findVerifiedQualificationTeamIds(
     tournamentId: string,
   ): Promise<string[]> {
-    return this.findEligibleQualificationTeamIds(tournamentId);
+    const rows: Array<{ team_id: string }> = await this.dataSource.query(
+      `SELECT DISTINCT team_id FROM (
+         SELECT qm."teamAId" AS team_id
+         FROM qualification_match qm
+         INNER JOIN qualification q ON q.id = qm."qualificationId"
+         WHERE q."tournamentId" = $1 AND qm."winnerId" IS NOT NULL
+         UNION
+         SELECT qm."teamBId" AS team_id
+         FROM qualification_match qm
+         INNER JOIN qualification q ON q.id = qm."qualificationId"
+         WHERE q."tournamentId" = $1 AND qm."winnerId" IS NOT NULL
+       ) t`,
+      [tournamentId],
+    );
+    return rows.map((r) => r.team_id);
   }
 
-  /** Returns full Team entities for eligible qualification teams. */
+  /** Returns full Team entities for teams with at least one verified qualification match. */
   async findQualificationTeams(tournamentId: string): Promise<Team[]> {
-    const ids = await this.findEligibleQualificationTeamIds(tournamentId);
+    const ids = await this.findVerifiedQualificationTeamIds(tournamentId);
     if (!ids.length) return [];
     return this.dataSource.getRepository(Team).find({
       where: { id: In(ids) },

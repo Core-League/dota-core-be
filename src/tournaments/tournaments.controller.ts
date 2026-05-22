@@ -126,41 +126,31 @@ export class TournamentsController {
   @Post(':id/join')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOkResponse({
-    description:
-      'Після успішного join повертає актуальний турнір з оновленим списком teams (зручно для UI без другого запиту).',
-  })
   async join(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: JoinTournamentDto,
     @Req() req: RequestWithJwtActor,
-  ) {
+  ): Promise<void> {
     await this.qualificationService.joinTournament(
       id,
       req.user!.playerId,
       body?.teamId,
     );
-    return this.tournamentsService.findOne(id);
   }
 
   @Post(':id/leave')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOkResponse({
-    description:
-      'Після успішного leave повертає актуальний турнір з оновленим списком teams.',
-  })
   async leave(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: JoinTournamentDto,
     @Req() req: RequestWithJwtActor,
-  ) {
+  ): Promise<void> {
     await this.qualificationService.leaveTournament(
       id,
       req.user!.playerId,
       body?.teamId,
     );
-    return this.tournamentsService.findOne(id);
   }
 
   @Post(':id/qualification/submit')
@@ -198,7 +188,7 @@ export class TournamentsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: PlayoffTeamsDto,
   ) {
-    return this.tournamentsService.addPlayoffTeams(id, body.teamIds ?? []);
+    return this.tournamentsService.addPlayoffTeams(id, body.teamIds);
   }
 
   @Delete(':id/playoff/teams')
@@ -209,7 +199,7 @@ export class TournamentsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: PlayoffTeamsDto,
   ) {
-    return this.tournamentsService.removePlayoffTeams(id, body.teamIds ?? []);
+    return this.tournamentsService.removePlayoffTeams(id, body.teamIds);
   }
 
   @Post(':id/playoff/start')
@@ -220,7 +210,7 @@ export class TournamentsController {
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: PlayoffTeamsDto,
   ) {
-    return this.playoffService.startPlayoff(id, body.teamIds ?? []);
+    return this.playoffService.startPlayoff(id, body.teamIds);
   }
 
   @Post(':id/playoff/submit')

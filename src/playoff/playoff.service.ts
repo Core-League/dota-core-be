@@ -20,7 +20,6 @@ import { PlayoffMatch } from './playoff-match.entity';
 import { PlayoffMatchRepository } from './playoff-match.repository';
 import { PlayoffRepository } from './playoff.repository';
 import { PlayoffResponseDto } from './dto/playoff-response.dto';
-import { findEligibleQualificationTeamIds } from '../tournaments/tournament-playoff-team.eligibility';
 
 @Injectable()
 export class PlayoffService {
@@ -37,7 +36,7 @@ export class PlayoffService {
 
   async startPlayoff(
     tournamentId: string,
-    requestedTeamIds: string[] = [],
+    teamIds: string[],
   ): Promise<PlayoffResponseDto> {
     const tournament = await this.dataSource
       .getRepository(Tournament)
@@ -47,63 +46,54 @@ export class PlayoffService {
     const existing = await this.playoffRepo.findByTournamentId(tournamentId);
     if (existing) throw new ConflictException('Playoff already started');
 
-    const playoffTeamIds = await this.mergeStagedPlayoffTeamsWithRequested(
-      tournamentId,
-      requestedTeamIds,
-    );
-    if (playoffTeamIds.length === 0) {
-      throw new BadRequestException(
-        'No playoff participants — stage teams via POST /tournaments/:id/playoff/teams and/or send teamIds in the start payload.',
-      );
-    }
-
-    const eligibleTeamIds = await findEligibleQualificationTeamIds(
-      this.dataSource,
-      tournamentId,
-    );
-    const eligibleSet = new Set(eligibleTeamIds);
-    const invalidIds = playoffTeamIds.filter((id) => !eligibleSet.has(id));
+    const verifiedTeamIds =
+      await this.findVerifiedQualificationTeamIds(tournamentId);
+    const invalidIds = teamIds.filter((id) => !verifiedTeamIds.includes(id));
     if (invalidIds.length) {
       throw new BadRequestException(
-        `Teams must be registered for this tournament or present in its qualification bracket: ${invalidIds.join(', ')}`,
+        `These teams have no verified qualification matches: ${invalidIds.join(', ')}`,
       );
     }
 
-    const seeds = await this.computeSeeds(tournamentId, playoffTeamIds);
+    const seeds = await this.computeSeeds(tournamentId, teamIds);
 
     const slug = `core-${tournamentId.replace(/-/g, '').slice(0, 8)}`;
     const { id: challongeTournamentId, url: challongeUrl } =
       await this.challonge.createTournament(tournament.name, slug);
 
     const teamRepo = this.dataSource.getRepository(Team);
-    const teams = await teamRepo.find({
-      where: { id: In(playoffTeamIds) },
-      relations: ['captain'],
-    });
+    const teams = await teamRepo.find({ where: { id: In(teamIds) } });
     const teamMap = new Map(teams.map((t) => [t.id, t]));
 
-    const challongeRows = this.buildChallongeBulkPayload(seeds, teamMap);
-    const createdParticipants = await this.challonge.bulkAddParticipantsAll(
+    const participants = seeds.map((s) => ({
+      name: teamMap.get(s.teamId)!.name,
+      seed: s.seed,
+    }));
+
+    const createdParticipants = await this.challonge.bulkAddParticipants(
       challongeUrl,
-      challongeRows,
+      participants,
     );
-    const challongeIdByTeamId = this.resolveChallongeIdsByTeam(
-      challongeRows,
-      createdParticipants,
+
+    const nameToChallongeId = new Map(
+      createdParticipants.map((p) => [p.name, p.id]),
     );
 
     const tptRepo = this.dataSource.getRepository(TournamentPlayoffTeam);
 
     // Insert TournamentPlayoffTeam rows (idempotent — orIgnore if pre-staged)
-    await tptRepo
-      .createQueryBuilder()
-      .insert()
-      .orIgnore()
-      .values(playoffTeamIds.map((teamId) => ({ tournamentId, teamId })))
-      .execute();
+    if (teamIds.length > 0) {
+      await tptRepo
+        .createQueryBuilder()
+        .insert()
+        .orIgnore()
+        .values(teamIds.map((teamId) => ({ tournamentId, teamId })))
+        .execute();
+    }
 
     for (const { teamId } of seeds) {
-      const challongeId = challongeIdByTeamId.get(teamId);
+      const team = teamMap.get(teamId)!;
+      const challongeId = nameToChallongeId.get(team.name);
       if (challongeId !== undefined) {
         await tptRepo.update(
           { tournamentId, teamId },
@@ -247,19 +237,22 @@ export class PlayoffService {
       activeRows.map((r) => r.teamId),
     );
 
-    const teamMap = new Map(activeRows.map((r) => [r.teamId, r.team]));
-    const challongeRows = this.buildChallongeBulkPayload(seeds, teamMap);
-    const createdParticipants = await this.challonge.bulkAddParticipantsAll(
+    const participants = seeds.map((s) => {
+      const row = activeRows.find((r) => r.teamId === s.teamId)!;
+      return { name: row.team.name, seed: s.seed };
+    });
+
+    const createdParticipants = await this.challonge.bulkAddParticipants(
       newChallongeUrl,
-      challongeRows,
+      participants,
     );
-    const challongeIdByTeamId = this.resolveChallongeIdsByTeam(
-      challongeRows,
-      createdParticipants,
+
+    const nameToChallongeId = new Map(
+      createdParticipants.map((p) => [p.name, p.id]),
     );
 
     for (const row of activeRows) {
-      const challongeId = challongeIdByTeamId.get(row.teamId);
+      const challongeId = nameToChallongeId.get(row.team.name);
       if (challongeId !== undefined) {
         await tptRepo.update(
           { tournamentId, teamId: row.teamId },
@@ -337,111 +330,37 @@ export class PlayoffService {
     return { embedUrl, teams };
   }
 
-  /**
-   * Staged playoff roster (tournament_playoff_team) is merged with any ids from the
-   * start request so the bracket always includes every team the admin pre-selected.
-   */
-  private async mergeStagedPlayoffTeamsWithRequested(
+  private async findVerifiedQualificationTeamIds(
     tournamentId: string,
-    requestedTeamIds: string[],
   ): Promise<string[]> {
-    const staged = await this.dataSource
-      .getRepository(TournamentPlayoffTeam)
-      .find({
-        where: { tournamentId, isDisqualified: false },
-        select: ['teamId'],
-        order: { id: 'ASC' },
-      });
-
-    const seen = new Set<string>();
-    const out: string[] = [];
-    const pushUnique = (id: string) => {
-      if (seen.has(id)) return;
-      seen.add(id);
-      out.push(id);
-    };
-
-    for (const row of staged) pushUnique(row.teamId);
-    for (const id of requestedTeamIds) pushUnique(id);
-    return out;
-  }
-
-  /**
-   * Uses `misc` (Core team UUID) on Challonge plus disambiguated display names so
-   * duplicate team labels or API name mangling cannot drop participant ids.
-   */
-  private buildChallongeBulkPayload(
-    seeds: { teamId: string; seed: number }[],
-    teamById: Map<string, Team>,
-  ): { name: string; seed: number; misc: string }[] {
-    const bases = seeds.map((s) => {
-      const t = teamById.get(s.teamId);
-      const raw = (t?.name ?? '').trim();
-      const base = raw.length > 0 ? raw : `Team_${s.teamId.slice(0, 8)}`;
-      return { s, base };
-    });
-
-    const freq = new Map<string, number>();
-    for (const { base } of bases) {
-      freq.set(base, (freq.get(base) ?? 0) + 1);
-    }
-
-    return bases.map(({ s, base }) => {
-      const dup = freq.get(base)! > 1;
-      const name = dup ? `${base} [${s.teamId.slice(0, 8)}]` : base;
-      return { name, seed: s.seed, misc: s.teamId };
-    });
-  }
-
-  private resolveChallongeIdsByTeam(
-    rows: { name: string; misc: string }[],
-    created: { id: number; name: string; misc: string | null }[],
-  ): Map<string, number> {
-    const norm = (m: string | null | undefined) => (m ?? '').trim();
-
-    const byMisc = new Map<string, number>();
-    for (const c of created) {
-      const k = norm(c.misc);
-      if (k) byMisc.set(k, c.id);
-    }
-
-    const byName = new Map<string, number>();
-    for (const c of created) byName.set(c.name, c.id);
-
-    const out = new Map<string, number>();
-    for (const r of rows) {
-      const id = byMisc.get(r.misc.trim()) ?? byName.get(r.name);
-      if (id !== undefined) {
-        out.set(r.misc, id);
-      } else {
-        this.logger.warn(
-          `Challonge participant not resolved for Core team ${r.misc} display "${r.name}"`,
-        );
-      }
-    }
-    return out;
+    const result: { teamId: string }[] = await this.dataSource.query(
+      `
+      SELECT DISTINCT qm."teamAId" AS "teamId"
+      FROM qualification_match qm
+      JOIN qualification q ON q.id = qm."qualificationId"
+      WHERE q."tournamentId" = $1 AND qm."winnerId" IS NOT NULL
+      UNION
+      SELECT DISTINCT qm."teamBId"
+      FROM qualification_match qm
+      JOIN qualification q ON q.id = qm."qualificationId"
+      WHERE q."tournamentId" = $1 AND qm."winnerId" IS NOT NULL
+      `,
+      [tournamentId],
+    );
+    return result.map((r) => r.teamId);
   }
 
   private async computeSeeds(
     tournamentId: string,
     teamIds: string[],
   ): Promise<{ teamId: string; seed: number }[]> {
-    const uniq = [...new Set(teamIds)];
     const teamRepo = this.dataSource.getRepository(Team);
     const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
 
     const teams = await teamRepo.find({
-      where: { id: In(uniq) },
+      where: { id: In(teamIds) },
       relations: ['captain'],
     });
-
-    if (teams.length !== uniq.length) {
-      const found = new Set(teams.map((t) => t.id));
-      const missing = uniq.filter((id) => !found.has(id));
-      throw new BadRequestException(
-        `Playoff references unknown or removed teams: ${missing.join(', ')}`,
-      );
-    }
 
     const teamsWithPoints = await Promise.all(
       teams.map(async (team) => {
