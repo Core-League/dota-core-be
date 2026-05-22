@@ -338,9 +338,11 @@ export class PlayoffService {
       playoff.id,
     );
     for (const m of remainingMatches) {
+      if (!m.teamAId || !m.teamBId || !m.winnerId) continue;
+
       const rowA = idMap.get(m.teamAId);
       const rowB = idMap.get(m.teamBId);
-      const winnerRow = idMap.get(m.winnerId ?? '');
+      const winnerRow = idMap.get(m.winnerId);
       if (!rowA || !rowB || !winnerRow) continue;
 
       const challongeMatch = await this.challonge.findOpenMatch(
@@ -707,9 +709,11 @@ export class PlayoffService {
     const matchIdUpdates: Array<{ id: string; challongeMatchId: string }> = [];
 
     for (const m of remainingMatches) {
+      if (!m.teamAId || !m.teamBId || !m.winnerId) continue;
+
       const rowA = idMap.get(m.teamAId);
       const rowB = idMap.get(m.teamBId);
-      const winRow = idMap.get(m.winnerId ?? '');
+      const winRow = idMap.get(m.winnerId);
       if (!rowA || !rowB || !winRow) continue;
 
       try {

@@ -405,6 +405,8 @@ export class QualificationService {
     const unplayedMatches = (qualification.matches ?? []).filter(
       (m) =>
         m.dotaMatchId === null &&
+        m.teamA != null &&
+        m.teamB != null &&
         (m.teamA.id === team.id || m.teamB.id === team.id),
     );
 
@@ -470,6 +472,12 @@ export class QualificationService {
     if (!qualMatch) {
       throw new NotFoundException(
         'Кваліфікаційний матч для вказаних команд не знайдено або результат вже подано',
+      );
+    }
+
+    if (!qualMatch.teamA || !qualMatch.teamB) {
+      throw new BadRequestException(
+        'Кваліфікаційний слот недоступний: запис про одну з команд видалено',
       );
     }
 
@@ -605,6 +613,12 @@ export class QualificationService {
     match: OpenDotaMatch,
     qualMatch: QualificationMatch,
   ): void {
+    if (!qualMatch.teamA || !qualMatch.teamB) {
+      throw new UnprocessableEntityException(
+        'Кваліфікаційний слот пошкоджено — одну з команд видалено',
+      );
+    }
+
     if (match.human_players !== 10) {
       throw new UnprocessableEntityException('У лобі матчу було не 10 гравців');
     }

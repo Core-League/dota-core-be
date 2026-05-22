@@ -450,6 +450,12 @@ export class AdminService {
     });
     if (!match) throw new NotFoundException('Match not found');
 
+    if (!match.teamA || !match.teamB) {
+      throw new BadRequestException(
+        'Match is missing one or both sides — team rows may have been deleted',
+      );
+    }
+
     if (
       dto.winnerTeamId !== match.teamA.id &&
       dto.winnerTeamId !== match.teamB.id

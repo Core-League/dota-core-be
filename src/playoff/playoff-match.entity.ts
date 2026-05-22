@@ -21,19 +21,19 @@ export class PlayoffMatch {
   @JoinColumn({ name: 'playoffId' })
   playoff: Playoff;
 
-  @Column({ type: 'uuid' })
-  teamAId: string;
+  @Column({ type: 'uuid', nullable: true })
+  teamAId: string | null;
 
-  @ManyToOne(() => Team, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => Team, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'teamAId' })
-  teamA: Team;
+  teamA: Team | null;
 
-  @Column({ type: 'uuid' })
-  teamBId: string;
+  @Column({ type: 'uuid', nullable: true })
+  teamBId: string | null;
 
-  @ManyToOne(() => Team, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => Team, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'teamBId' })
-  teamB: Team;
+  teamB: Team | null;
 
   @Column({ type: 'uuid', nullable: true })
   winnerId: string | null;

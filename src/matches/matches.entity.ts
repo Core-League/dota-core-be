@@ -13,25 +13,25 @@ export class Match {
   id: string;
 
   @ManyToOne(() => Team, (team: Team) => team.matchesAsTeamA, {
-    onDelete: 'RESTRICT',
-    nullable: false,
+    onDelete: 'SET NULL',
+    nullable: true,
   })
   @JoinColumn({ name: 'teamAId' })
-  teamA: Team;
+  teamA: Team | null;
 
   @ManyToOne(() => Team, (team: Team) => team.matchesAsTeamB, {
-    onDelete: 'RESTRICT',
-    nullable: false,
+    onDelete: 'SET NULL',
+    nullable: true,
   })
   @JoinColumn({ name: 'teamBId' })
-  teamB: Team;
+  teamB: Team | null;
 
   @ManyToOne(() => Team, (team: Team) => team.matchesAsWinner, {
-    onDelete: 'RESTRICT',
-    nullable: false,
+    onDelete: 'SET NULL',
+    nullable: true,
   })
   @JoinColumn({ name: 'winnerId' })
-  winner: Team;
+  winner: Team | null;
 
   @Column()
   dotaMatchId: string;
