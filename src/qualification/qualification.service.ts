@@ -64,9 +64,6 @@ export class QualificationService {
     const qualification = await this.qualRepo.findByTournamentId(tournamentId);
     if (!qualification)
       throw new NotFoundException('Кваліфікацію турніру не знайдено');
-    qualification.matches = (qualification.matches ?? []).filter(
-      (m) => m.dotaMatchId !== null,
-    );
 
     const pointRows = await this.dataSource
       .getRepository(PlayerTournamentPoints)
@@ -180,7 +177,7 @@ export class QualificationService {
             'captain',
             'mainPlayers',
             'reservedPlayers',
-            'tournament',
+            'tournaments',
           ],
         })
       : await teamRepo.findOne({
@@ -189,7 +186,7 @@ export class QualificationService {
             'captain',
             'mainPlayers',
             'reservedPlayers',
-            'tournament',
+            'tournaments',
           ],
         });
 
@@ -201,12 +198,25 @@ export class QualificationService {
           );
     }
 
-    if (team.tournament !== null) {
-      throw new ConflictException(
-        'Команда вже бере участь у турнірі (або в іншому турнірі)',
-      );
+    const alreadyInThisTournament = (team.tournaments ?? []).some(
+      (t) => t.id === tournament.id,
+    );
+    if (alreadyInThisTournament) {
+      throw new ConflictException('Команда вже зареєстрована на цей турнір');
     }
 
+    const hasOverlappingOtherTournament = (team.tournaments ?? []).some(
+      (t) =>
+        t.id !== tournament.id &&
+        t.tournamentStartsAt.getTime() <
+          tournament.tournamentEndsAt.getTime() &&
+        t.tournamentEndsAt.getTime() > tournament.tournamentStartsAt.getTime(),
+    );
+    if (hasOverlappingOtherTournament) {
+      throw new ConflictException(
+        'Команда вже бере участь у турнірі, що перетинається за часом',
+      );
+    }
     if (!bypassParticipantChecks) {
       if (!team.isVerified) {
         throw new BadRequestException('Команда не верифікована');
@@ -331,9 +341,13 @@ export class QualificationService {
     }
 
     await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `INSERT INTO "tournament_team" ("tournamentId", "teamId") VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [tournament.id, team.id],
+      );
       await manager
         .getRepository(Team)
-        .save({ ...team, tournament, isPlayingTournament: true });
+        .update({ id: team.id }, { isPlayingTournament: true });
       if (newMatches.length > 0) {
         await manager.getRepository(QualificationMatch).save(newMatches);
       }
@@ -360,11 +374,11 @@ export class QualificationService {
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
           where: { id: requestedTeamId },
-          relations: ['captain', 'mainPlayers', 'tournament'],
+          relations: ['captain', 'mainPlayers', 'tournaments'],
         })
       : await teamRepo.findOne({
           where: { captain: { id: playerId } },
-          relations: ['captain', 'mainPlayers', 'tournament'],
+          relations: ['captain', 'mainPlayers', 'tournaments'],
         });
 
     if (!team) {
@@ -373,7 +387,7 @@ export class QualificationService {
         : new ForbiddenException('Тільки капітан команди може залишити турнір');
     }
 
-    if (!team.tournament || team.tournament.id !== tournamentId) {
+    if (!team.tournaments?.some((t) => t.id === tournamentId)) {
       throw new BadRequestException('Команда не бере участі у цьому турнірі');
     }
 
@@ -406,9 +420,19 @@ export class QualificationService {
           .getRepository(PlayerTournamentPoints)
           .delete({ tournamentId, playerId: In(playerIds) });
       }
+      await manager.query(
+        `DELETE FROM "tournament_team" WHERE "tournamentId" = $1 AND "teamId" = $2`,
+        [tournamentId, team.id],
+      );
+      const remainingTournaments = (team.tournaments ?? []).filter(
+        (t) => t.id !== tournamentId,
+      );
       await manager
         .getRepository(Team)
-        .save({ ...team, tournament: null, isPlayingTournament: false });
+        .update(
+          { id: team.id },
+          { isPlayingTournament: remainingTournaments.length > 0 },
+        );
     });
   }
 
@@ -477,12 +501,12 @@ export class QualificationService {
       );
     }
 
-    if (!qualMatch.teamA.tournament) {
+    if (!qualMatch.teamA.tournaments?.some((t) => t.id === tournamentId)) {
       throw new BadRequestException(
         `Команда ${qualMatch.teamA.id} більше не бере участь у турнірі`,
       );
     }
-    if (!qualMatch.teamB.tournament) {
+    if (!qualMatch.teamB.tournaments?.some((t) => t.id === tournamentId)) {
       throw new BadRequestException(
         `Команда ${qualMatch.teamB.id} більше не бере участь у турнірі`,
       );

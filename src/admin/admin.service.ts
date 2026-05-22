@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -23,6 +22,7 @@ import { QualificationMatch } from '../qualification/qualification-match.entity'
 import { DiscordBotService } from '../discord/discord-bot.service';
 import { OverrideMatchResultDto } from './dto/override-match-result.dto';
 import { AuthService } from '../auth/auth.service';
+import { Dota2Service } from '../dota2/dota2.service';
 import {
   AdminPlayerRoleItemDto,
   AdminSetPlayerRolesDto,
@@ -96,6 +96,7 @@ export class AdminService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly discord: DiscordBotService,
     private readonly authService: AuthService,
+    private readonly dota2: Dota2Service,
   ) {
     this.playersRepo = dataSource.getRepository(Player);
     this.rolesRepo = dataSource.getRepository(UserRoles);
@@ -214,6 +215,13 @@ export class AdminService {
 
   async verifyPlayer(playerId: string): Promise<VerifyResult> {
     const result = await this.setPrimaryRole(playerId, Role.PLAYER);
+    const captainTeam = await this.teamsRepo.findOne({
+      where: { captain: { id: playerId }, isVerified: true },
+      relations: ['captain'],
+    });
+    if (captainTeam?.captain?.steamId) {
+      void this.dota2.addLeagueAdmin(captainTeam.captain.steamId);
+    }
     return {
       playerId: result.playerId,
       verified: true,
@@ -223,6 +231,13 @@ export class AdminService {
 
   async unverifyPlayer(playerId: string): Promise<VerifyResult> {
     const result = await this.setPrimaryRole(playerId, Role.GUEST);
+    const captainTeam = await this.teamsRepo.findOne({
+      where: { captain: { id: playerId }, isVerified: true },
+      relations: ['captain'],
+    });
+    if (captainTeam?.captain?.steamId) {
+      void this.dota2.revokeLeagueAdmin(captainTeam.captain.steamId);
+    }
     return {
       playerId: result.playerId,
       verified: false,
@@ -319,11 +334,17 @@ export class AdminService {
   async unverifyTeam(
     teamId: string,
   ): Promise<{ teamId: string; isVerified: boolean }> {
-    const team = await this.teamsRepo.findOne({ where: { id: teamId } });
+    const team = await this.teamsRepo.findOne({
+      where: { id: teamId },
+      relations: ['captain'],
+    });
     if (!team) throw new NotFoundException('Team not found');
     team.isVerified = false;
     team.verifiedAt = null;
     await this.teamsRepo.save(team);
+    if (team.captain?.steamId) {
+      void this.dota2.revokeLeagueAdmin(team.captain.steamId);
+    }
     return { teamId, isVerified: false };
   }
 
@@ -424,15 +445,10 @@ export class AdminService {
         'teamA.mainPlayers',
         'teamB',
         'teamB.mainPlayers',
+        'winner',
       ],
     });
     if (!match) throw new NotFoundException('Match not found');
-
-    if (match.dotaMatchId !== null) {
-      throw new ConflictException(
-        'Match result already recorded — use a different match or clear the existing result first',
-      );
-    }
 
     if (
       dto.winnerTeamId !== match.teamA.id &&
@@ -444,31 +460,66 @@ export class AdminService {
     }
 
     const tournamentId = match.qualification.tournament.id;
-    const winner =
+    const newWinner =
       dto.winnerTeamId === match.teamA.id ? match.teamA : match.teamB;
-    const loser =
+    const newLoser =
       dto.winnerTeamId === match.teamA.id ? match.teamB : match.teamA;
 
-    match.winner = winner;
-    match.dotaMatchId = `manual_${matchId}`;
+    // Capture old state before modification (for point reversal).
+    // Use teamA/teamB (which have mainPlayers loaded) rather than match.winner
+    // (which is loaded without the mainPlayers sub-relation).
+    const wasAlreadyPlayed =
+      match.dotaMatchId !== null && match.winner !== null;
+    const oldWinnerId = wasAlreadyPlayed ? match.winner!.id : null;
+    const oldWinner =
+      oldWinnerId != null
+        ? match.teamA.id === oldWinnerId
+          ? match.teamA
+          : match.teamB
+        : null;
+    const oldLoser =
+      oldWinnerId != null
+        ? match.teamA.id === oldWinnerId
+          ? match.teamB
+          : match.teamA
+        : null;
+
+    match.winner = newWinner;
+    match.dotaMatchId = `tech_loss_${matchId}`;
 
     await this.dataSource.transaction(async (manager) => {
       await manager.getRepository(QualificationMatch).save(match);
+
+      if (wasAlreadyPlayed && oldWinner && oldLoser) {
+        await this.deductPoints(
+          manager,
+          oldWinner.mainPlayers ?? [],
+          tournamentId,
+          dto.winnerPoints ?? 100,
+        );
+        await this.deductPoints(
+          manager,
+          oldLoser.mainPlayers ?? [],
+          tournamentId,
+          dto.loserPoints ?? 40,
+        );
+      }
+
       await this.awardPoints(
         manager,
-        winner.mainPlayers ?? [],
+        newWinner.mainPlayers ?? [],
         tournamentId,
         dto.winnerPoints ?? 100,
       );
       await this.awardPoints(
         manager,
-        loser.mainPlayers ?? [],
+        newLoser.mainPlayers ?? [],
         tournamentId,
         dto.loserPoints ?? 40,
       );
     });
 
-    return { matchId, winnerId: winner.id };
+    return { matchId, winnerId: newWinner.id };
   }
 
   private async awardPoints(
@@ -489,6 +540,24 @@ export class AdminService {
         await repo.save(
           repo.create({ playerId: player.id, tournamentId, points: amount }),
         );
+      }
+    }
+  }
+
+  private async deductPoints(
+    manager: EntityManager,
+    players: Player[],
+    tournamentId: string,
+    amount: number,
+  ): Promise<void> {
+    const repo = manager.getRepository(PlayerTournamentPoints);
+    for (const player of players) {
+      const existing = await repo.findOne({
+        where: { playerId: player.id, tournamentId },
+      });
+      if (existing) {
+        existing.points = Math.max(0, existing.points - amount);
+        await repo.save(existing);
       }
     }
   }

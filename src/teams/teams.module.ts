@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { DiscordBotModule } from '../discord/discord-bot.module';
+import { Dota2Module } from '../dota2/dota2.module';
 import { TeamsService } from './teams.service';
 import { TeamsController } from './teams.controller';
 import { InvitesController } from './invites.controller';
@@ -26,6 +27,7 @@ import { TeamInviteRepository } from './team-invite.repository';
     AuthModule,
     UploadsModule,
     DiscordBotModule,
+    Dota2Module,
   ],
   providers: [TeamsService, TeamsRepository, TeamInviteRepository],
   controllers: [TeamsController, InvitesController],
