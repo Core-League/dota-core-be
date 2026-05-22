@@ -63,9 +63,6 @@ export class QualificationService {
     const qualification = await this.qualRepo.findByTournamentId(tournamentId);
     if (!qualification)
       throw new NotFoundException('Кваліфікацію турніру не знайдено');
-    qualification.matches = (qualification.matches ?? []).filter(
-      (m) => m.dotaMatchId !== null,
-    );
 
     const pointRows = await this.dataSource
       .getRepository(PlayerTournamentPoints)
