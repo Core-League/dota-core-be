@@ -30,7 +30,7 @@ export class TeamsRepository {
         'mainPlayers.roles',
         'reservedPlayers',
         'reservedPlayers.roles',
-        'tournament',
+        'tournaments',
       ],
     });
   }
@@ -47,7 +47,7 @@ export class TeamsRepository {
         'mainPlayers.roles',
         'reservedPlayers',
         'reservedPlayers.roles',
-        'tournament',
+        'tournaments',
       ],
     });
   }
@@ -64,7 +64,7 @@ export class TeamsRepository {
         'mainPlayers.roles',
         'reservedPlayers',
         'reservedPlayers.roles',
-        'tournament',
+        'tournaments',
       ],
     });
   }

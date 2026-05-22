@@ -218,6 +218,41 @@ export class Dota2Service {
     }
   }
 
+  async addLeagueAdmin(steamId: string): Promise<void> {
+    const body = new URLSearchParams({
+      sessionid: this.sessionId,
+      profile_url: `https://steamcommunity.com/profiles/${steamId}/`,
+    });
+    try {
+      await firstValueFrom(
+        this.http.post(this.baseUrl('post_addadmin'), body.toString(), {
+          headers: this.commonHeaders(),
+        }),
+      );
+      this.logger.log(`addLeagueAdmin: ${steamId}`);
+    } catch (err) {
+      this.logger.error('addLeagueAdmin failed', err);
+    }
+  }
+
+  async revokeLeagueAdmin(steamId: string): Promise<void> {
+    const accountId = String(BigInt(steamId) - 76561197960265728n);
+    const body = new URLSearchParams({
+      sessionid: this.sessionId,
+      account_id: accountId,
+    });
+    try {
+      await firstValueFrom(
+        this.http.post(this.baseUrl('post_revokeadmin'), body.toString(), {
+          headers: this.commonHeaders(),
+        }),
+      );
+      this.logger.log(`revokeLeagueAdmin: ${steamId}`);
+    } catch (err) {
+      this.logger.error('revokeLeagueAdmin failed', err);
+    }
+  }
+
   // ── HTML parsing ─────────────────────────────────────────────────────────
 
   async fetchTournamentPage(): Promise<string> {

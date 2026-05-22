@@ -159,7 +159,7 @@ export class QualificationService {
               'captain',
               'mainPlayers',
               'reservedPlayers',
-              'tournament',
+              'tournaments',
             ],
           })
         : await teamRepo.findOne({
@@ -168,7 +168,7 @@ export class QualificationService {
               'captain',
               'mainPlayers',
               'reservedPlayers',
-              'tournament',
+              'tournaments',
             ],
           });
 
@@ -180,8 +180,15 @@ export class QualificationService {
       );
     }
 
-    if (team.tournament !== null) {
-      throw new BadRequestException('Команда вже бере участь у турнірі');
+    const hasOverlap = (team.tournaments ?? []).some(
+      (t) =>
+        t.tournamentStartsAt < tournament.tournamentEndsAt &&
+        t.tournamentEndsAt > tournament.tournamentStartsAt,
+    );
+    if (hasOverlap) {
+      throw new BadRequestException(
+        'Команда вже бере участь у турнірі, що перетинається за часом',
+      );
     }
 
     if (!bypass) {
@@ -308,9 +315,13 @@ export class QualificationService {
     }
 
     await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `INSERT INTO "tournament_team" ("tournamentId", "teamId") VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [tournament.id, team.id],
+      );
       await manager
         .getRepository(Team)
-        .save({ ...team, tournament, isPlayingTournament: true });
+        .update({ id: team.id }, { isPlayingTournament: true });
       if (newMatches.length > 0) {
         await manager.getRepository(QualificationMatch).save(newMatches);
       }
@@ -329,11 +340,11 @@ export class QualificationService {
       bypass && overrideTeamId
         ? await teamRepo.findOne({
             where: { id: overrideTeamId },
-            relations: ['captain', 'mainPlayers', 'tournament'],
+            relations: ['captain', 'mainPlayers', 'tournaments'],
           })
         : await teamRepo.findOne({
             where: { captain: { id: playerId } },
-            relations: ['captain', 'mainPlayers', 'tournament'],
+            relations: ['captain', 'mainPlayers', 'tournaments'],
           });
 
     if (!team) {
@@ -344,7 +355,7 @@ export class QualificationService {
       );
     }
 
-    if (!team.tournament || team.tournament.id !== tournamentId) {
+    if (!team.tournaments?.some((t) => t.id === tournamentId)) {
       throw new BadRequestException('Команда не бере участі у цьому турнірі');
     }
 
@@ -377,9 +388,19 @@ export class QualificationService {
           .getRepository(PlayerTournamentPoints)
           .delete({ tournamentId, playerId: In(playerIds) });
       }
+      await manager.query(
+        `DELETE FROM "tournament_team" WHERE "tournamentId" = $1 AND "teamId" = $2`,
+        [tournamentId, team.id],
+      );
+      const remainingTournaments = (team.tournaments ?? []).filter(
+        (t) => t.id !== tournamentId,
+      );
       await manager
         .getRepository(Team)
-        .save({ ...team, tournament: null, isPlayingTournament: false });
+        .update(
+          { id: team.id },
+          { isPlayingTournament: remainingTournaments.length > 0 },
+        );
     });
   }
 
@@ -448,12 +469,12 @@ export class QualificationService {
       );
     }
 
-    if (!qualMatch.teamA.tournament) {
+    if (!qualMatch.teamA.tournaments?.some((t) => t.id === tournamentId)) {
       throw new BadRequestException(
         `Команда ${qualMatch.teamA.id} більше не бере участь у турнірі`,
       );
     }
-    if (!qualMatch.teamB.tournament) {
+    if (!qualMatch.teamB.tournaments?.some((t) => t.id === tournamentId)) {
       throw new BadRequestException(
         `Команда ${qualMatch.teamB.id} більше не бере участь у турнірі`,
       );
