@@ -138,7 +138,9 @@ export class ChallongeService {
     return out;
   }
 
-  async listParticipants(url: string): Promise<{ id: number; name: string }[]> {
+  async listParticipants(
+    url: string,
+  ): Promise<{ id: number; name: string; misc: string | null }[]> {
     try {
       const resp = await firstValueFrom(
         this.http.get<{ data: V2ParticipantItem[] }>(
@@ -149,6 +151,7 @@ export class ChallongeService {
       return resp.data.data.map((p) => ({
         id: Number(p.id),
         name: p.attributes.name,
+        misc: p.attributes.misc ?? null,
       }));
     } catch (err) {
       this.logger.error('listParticipants failed', err);
@@ -247,7 +250,14 @@ export class ChallongeService {
     }
 
     return matches
-      .filter((m) => (m.attributes.points_by_participant ?? []).length >= 2)
+      .filter((m) => {
+        const pts = m.attributes.points_by_participant ?? [];
+        if (pts.length < 2) return false;
+        return pts.every(
+          (slot) =>
+            typeof slot.participant_id === 'number' && slot.participant_id > 0,
+        );
+      })
       .map((m) => {
         const [p1, p2] = m.attributes.points_by_participant;
         return {

@@ -363,12 +363,27 @@ export class Dota2Service {
       phase: 0,
       defaultNodeType: 1,
     });
-    const matchNodeGroupId = await this.resolveRoundRobinNodeGroupId(
-      containingOrganizationalGroupId,
-    );
-    await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdA);
-    await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdB);
-    return matchNodeGroupId;
+    let matchNodeGroupId: string | undefined;
+    try {
+      matchNodeGroupId = await this.resolveRoundRobinNodeGroupId(
+        containingOrganizationalGroupId,
+      );
+      await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdA);
+      await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdB);
+      return matchNodeGroupId;
+    } catch (err) {
+      if (matchNodeGroupId) {
+        try {
+          await this.removeNodeGroup(matchNodeGroupId);
+        } catch (removeErr) {
+          this.logger.warn(
+            `removeNodeGroup failed for orphan RR node ${matchNodeGroupId}`,
+            removeErr,
+          );
+        }
+      }
+      throw err;
+    }
   }
 
   // ── OpenDota ─────────────────────────────────────────────────────────────
