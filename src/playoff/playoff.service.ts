@@ -60,7 +60,7 @@ export class PlayoffService {
 
     const seeds = await this.computeSeeds(tournamentId, teamIds);
 
-    const slug = `core_${tournamentId.replace(/-/g, '').slice(0, 8)}`;
+    const slug = `core_${tournamentId.replace(/-/g, '').slice(0, 8)}_${Date.now().toString(36)}`;
     const { id: challongeTournamentId, url: challongeUrl } =
       await this.challonge.createTournament(tournament.name, slug);
 
