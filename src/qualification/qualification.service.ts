@@ -152,9 +152,11 @@ export class QualificationService {
 
     const useExplicitTeamId = !!(requestedTeamId && (bypassEnv || isAdmin));
 
-    /** Skip captain/Dota/div checks for dev bypass or admin assigning another team */
-    const bypassParticipantChecks =
-      bypassEnv || (Boolean(requestedTeamId) && isAdmin);
+    /**
+     * Explicit roster attach (admin `teamId` or dev bypass) skips normal captain rules:
+     * verification, Dota slot ID, roster validation, substitute rules, division match.
+     */
+    const bypassParticipantChecks = bypassEnv || useExplicitTeamId;
 
     const tournament = await this.dataSource.getRepository(Tournament).findOne({
       where: { id: tournamentId },
@@ -164,6 +166,7 @@ export class QualificationService {
 
     if (
       !bypassEnv &&
+      !(useExplicitTeamId && isAdmin) &&
       tournament.tournamentStatus !== TournamentStatus.QUALIFICATIONS
     ) {
       throw new BadRequestException('Реєстрація на турнір закрита');
@@ -172,7 +175,7 @@ export class QualificationService {
     const teamRepo = this.dataSource.getRepository(Team);
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
-          where: { id: requestedTeamId },
+          where: { id: requestedTeamId! },
           relations: [
             'captain',
             'mainPlayers',
@@ -205,17 +208,20 @@ export class QualificationService {
       throw new ConflictException('Команда вже зареєстрована на цей турнір');
     }
 
-    const hasOverlappingOtherTournament = (team.tournaments ?? []).some(
-      (t) =>
-        t.id !== tournament.id &&
-        t.tournamentStartsAt.getTime() <
-          tournament.tournamentEndsAt.getTime() &&
-        t.tournamentEndsAt.getTime() > tournament.tournamentStartsAt.getTime(),
-    );
-    if (hasOverlappingOtherTournament) {
-      throw new ConflictException(
-        'Команда вже бере участь у турнірі, що перетинається за часом',
+    /** Captains obey time-overlap restriction; admins attaching by teamId bypass it */
+    if (!useExplicitTeamId) {
+      const hasOverlappingOtherTournament = (team.tournaments ?? []).some(
+        (t) =>
+          t.id !== tournament.id &&
+          t.tournamentStartsAt.getTime() <
+            tournament.tournamentEndsAt.getTime() &&
+          t.tournamentEndsAt.getTime() > tournament.tournamentStartsAt.getTime(),
       );
+      if (hasOverlappingOtherTournament) {
+        throw new ConflictException(
+          'Команда вже бере участь у турнірі, що перетинається за часом',
+        );
+      }
     }
     if (!bypassParticipantChecks) {
       if (!team.isVerified) {
