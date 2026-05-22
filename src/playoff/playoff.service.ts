@@ -23,6 +23,7 @@ import { PlayoffResponseDto } from './dto/playoff-response.dto';
 import { findEligibleQualificationTeamIds } from '../tournaments/tournament-playoff-team.eligibility';
 import { TechLossPlayoffDto } from './dto/tech-loss-playoff.dto';
 import { OpenPlayoffMatchDto } from './dto/open-playoff-match.dto';
+import { PlayoffLeagueFixture } from './playoff-league-fixture.entity';
 import { Playoff } from './playoff.entity';
 
 @Injectable()
@@ -126,6 +127,17 @@ export class PlayoffService {
     await this.playoffRepo.save(playoff);
 
     await this.challonge.startTournament(challongeUrl);
+
+    const persistedPlayoff = await this.dataSource
+      .getRepository(Playoff)
+      .findOneOrFail({ where: { id: playoff.id } });
+
+    await this.bootstrapDotaLeagueMirroring(
+      persistedPlayoff,
+      tournamentId,
+      challongeUrl,
+      playoffTeamIds,
+    );
 
     await this.dataSource
       .getRepository(Tournament)
@@ -246,6 +258,8 @@ export class PlayoffService {
       }
     }
 
+    await this.maybeSyncPlayoffFixturesIntoDota(tournamentId);
+
     return match;
   }
 
@@ -358,6 +372,17 @@ export class PlayoffService {
       this.logger.warn(
         'Failed to delete old Challonge tournament (cleanup)',
         err,
+      );
+    }
+
+    const rebound = await this.playoffRepo.findByTournamentId(tournamentId);
+    if (rebound) {
+      const cleared = await this.discardPlayoffLeagueMirroring(rebound);
+      await this.bootstrapDotaLeagueMirroring(
+        cleared,
+        tournamentId,
+        cleared.challongeUrl,
+        refreshedRows.map((r) => r.teamId),
       );
     }
 
@@ -558,6 +583,8 @@ export class PlayoffService {
     });
     await this.playoffMatchRepo.save(match);
 
+    await this.maybeSyncPlayoffFixturesIntoDota(tournamentId);
+
     return this.buildPlayoffResponse(playoff.challongeEmbedUrl, tournamentId);
   }
 
@@ -739,6 +766,17 @@ export class PlayoffService {
       );
     }
 
+    const playoffFresh = await this.playoffRepo.findByTournamentId(tournamentId);
+    if (playoffFresh) {
+      const cleared = await this.discardPlayoffLeagueMirroring(playoffFresh);
+      await this.bootstrapDotaLeagueMirroring(
+        cleared,
+        tournamentId,
+        cleared.challongeUrl,
+        activeRows.map((r) => r.teamId),
+      );
+    }
+
     return this.buildPlayoffResponse(newEmbedUrl, tournamentId);
   }
 
@@ -896,5 +934,176 @@ export class PlayoffService {
     teamsWithPoints.sort((a, b) => b.points - a.points);
 
     return teamsWithPoints.map((t, i) => ({ teamId: t.teamId, seed: i + 1 }));
+  }
+
+  private async discardPlayoffLeagueMirroring(playoff: Playoff): Promise<Playoff> {
+    await this.dataSource.getRepository(PlayoffLeagueFixture).delete({
+      playoffId: playoff.id,
+    });
+    playoff.dotaPlayoffContainingNodeGroupId = null;
+    return this.playoffRepo.save(playoff);
+  }
+
+  /**
+   * After Challonge playoff starts or bracket is recreated: organisational node in Dota league,
+   * register playoff teams under it, RR-style pair fixtures for current open Challonge slots.
+   */
+  private async bootstrapDotaLeagueMirroring(
+    playoffRow: Playoff,
+    tournamentId: string,
+    challongeUrl: string,
+    coreTeamIds: string[],
+  ): Promise<void> {
+    if (!this.dota2.isLeagueApiConfigured()) {
+      this.logger.warn(
+        'Dota league API not configured (DOTA_* env) — skipping playoff league mirrors',
+      );
+      return;
+    }
+    try {
+      const playoff = await this.ensureDotaOrganizationalShell(playoffRow);
+      const shell = playoff.dotaPlayoffContainingNodeGroupId;
+      if (!shell) return;
+      await this.registerTeamsInPlayoffLeague(shell, coreTeamIds);
+      await this.syncOpenChallongeMatchesIntoLeague(
+        shell,
+        playoff.id,
+        tournamentId,
+        challongeUrl,
+      );
+    } catch (err) {
+      this.logger.warn(
+        'Dota league playoff mirror (bootstrap/sync) failed; Challonge state is unchanged.',
+        err,
+      );
+    }
+  }
+
+  private async maybeSyncPlayoffFixturesIntoDota(
+    tournamentId: string,
+  ): Promise<void> {
+    const playoff = await this.playoffRepo.findByTournamentId(tournamentId);
+    if (!playoff?.dotaPlayoffContainingNodeGroupId || !playoff.challongeUrl)
+      return;
+    if (!this.dota2.isLeagueApiConfigured()) return;
+
+    try {
+      await this.syncOpenChallongeMatchesIntoLeague(
+        playoff.dotaPlayoffContainingNodeGroupId,
+        playoff.id,
+        tournamentId,
+        playoff.challongeUrl,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Dota league sync for open Challonge fixtures failed (playoff=${playoff.id})`,
+        err,
+      );
+    }
+  }
+
+  private async ensureDotaOrganizationalShell(playoff: Playoff): Promise<Playoff> {
+    if (!this.dota2.isLeagueApiConfigured()) return playoff;
+    if (playoff.dotaPlayoffContainingNodeGroupId) return playoff;
+
+    await this.dota2.addNodeGroup({
+      nodeGroupId: '',
+      nodeGroupType: 1,
+      teamCount: 0,
+      containingNodeGroupId: '0',
+      phase: 2,
+      defaultNodeType: 0,
+    });
+    const id = await this.dota2.resolveOrganizationalNodeGroupId();
+    playoff.dotaPlayoffContainingNodeGroupId = id;
+    await this.playoffRepo.save(playoff);
+    return playoff;
+  }
+
+  private async registerTeamsInPlayoffLeague(
+    shellGroupId: string,
+    coreTeamIds: string[],
+  ): Promise<void> {
+    if (coreTeamIds.length === 0) return;
+
+    const teamRepo = this.dataSource.getRepository(Team);
+    const teams = await teamRepo.find({
+      where: { id: In(coreTeamIds) },
+    });
+
+    for (const team of teams) {
+      const dotaTeamId = (team.dotaTeamId ?? '').trim();
+      if (!dotaTeamId) {
+        this.logger.warn(
+          `Playoff league: skip team ${team.id} — no dotaTeamId registered`,
+        );
+        continue;
+      }
+      try {
+        await this.dota2.addNodeGroupTeam(shellGroupId, dotaTeamId);
+      } catch (err) {
+        this.logger.warn(
+          `addNodeGroupTeam failed for team ${team.id} in playoff shell`,
+          err,
+        );
+      }
+    }
+  }
+
+  private async syncOpenChallongeMatchesIntoLeague(
+    shellGroupId: string,
+    playoffId: string,
+    tournamentId: string,
+    challongeUrl: string,
+  ): Promise<void> {
+    const fixtureRepo = this.dataSource.getRepository(PlayoffLeagueFixture);
+    const tptRepo = this.dataSource.getRepository(TournamentPlayoffTeam);
+
+    const rows = await tptRepo.find({
+      where: { tournamentId, isDisqualified: false },
+      relations: ['team'],
+    });
+
+    const challongeParticipantIdToDota = new Map<string, string>();
+    for (const r of rows) {
+      const cid = (r.challongeParticipantId ?? '').trim();
+      const dota = (r.team?.dotaTeamId ?? '').trim();
+      if (cid && dota) challongeParticipantIdToDota.set(cid, dota);
+    }
+
+    const fixtures = await fixtureRepo.find({ where: { playoffId } });
+    const existingMatches = new Set(fixtures.map((f) => f.challongeMatchId));
+
+    const opens = await this.challonge.listOpenMatches(challongeUrl);
+
+    for (const m of opens) {
+      const dA = challongeParticipantIdToDota.get(String(m.participant1Id));
+      const dB = challongeParticipantIdToDota.get(String(m.participant2Id));
+      if (!dA || !dB) continue;
+
+      const mid = String(m.id);
+      if (existingMatches.has(mid)) continue;
+
+      try {
+        const nodeId = await this.dota2.createTwoTeamFixtureNode(
+          shellGroupId,
+          dA,
+          dB,
+        );
+        await fixtureRepo.save(
+          fixtureRepo.create({
+            playoffId,
+            challongeMatchId: mid,
+            dotaFixtureNodeGroupId: nodeId,
+          }),
+        );
+        existingMatches.add(mid);
+      } catch (err) {
+        this.logger.warn(
+          `Dota RR fixture create failed for Challonge match ${mid} (${dA} vs ${dB})`,
+          err,
+        );
+      }
+    }
   }
 }
