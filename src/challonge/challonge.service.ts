@@ -8,7 +8,7 @@ import {
 import { firstValueFrom } from 'rxjs';
 
 interface ChallongeParticipant {
-  participant: { id: number; name: string };
+  participant: { id: number; name: string; misc?: string | null };
 }
 
 interface ChallongeMatch {
@@ -24,6 +24,9 @@ interface ChallongeMatch {
 interface ChallongeTournamentResponse {
   tournament: { id: number; url: string };
 }
+
+/** Challonge accepts large rosters safely if we bulk-add in chunks. */
+const BULK_PARTICIPANTS_CHUNK = 100;
 
 @Injectable()
 export class ChallongeService {
@@ -66,10 +69,13 @@ export class ChallongeService {
     }
   }
 
+  /**
+   * One bulk_add POST. Prefer `bulkAddParticipantsAll` when many teams participate.
+   */
   async bulkAddParticipants(
     url: string,
-    participants: { name: string; seed: number }[],
-  ): Promise<{ name: string; id: number }[]> {
+    participants: { name: string; seed: number; misc?: string }[],
+  ): Promise<{ name: string; id: number; misc: string | null }[]> {
     try {
       const resp = await firstValueFrom(
         this.http.post(
@@ -78,9 +84,11 @@ export class ChallongeService {
           { params: { api_key: this.apiKey } },
         ),
       );
-      return (resp.data as ChallongeParticipant[]).map((p) => ({
+      const rows = (resp.data ?? []) as ChallongeParticipant[];
+      return rows.map((p) => ({
         name: p.participant.name,
         id: p.participant.id,
+        misc: p.participant.misc ?? null,
       }));
     } catch (err) {
       this.logger.error('bulkAddParticipants failed', err);
@@ -88,6 +96,21 @@ export class ChallongeService {
         'Failed to add participants to Challonge tournament',
       );
     }
+  }
+
+  /** Batched bulk_add — avoids truncation / payload limits when many seeds are sent at once. */
+  async bulkAddParticipantsAll(
+    url: string,
+    participants: { name: string; seed: number; misc?: string }[],
+  ): Promise<{ name: string; id: number; misc: string | null }[]> {
+    const out: { name: string; id: number; misc: string | null }[] = [];
+    for (let i = 0; i < participants.length; i += BULK_PARTICIPANTS_CHUNK) {
+      const chunk = participants.slice(i, i + BULK_PARTICIPANTS_CHUNK);
+      if (chunk.length === 0) continue;
+      const created = await this.bulkAddParticipants(url, chunk);
+      out.push(...created);
+    }
+    return out;
   }
 
   async startTournament(url: string): Promise<void> {
