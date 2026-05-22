@@ -69,8 +69,8 @@ export class TeamsController {
 
   @Post('search')
   @ApiBody({ type: SearchTeamsDto, required: false })
-  search(@Body() body?: SearchTeamsDto) {
-    return this.teamsService.search(body ?? {});
+  search() {
+    return this.teamsService.search();
   }
 
   @Get(':id')

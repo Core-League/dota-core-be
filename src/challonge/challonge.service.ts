@@ -115,6 +115,68 @@ export class ChallongeService {
     }
   }
 
+  async listParticipants(url: string): Promise<{ id: number; name: string }[]> {
+    try {
+      const resp = await firstValueFrom(
+        this.http.get<{ data: V2ParticipantItem[] }>(
+          `${this.baseUrl}/tournaments/${url}/participants.json`,
+          { headers: this.headers },
+        ),
+      );
+      return resp.data.data.map((p) => ({
+        id: Number(p.id),
+        name: p.attributes.name,
+      }));
+    } catch (err) {
+      this.logger.error('listParticipants failed', err);
+      throw new InternalServerErrorException(
+        'Failed to fetch participants from Challonge',
+      );
+    }
+  }
+
+  async listAllMatchesWithBothParticipants(url: string): Promise<
+    {
+      id: number;
+      participant1Id: number;
+      participant2Id: number;
+      round: number;
+      state: string;
+    }[]
+  > {
+    let matches: V2MatchItem[];
+    try {
+      const resp = await firstValueFrom(
+        this.http.get<{ data: V2MatchItem[] }>(
+          `${this.baseUrl}/tournaments/${url}/matches.json`,
+          { headers: this.headers },
+        ),
+      );
+      matches = resp.data.data;
+    } catch (err) {
+      this.logger.error(
+        'listAllMatchesWithBothParticipants HTTP call failed',
+        err,
+      );
+      throw new InternalServerErrorException(
+        'Failed to fetch matches from Challonge',
+      );
+    }
+
+    return matches
+      .filter((m) => (m.attributes.points_by_participant ?? []).length >= 2)
+      .map((m) => {
+        const [p1, p2] = m.attributes.points_by_participant;
+        return {
+          id: Number(m.id),
+          participant1Id: p1.participant_id,
+          participant2Id: p2.participant_id,
+          round: m.attributes.round,
+          state: m.attributes.state,
+        };
+      });
+  }
+
   async startTournament(url: string): Promise<void> {
     try {
       await firstValueFrom(
@@ -137,12 +199,56 @@ export class ChallongeService {
     }
   }
 
+  async listOpenMatches(url: string): Promise<
+    {
+      id: number;
+      participant1Id: number;
+      participant2Id: number;
+      round: number;
+    }[]
+  > {
+    let matches: V2MatchItem[];
+    try {
+      const resp = await firstValueFrom(
+        this.http.get<{ data: V2MatchItem[] }>(
+          `${this.baseUrl}/tournaments/${url}/matches.json`,
+          { headers: this.headers, params: { state: 'open' } },
+        ),
+      );
+      matches = resp.data.data;
+    } catch (err) {
+      this.logger.error('listOpenMatches HTTP call failed', err);
+      throw new InternalServerErrorException(
+        'Failed to fetch matches from Challonge',
+      );
+    }
+
+    return matches
+      .filter((m) => (m.attributes.points_by_participant ?? []).length >= 2)
+      .map((m) => {
+        const [p1, p2] = m.attributes.points_by_participant;
+        return {
+          id: Number(m.id),
+          participant1Id: p1.participant_id,
+          participant2Id: p2.participant_id,
+          round: m.attributes.round,
+        };
+      });
+  }
+
   async findOpenMatch(
     url: string,
     participantIdA: number,
     participantIdB: number,
-  ): Promise<{ id: number; player1_id: number; player2_id: number; round: number }> {
-    this.logger.log(`findOpenMatch: looking for participants ${participantIdA} vs ${participantIdB} in ${url}`);
+  ): Promise<{
+    id: number;
+    player1_id: number;
+    player2_id: number;
+    round: number;
+  }> {
+    this.logger.log(
+      `findOpenMatch: looking for participants ${participantIdA} vs ${participantIdB} in ${url}`,
+    );
     let matches: V2MatchItem[];
     try {
       const resp = await firstValueFrom(
@@ -164,14 +270,18 @@ export class ChallongeService {
 
     this.logger.log(`findOpenMatch: received ${matches.length} open matches`);
     for (const m of matches) {
-      const ids = (m.attributes.points_by_participant ?? []).map((p) => p.participant_id);
+      const ids = (m.attributes.points_by_participant ?? []).map(
+        (p) => p.participant_id,
+      );
       this.logger.log(
         `  match ${m.id} round=${m.attributes.round} participants=${ids.join(',')}`,
       );
     }
 
     const found = matches.find((m) => {
-      const ids = (m.attributes.points_by_participant ?? []).map((p) => p.participant_id);
+      const ids = (m.attributes.points_by_participant ?? []).map(
+        (p) => p.participant_id,
+      );
       return ids.includes(participantIdA) && ids.includes(participantIdB);
     });
 
@@ -217,14 +327,23 @@ export class ChallongeService {
 
     const bo3Rounds = new Set<number>();
 
-    this.logger.log(`getBO3Rounds: total matches=${allMatches.length} rounds=${allMatches.map(m => m.attributes.round).sort((a,b)=>a-b).join(',')}`);
+    this.logger.log(
+      `getBO3Rounds: total matches=${allMatches.length} rounds=${allMatches
+        .map((m) => m.attributes.round)
+        .sort((a, b) => a - b)
+        .join(',')}`,
+    );
 
     const positiveRounds = [
-      ...new Set(allMatches.map((m) => m.attributes.round).filter((r) => r > 0)),
+      ...new Set(
+        allMatches.map((m) => m.attributes.round).filter((r) => r > 0),
+      ),
     ].sort((a, b) => a - b);
 
     const negativeRounds = [
-      ...new Set(allMatches.map((m) => m.attributes.round).filter((r) => r < 0)),
+      ...new Set(
+        allMatches.map((m) => m.attributes.round).filter((r) => r < 0),
+      ),
     ].sort((a, b) => a - b);
 
     // Mark winners semifinal + everything after it (GF, bracket reset) as BO3.
@@ -243,7 +362,9 @@ export class ChallongeService {
 
     if (negativeRounds.length > 0) bo3Rounds.add(negativeRounds[0]);
 
-    this.logger.log(`getBO3Rounds: bo3PositiveThreshold=${bo3PositiveThreshold} bo3Rounds=${[...bo3Rounds].sort((a,b)=>a-b).join(',')}`);
+    this.logger.log(
+      `getBO3Rounds: bo3PositiveThreshold=${bo3PositiveThreshold} bo3Rounds=${[...bo3Rounds].sort((a, b) => a - b).join(',')}`,
+    );
 
     return bo3Rounds;
   }

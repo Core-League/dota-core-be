@@ -15,7 +15,6 @@ import { Team } from './team.entity';
 import { TeamInviteRepository } from './team-invite.repository';
 import { TeamsRepository } from './teams.repository';
 import { CreateTeamDto } from './dto/create-team.dto';
-import { SearchTeamsDto } from './dto/search-teams.dto';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
@@ -24,6 +23,7 @@ import { toPlayerRankDto } from '../players/dto/player-rank.dto';
 import { TournamentDivision } from '../tournaments/tournaments.model';
 import { DiscordBotService } from '../discord/discord-bot.service';
 import { AuthService } from '../auth/auth.service';
+import { Dota2Service } from '../dota2/dota2.service';
 import {
   TeamResponseDto,
   TeamTournamentEmbeddedDto,
@@ -57,6 +57,7 @@ export class TeamsService {
     private readonly discord: DiscordBotService,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authService: AuthService,
+    private readonly dota2: Dota2Service,
   ) {}
 
   /** Для інших модулів (напр. турніри) — той самий DTO, що й у REST. */
@@ -111,7 +112,7 @@ export class TeamsService {
     return teams.map((t) => this.mapTeamResponse(t));
   }
 
-  async search(dto: SearchTeamsDto = {}) {
+  async search() {
     const teams = await this.teamsRepo.findAll();
     const mapped = teams.map((t) => this.mapTeamResponse(t));
     return mapped;
@@ -180,6 +181,10 @@ export class TeamsService {
       await this.discord.addCaptainRole(team.captain.discordId);
     }
 
+    if (team.captain?.steamId && team.captain?.verifiedAt) {
+      void this.dota2.addLeagueAdmin(team.captain.steamId);
+    }
+
     this.logger.log(
       `Discord setup complete for team ${team.id}: role=${roleId} channel=${channelId ?? 'null'} division=${division}`,
     );
@@ -246,6 +251,7 @@ export class TeamsService {
       throw new BadRequestException('Цей гравець вже є капітаном');
     }
 
+    const oldCaptain = team.captain;
     const oldCaptainDiscordId = team.captain?.discordId ?? null;
     team.captain = newCaptain;
     const saved = await this.teamsRepo.save(team);
@@ -256,6 +262,15 @@ export class TeamsService {
     }
     if (newCaptain.discordId) {
       await this.discord.addCaptainRole(newCaptain.discordId);
+    }
+
+    if (team.isVerified) {
+      if (oldCaptain?.steamId) {
+        void this.dota2.revokeLeagueAdmin(oldCaptain.steamId);
+      }
+      if (newCaptain.steamId && newCaptain.verifiedAt) {
+        void this.dota2.addLeagueAdmin(newCaptain.steamId);
+      }
     }
 
     const reloaded = await this.teamsRepo.findOneById(saved.id);
@@ -345,6 +360,9 @@ export class TeamsService {
       roster.find((p) => p.id === playerId)?.discordId ?? null;
 
     const wasCaptain = team.captain?.id === playerId;
+    const oldCaptainSteamId = wasCaptain
+      ? (team.captain?.steamId ?? null)
+      : null;
     team.mainPlayers = (team.mainPlayers || []).filter(
       (p) => p.id !== playerId,
     );
@@ -377,6 +395,14 @@ export class TeamsService {
       }
       if (saved.captain?.discordId) {
         await this.discord.addCaptainRole(saved.captain.discordId);
+      }
+      if (team.isVerified) {
+        if (oldCaptainSteamId) {
+          void this.dota2.revokeLeagueAdmin(oldCaptainSteamId);
+        }
+        if (saved.captain?.steamId && saved.captain?.verifiedAt) {
+          void this.dota2.addLeagueAdmin(saved.captain.steamId);
+        }
       }
     }
 
@@ -447,9 +473,18 @@ export class TeamsService {
           `Неможливо видалити гравця ${playerId}: у команди ${team.id} немає інших основних гравців для підвищення`,
         );
       }
+      const oldCaptainSteamId = team.captain?.steamId ?? null;
       team.captain = nextCaptain;
       await this.teamsRepo.save(team);
       await this.syncPlayerTeamLinks(team.id);
+      if (team.isVerified) {
+        if (oldCaptainSteamId) {
+          void this.dota2.revokeLeagueAdmin(oldCaptainSteamId);
+        }
+        if (nextCaptain.steamId && nextCaptain.verifiedAt) {
+          void this.dota2.addLeagueAdmin(nextCaptain.steamId);
+        }
+      }
     }
   }
 

@@ -42,6 +42,8 @@ import { PlayoffService } from '../playoff/playoff.service';
 import { PlayoffResponseDto } from '../playoff/dto/playoff-response.dto';
 import { SubmitPlayoffMatchDto } from '../playoff/dto/submit-playoff-match.dto';
 import { DisqualifyTeamDto } from '../playoff/dto/disqualify-team.dto';
+import { TechLossPlayoffDto } from '../playoff/dto/tech-loss-playoff.dto';
+import { OpenPlayoffMatchDto } from '../playoff/dto/open-playoff-match.dto';
 
 const IMAGE_INTERCEPTOR_OPTIONS = {
   fileFilter: imageFileFilter,
@@ -232,6 +234,25 @@ export class TournamentsController {
     @Body() body: DisqualifyTeamDto,
   ) {
     return this.playoffService.disqualifyTeam(id, body.teamId);
+  }
+
+  @Get(':id/playoff/open-matches')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: [OpenPlayoffMatchDto] })
+  getOpenPlayoffMatches(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.playoffService.getOpenMatches(id);
+  }
+
+  @Post(':id/playoff/tech-loss')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: PlayoffResponseDto })
+  techLossMatch(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: TechLossPlayoffDto,
+  ) {
+    return this.playoffService.techLossMatch(id, body);
   }
 
   @Get(':id/playoff')

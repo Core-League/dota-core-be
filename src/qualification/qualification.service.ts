@@ -397,7 +397,10 @@ export class QualificationService {
       );
       await manager
         .getRepository(Team)
-        .update({ id: team.id }, { isPlayingTournament: remainingTournaments.length > 0 });
+        .update(
+          { id: team.id },
+          { isPlayingTournament: remainingTournaments.length > 0 },
+        );
     });
   }
 

@@ -144,7 +144,10 @@ export class DevService {
       );
     } else {
       const allGames = await matchRepo.find({
-        where: { playoffId: playoff.id, challongeMatchId: String(challongeMatch.id) },
+        where: {
+          playoffId: playoff.id,
+          challongeMatchId: String(challongeMatch.id),
+        },
       });
 
       const wins = new Map<string, number>();
