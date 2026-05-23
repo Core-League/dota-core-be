@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { Team } from './team.entity';
 
 @Injectable()
@@ -21,6 +21,7 @@ export class TeamsRepository {
 
   findAll(): Promise<Team[]> {
     return this.repo.find({
+      where: { disbandedAt: IsNull() },
       relations: [
         'captain',
         'captain.roles',
@@ -71,7 +72,7 @@ export class TeamsRepository {
 
   findByCaptainId(playerId: string): Promise<Team[]> {
     return this.repo.find({
-      where: { captain: { id: playerId } },
+      where: { captain: { id: playerId }, disbandedAt: IsNull() },
       relations: ['captain', 'mainPlayers'],
     });
   }

@@ -61,6 +61,12 @@ export class DevService {
       );
     }
 
+    if (!match.teamA || !match.teamB) {
+      throw new BadRequestException(
+        'Qualification slot is missing one or both teams — cannot mock',
+      );
+    }
+
     const winner = Math.random() < 0.5 ? match.teamA : match.teamB;
     const loser = winner.id === match.teamA.id ? match.teamB : match.teamA;
     const winnerPlayers =

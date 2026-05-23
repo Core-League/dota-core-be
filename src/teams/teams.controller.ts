@@ -31,6 +31,7 @@ import {
 } from '../uploads/uploads.service';
 import { TeamsService } from './teams.service';
 import { AddPlayerDto } from './dto/add-player.dto';
+import { ChangeCaptainDto } from './dto/change-captain.dto';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { SearchTeamsDto } from './dto/search-teams.dto';
@@ -86,10 +87,13 @@ export class TeamsController {
     @Body() body: UpdateTeamDto,
   ) {
     const { coachId, ...rest } = body;
-    return this.teamsService.update(id, {
-      ...rest,
-      ...(coachId !== undefined && { coach: { id: coachId } as Player }),
-    });
+    const coachUpdate =
+      coachId === undefined
+        ? {}
+        : coachId === null
+          ? { coach: null }
+          : { coach: { id: coachId } as Player };
+    return this.teamsService.update(id, { ...rest, ...coachUpdate });
   }
 
   @Delete(':id')
@@ -100,9 +104,10 @@ export class TeamsController {
   @Post(':id/captain')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @ApiOkResponse({ type: TeamResponseDto })
   changeCaptain(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { newCaptainPlayerId: string },
+    @Body() body: ChangeCaptainDto,
     @Req() req: RequestWithJwtActor,
   ) {
     return this.teamsService.changeCaptain(

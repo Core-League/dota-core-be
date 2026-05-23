@@ -16,7 +16,7 @@ interface V2TournamentResponse {
 
 interface V2ParticipantItem {
   id: string;
-  attributes: { name: string };
+  attributes: { name: string; misc?: string | null };
 }
 
 interface V2MatchItem {
@@ -28,6 +28,9 @@ interface V2MatchItem {
     [key: string]: unknown;
   };
 }
+
+/** Challonge accepts large rosters safely if we bulk-add in chunks. */
+const BULK_PARTICIPANTS_CHUNK = 100;
 
 @Injectable()
 export class ChallongeService {
@@ -86,10 +89,13 @@ export class ChallongeService {
     }
   }
 
+  /**
+   * One bulk_add POST. Prefer `bulkAddParticipantsAll` when many teams participate.
+   */
   async bulkAddParticipants(
     url: string,
-    participants: { name: string; seed: number }[],
-  ): Promise<{ name: string; id: number }[]> {
+    participants: { name: string; seed: number; misc?: string }[],
+  ): Promise<{ name: string; id: number; misc: string | null }[]> {
     try {
       const resp = await firstValueFrom(
         this.http.post<{ data: V2ParticipantItem[] }>(
@@ -103,9 +109,11 @@ export class ChallongeService {
           { headers: this.headers },
         ),
       );
-      return resp.data.data.map((p) => ({
+      const rows = resp.data?.data ?? [];
+      return rows.map((p) => ({
         name: p.attributes.name,
         id: Number(p.id),
+        misc: p.attributes.misc ?? null,
       }));
     } catch (err) {
       this.logger.error('bulkAddParticipants failed', err);
@@ -115,7 +123,24 @@ export class ChallongeService {
     }
   }
 
-  async listParticipants(url: string): Promise<{ id: number; name: string }[]> {
+  /** Batched bulk_add — avoids truncation / payload limits when many seeds are sent at once. */
+  async bulkAddParticipantsAll(
+    url: string,
+    participants: { name: string; seed: number; misc?: string }[],
+  ): Promise<{ name: string; id: number; misc: string | null }[]> {
+    const out: { name: string; id: number; misc: string | null }[] = [];
+    for (let i = 0; i < participants.length; i += BULK_PARTICIPANTS_CHUNK) {
+      const chunk = participants.slice(i, i + BULK_PARTICIPANTS_CHUNK);
+      if (chunk.length === 0) continue;
+      const created = await this.bulkAddParticipants(url, chunk);
+      out.push(...created);
+    }
+    return out;
+  }
+
+  async listParticipants(
+    url: string,
+  ): Promise<{ id: number; name: string; misc: string | null }[]> {
     try {
       const resp = await firstValueFrom(
         this.http.get<{ data: V2ParticipantItem[] }>(
@@ -126,6 +151,7 @@ export class ChallongeService {
       return resp.data.data.map((p) => ({
         id: Number(p.id),
         name: p.attributes.name,
+        misc: p.attributes.misc ?? null,
       }));
     } catch (err) {
       this.logger.error('listParticipants failed', err);
@@ -224,7 +250,14 @@ export class ChallongeService {
     }
 
     return matches
-      .filter((m) => (m.attributes.points_by_participant ?? []).length >= 2)
+      .filter((m) => {
+        const pts = m.attributes.points_by_participant ?? [];
+        if (pts.length < 2) return false;
+        return pts.every(
+          (slot) =>
+            typeof slot.participant_id === 'number' && slot.participant_id > 0,
+        );
+      })
       .map((m) => {
         const [p1, p2] = m.attributes.points_by_participant;
         return {

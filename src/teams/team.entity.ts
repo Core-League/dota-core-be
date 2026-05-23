@@ -55,6 +55,9 @@ export class Team {
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;
 
+  @Column({ nullable: true, type: 'timestamptz' })
+  disbandedAt: Date | null;
+
   @ManyToMany(() => Player)
   @JoinTable({
     name: 'team_main_players',

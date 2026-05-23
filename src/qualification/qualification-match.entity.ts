@@ -17,13 +17,13 @@ export class QualificationMatch {
   @JoinColumn({ name: 'qualificationId' })
   qualification: Qualification;
 
-  @ManyToOne(() => Team, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => Team, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'teamAId' })
-  teamA: Team;
+  teamA: Team | null;
 
-  @ManyToOne(() => Team, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => Team, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'teamBId' })
-  teamB: Team;
+  teamB: Team | null;
 
   @ManyToOne(() => Team, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'winnerId' })

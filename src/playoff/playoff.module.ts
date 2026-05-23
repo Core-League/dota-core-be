@@ -6,13 +6,14 @@ import { Dota2Module } from '../dota2/dota2.module';
 import { TeamsModule } from '../teams/teams.module';
 import { PlayoffMatch } from './playoff-match.entity';
 import { PlayoffMatchRepository } from './playoff-match.repository';
+import { PlayoffLeagueFixture } from './playoff-league-fixture.entity';
 import { Playoff } from './playoff.entity';
 import { PlayoffRepository } from './playoff.repository';
 import { PlayoffService } from './playoff.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Playoff, PlayoffMatch]),
+    TypeOrmModule.forFeature([Playoff, PlayoffMatch, PlayoffLeagueFixture]),
     ChallongeModule,
     Dota2Module,
     TeamsModule,

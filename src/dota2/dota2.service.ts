@@ -104,6 +104,15 @@ export class Dota2Service {
 
   constructor(private readonly http: HttpService) {}
 
+  /**
+   * True when DOTA_* env vars are present for league POST + tournament page scrape.
+   * When false, playoff/qual fixtures skip Dota league calls (Challonge still works).
+   */
+  isLeagueApiConfigured(): boolean {
+    const oauthToken = process.env.DOTA_OAUTH_TOKEN ?? '';
+    return Boolean(this.leagueId && this.sessionId && oauthToken.length > 0);
+  }
+
   private get leagueId(): string {
     return process.env.DOTA_LEAGUE_ID ?? '';
   }
@@ -335,6 +344,46 @@ export class Dota2Service {
       `Resolved round-robin nodeGroupId=${id} inside NodeGroup${containingNodeGroupId}`,
     );
     return id;
+  }
+
+  /**
+   * RR-style pair node under organisational parent (same sequence as qualification join).
+   * Returns Dota RR nodeGroupId for the fixture.
+   */
+  async createTwoTeamFixtureNode(
+    containingOrganizationalGroupId: string,
+    dotaTeamIdA: string,
+    dotaTeamIdB: string,
+  ): Promise<string> {
+    await this.addNodeGroup({
+      nodeGroupId: '',
+      nodeGroupType: 2,
+      teamCount: 2,
+      containingNodeGroupId: containingOrganizationalGroupId,
+      phase: 0,
+      defaultNodeType: 1,
+    });
+    let matchNodeGroupId: string | undefined;
+    try {
+      matchNodeGroupId = await this.resolveRoundRobinNodeGroupId(
+        containingOrganizationalGroupId,
+      );
+      await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdA);
+      await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdB);
+      return matchNodeGroupId;
+    } catch (err) {
+      if (matchNodeGroupId) {
+        try {
+          await this.removeNodeGroup(matchNodeGroupId);
+        } catch (removeErr) {
+          this.logger.warn(
+            `removeNodeGroup failed for orphan RR node ${matchNodeGroupId}`,
+            removeErr,
+          );
+        }
+      }
+      throw err;
+    }
   }
 
   // ── OpenDota ─────────────────────────────────────────────────────────────

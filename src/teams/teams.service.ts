@@ -193,13 +193,22 @@ export class TeamsService {
   async remove(id: string): Promise<void> {
     const team = await this.teamsRepo.findOneById(id);
     if (!team) throw new NotFoundException('Команду не знайдено');
+    if (team.disbandedAt) throw new NotFoundException('Команду вже розпущено');
     const captainId = team.captain?.id;
     const captainDiscordId = team.captain?.discordId ?? null;
     const { discordRoleId, discordChannelId } = team;
 
     await this.dataSource.transaction(async (manager) => {
       await this.resetPlayersTeamIdColumn(id, manager);
-      await manager.remove(team);
+      await manager.query(`DELETE FROM "tournament_team" WHERE "teamId" = $1`, [
+        id,
+      ]);
+      await manager.query(
+        `DELETE FROM "tournament_playoff_team" WHERE "teamId" = $1`,
+        [id],
+      );
+      team.disbandedAt = new Date();
+      await manager.save(team);
     });
 
     if (captainId) {
@@ -232,27 +241,56 @@ export class TeamsService {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) throw new NotFoundException('Команду не знайдено');
 
-    const isAdmin = actorPlayerId === '__admin__';
+    const actorPlayer = await this.dataSource.getRepository(Player).findOne({
+      where: { id: actorPlayerId },
+      relations: ['roles'],
+    });
+    const isAdmin = (actorPlayer?.roles ?? []).some((r) => r.isAdminRole);
+
     if (!isAdmin && team.captain?.id !== actorPlayerId) {
       throw new ForbiddenException(
         'Тільки капітан або адмін може передати капітанство',
       );
     }
 
-    const newCaptain = (team.mainPlayers ?? []).find(
-      (p) => p.id === newCaptainPlayerId,
-    );
-    if (!newCaptain) {
-      throw new BadRequestException(
-        'Новий капітан повинен бути основним гравцем команди',
-      );
-    }
     if (newCaptainPlayerId === team.captain?.id) {
       throw new BadRequestException('Цей гравець вже є капітаном');
     }
 
+    const mainPlayers = team.mainPlayers ?? [];
+    const reservedPlayers = team.reservedPlayers ?? [];
+
+    const newCaptainInMain = mainPlayers.find(
+      (p) => p.id === newCaptainPlayerId,
+    );
+    const newCaptainInReserved = reservedPlayers.find(
+      (p) => p.id === newCaptainPlayerId,
+    );
+    const newCaptain = newCaptainInMain ?? newCaptainInReserved;
+
+    if (!newCaptain) {
+      throw new BadRequestException(
+        'Новий капітан повинен бути гравцем команди',
+      );
+    }
+
     const oldCaptain = team.captain;
-    const oldCaptainDiscordId = team.captain?.discordId ?? null;
+    const oldCaptainDiscordId = oldCaptain?.discordId ?? null;
+
+    if (newCaptainInReserved) {
+      // Move new captain from reserved to main, old captain from main to reserved
+      team.mainPlayers = [
+        ...mainPlayers.filter((p) => p.id !== oldCaptain?.id),
+        newCaptain,
+      ];
+      team.reservedPlayers = oldCaptain
+        ? [
+            ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
+            oldCaptain,
+          ]
+        : reservedPlayers.filter((p) => p.id !== newCaptainPlayerId);
+    }
+
     team.captain = newCaptain;
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(teamId);
@@ -614,7 +652,7 @@ export class TeamsService {
   }
 
   private mapTeamResponse(team: Team): TeamResponseDto {
-    if (!team.captain) {
+    if (!team.captain && !team.disbandedAt) {
       throw new InternalServerErrorException('Команда без капітана');
     }
     return {
@@ -625,7 +663,10 @@ export class TeamsService {
       isVerified: team.isVerified,
       isPlayingTournament: team.isPlayingTournament,
       verifiedAt: team.verifiedAt ?? null,
-      captain: this.mapPlayerForTeamResponse(team.captain),
+      disbandedAt: team.disbandedAt ?? null,
+      captain: team.captain
+        ? this.mapPlayerForTeamResponse(team.captain)
+        : null,
       coach: team.coach ? this.mapPlayerForTeamResponse(team.coach) : null,
       mainPlayers: (team.mainPlayers ?? []).map((p) =>
         this.mapPlayerForTeamResponse(p),

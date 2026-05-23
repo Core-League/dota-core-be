@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -127,12 +128,35 @@ export class QualificationService {
     );
   }
 
+  private async playerHasAdminRole(playerId: string): Promise<boolean> {
+    const row = await this.dataSource.getRepository(Player).findOne({
+      where: { id: playerId },
+      relations: ['roles'],
+    });
+    return (row?.roles ?? []).some((r) => r.isAdminRole);
+  }
+
   async joinTournament(
     tournamentId: string,
     playerId: string,
-    overrideTeamId?: string,
+    requestedTeamId?: string,
   ): Promise<void> {
-    const bypass = process.env.BYPASS_TEAM_VERIFICATION === 'true';
+    const bypassEnv = process.env.BYPASS_TEAM_VERIFICATION === 'true';
+    const isAdmin = await this.playerHasAdminRole(playerId);
+
+    if (requestedTeamId && !bypassEnv && !isAdmin) {
+      throw new ForbiddenException(
+        'Лише адміністратор може вказувати teamId при приєднанні команди до турніру',
+      );
+    }
+
+    const useExplicitTeamId = !!(requestedTeamId && (bypassEnv || isAdmin));
+
+    /**
+     * Explicit roster attach (admin `teamId` or dev bypass) skips normal captain rules:
+     * verification, Dota slot ID, roster validation, substitute rules, division match.
+     */
+    const bypassParticipantChecks = bypassEnv || useExplicitTeamId;
 
     const tournament = await this.dataSource.getRepository(Tournament).findOne({
       where: { id: tournamentId },
@@ -141,54 +165,66 @@ export class QualificationService {
     if (!tournament) throw new NotFoundException('Турнір не знайдено');
 
     if (
-      !bypass &&
+      !bypassEnv &&
+      !(useExplicitTeamId && isAdmin) &&
       tournament.tournamentStatus !== TournamentStatus.QUALIFICATIONS
     ) {
       throw new BadRequestException('Реєстрація на турнір закрита');
     }
 
     const teamRepo = this.dataSource.getRepository(Team);
-    const team =
-      bypass && overrideTeamId
-        ? await teamRepo.findOne({
-            where: { id: overrideTeamId },
-            relations: [
-              'captain',
-              'mainPlayers',
-              'reservedPlayers',
-              'tournaments',
-            ],
-          })
-        : await teamRepo.findOne({
-            where: { captain: { id: playerId } },
-            relations: [
-              'captain',
-              'mainPlayers',
-              'reservedPlayers',
-              'tournaments',
-            ],
-          });
+    const team = useExplicitTeamId
+      ? await teamRepo.findOne({
+          where: { id: requestedTeamId },
+          relations: [
+            'captain',
+            'mainPlayers',
+            'reservedPlayers',
+            'tournaments',
+          ],
+        })
+      : await teamRepo.findOne({
+          where: { captain: { id: playerId } },
+          relations: [
+            'captain',
+            'mainPlayers',
+            'reservedPlayers',
+            'tournaments',
+          ],
+        });
 
     if (!team) {
-      throw new ForbiddenException(
-        bypass && overrideTeamId
-          ? 'Команду не знайдено'
-          : 'Тільки капітан команди може приєднатися до турніру',
-      );
+      throw useExplicitTeamId
+        ? new NotFoundException('Команду не знайдено')
+        : new ForbiddenException(
+            'Тільки капітан команди може приєднатися до турніру',
+          );
     }
 
-    const hasOverlap = (team.tournaments ?? []).some(
-      (t) =>
-        t.tournamentStartsAt < tournament.tournamentEndsAt &&
-        t.tournamentEndsAt > tournament.tournamentStartsAt,
+    const alreadyInThisTournament = (team.tournaments ?? []).some(
+      (t) => t.id === tournament.id,
     );
-    if (hasOverlap) {
-      throw new BadRequestException(
-        'Команда вже бере участь у турнірі, що перетинається за часом',
-      );
+    if (alreadyInThisTournament) {
+      throw new ConflictException('Команда вже зареєстрована на цей турнір');
     }
 
-    if (!bypass) {
+    /** Captains obey time-overlap restriction; admins attaching by teamId bypass it */
+    if (!useExplicitTeamId) {
+      const hasOverlappingOtherTournament = (team.tournaments ?? []).some(
+        (t) =>
+          t.id !== tournament.id &&
+          t.tournamentStartsAt.getTime() <
+            tournament.tournamentEndsAt.getTime() &&
+          t.tournamentEndsAt.getTime() >
+            tournament.tournamentStartsAt.getTime(),
+      );
+      if (hasOverlappingOtherTournament) {
+        throw new ConflictException(
+          'Команда вже бере участь у турнірі, що перетинається за часом',
+        );
+      }
+    }
+    if (!bypassParticipantChecks) {
       if (!team.isVerified) {
         throw new BadRequestException('Команда не верифікована');
       }
@@ -240,7 +276,7 @@ export class QualificationService {
     ) {
       const currentCount = (tournament.teams ?? []).length;
       if (currentCount >= tournament.tournamentSlots) {
-        throw new BadRequestException('Усі місця в турнірі зайняті');
+        throw new ConflictException('Усі місця в турнірі зайняті');
       }
     }
 
@@ -328,28 +364,34 @@ export class QualificationService {
   async leaveTournament(
     tournamentId: string,
     playerId: string,
-    overrideTeamId?: string,
+    requestedTeamId?: string,
   ): Promise<void> {
-    const bypass = process.env.BYPASS_TEAM_VERIFICATION === 'true';
+    const bypassEnv = process.env.BYPASS_TEAM_VERIFICATION === 'true';
+    const isAdmin = await this.playerHasAdminRole(playerId);
+
+    if (requestedTeamId && !bypassEnv && !isAdmin) {
+      throw new ForbiddenException(
+        'Лише адміністратор може вказувати teamId при виходу команди з турніру',
+      );
+    }
+
+    const useExplicitTeamId = !!(requestedTeamId && (bypassEnv || isAdmin));
 
     const teamRepo = this.dataSource.getRepository(Team);
-    const team =
-      bypass && overrideTeamId
-        ? await teamRepo.findOne({
-            where: { id: overrideTeamId },
-            relations: ['captain', 'mainPlayers', 'tournaments'],
-          })
-        : await teamRepo.findOne({
-            where: { captain: { id: playerId } },
-            relations: ['captain', 'mainPlayers', 'tournaments'],
-          });
+    const team = useExplicitTeamId
+      ? await teamRepo.findOne({
+          where: { id: requestedTeamId },
+          relations: ['captain', 'mainPlayers', 'tournaments'],
+        })
+      : await teamRepo.findOne({
+          where: { captain: { id: playerId } },
+          relations: ['captain', 'mainPlayers', 'tournaments'],
+        });
 
     if (!team) {
-      throw new ForbiddenException(
-        bypass && overrideTeamId
-          ? 'Команду не знайдено'
-          : 'Тільки капітан команди може залишити турнір',
-      );
+      throw useExplicitTeamId
+        ? new NotFoundException('Команду не знайдено')
+        : new ForbiddenException('Тільки капітан команди може залишити турнір');
     }
 
     if (!team.tournaments?.some((t) => t.id === tournamentId)) {
@@ -364,6 +406,8 @@ export class QualificationService {
     const unplayedMatches = (qualification.matches ?? []).filter(
       (m) =>
         m.dotaMatchId === null &&
+        m.teamA != null &&
+        m.teamB != null &&
         (m.teamA.id === team.id || m.teamB.id === team.id),
     );
 
@@ -429,6 +473,12 @@ export class QualificationService {
     if (!qualMatch) {
       throw new NotFoundException(
         'Кваліфікаційний матч для вказаних команд не знайдено або результат вже подано',
+      );
+    }
+
+    if (!qualMatch.teamA || !qualMatch.teamB) {
+      throw new BadRequestException(
+        'Кваліфікаційний слот недоступний: запис про одну з команд видалено',
       );
     }
 
@@ -564,6 +614,12 @@ export class QualificationService {
     match: OpenDotaMatch,
     qualMatch: QualificationMatch,
   ): void {
+    if (!qualMatch.teamA || !qualMatch.teamB) {
+      throw new UnprocessableEntityException(
+        'Кваліфікаційний слот пошкоджено — одну з команд видалено',
+      );
+    }
+
     if (match.human_players !== 10) {
       throw new UnprocessableEntityException('У лобі матчу було не 10 гравців');
     }

@@ -20,8 +20,10 @@ import { PlayoffMatch } from './playoff-match.entity';
 import { PlayoffMatchRepository } from './playoff-match.repository';
 import { PlayoffRepository } from './playoff.repository';
 import { PlayoffResponseDto } from './dto/playoff-response.dto';
+import { findEligibleQualificationTeamIds } from '../tournaments/tournament-playoff-team.eligibility';
 import { TechLossPlayoffDto } from './dto/tech-loss-playoff.dto';
 import { OpenPlayoffMatchDto } from './dto/open-playoff-match.dto';
+import { PlayoffLeagueFixture } from './playoff-league-fixture.entity';
 import { Playoff } from './playoff.entity';
 
 @Injectable()
@@ -39,7 +41,7 @@ export class PlayoffService {
 
   async startPlayoff(
     tournamentId: string,
-    teamIds: string[],
+    requestedTeamIds: string[] = [],
   ): Promise<PlayoffResponseDto> {
     const tournament = await this.dataSource
       .getRepository(Tournament)
@@ -49,56 +51,69 @@ export class PlayoffService {
     const existing = await this.playoffRepo.findByTournamentId(tournamentId);
     if (existing) throw new ConflictException('Playoff already started');
 
-    const verifiedTeamIds =
-      await this.findVerifiedQualificationTeamIds(tournamentId);
-    const invalidIds = teamIds.filter((id) => !verifiedTeamIds.includes(id));
-    if (invalidIds.length) {
+    const playoffTeamIds = await this.mergeStagedPlayoffTeamsWithRequested(
+      tournamentId,
+      requestedTeamIds,
+    );
+    if (playoffTeamIds.length === 0) {
       throw new BadRequestException(
-        `These teams have no verified qualification matches: ${invalidIds.join(', ')}`,
+        'No playoff participants — stage teams via POST /tournaments/:id/playoff/teams and/or send teamIds in the start payload.',
       );
     }
 
-    const seeds = await this.computeSeeds(tournamentId, teamIds);
+    const eligibleTeamIds = await findEligibleQualificationTeamIds(
+      this.dataSource,
+      tournamentId,
+    );
+    const eligibleSet = new Set(eligibleTeamIds);
+    const invalidIds = playoffTeamIds.filter((id) => !eligibleSet.has(id));
+    if (invalidIds.length) {
+      throw new BadRequestException(
+        `Teams must be registered for this tournament or present in its qualification bracket: ${invalidIds.join(', ')}`,
+      );
+    }
 
-    const slug = `core_${tournamentId.replace(/-/g, '').slice(0, 8)}`;
+    const seeds = await this.computeSeeds(tournamentId, playoffTeamIds);
+
+    const slug = `core_${tournamentId.replace(/-/g, '').slice(0, 8)}_${Date.now().toString(36)}`;
     const { id: challongeTournamentId, url: challongeUrl } =
       await this.challonge.createTournament(tournament.name, slug);
 
     const teamRepo = this.dataSource.getRepository(Team);
-    const teams = await teamRepo.find({ where: { id: In(teamIds) } });
+    const teams = await teamRepo.find({
+      where: { id: In(playoffTeamIds) },
+      relations: ['captain'],
+    });
     const teamMap = new Map(teams.map((t) => [t.id, t]));
 
-    const participants = seeds.map((s) => ({
-      name: teamMap.get(s.teamId)!.name,
-      seed: s.seed,
-    }));
-
-    const createdParticipants = await this.challonge.bulkAddParticipants(
+    const challongeRows = this.buildChallongeBulkPayload(seeds, teamMap);
+    const createdParticipants = await this.challonge.bulkAddParticipantsAll(
       challongeUrl,
-      participants,
+      challongeRows,
+    );
+    const challongeIdByTeamId = this.resolveChallongeIdsByTeam(
+      challongeRows,
+      createdParticipants,
     );
 
     const tptRepo = this.dataSource.getRepository(TournamentPlayoffTeam);
 
     // Insert TournamentPlayoffTeam rows (idempotent — orIgnore if pre-staged)
-    if (teamIds.length > 0) {
-      await tptRepo
-        .createQueryBuilder()
-        .insert()
-        .orIgnore()
-        .values(teamIds.map((teamId) => ({ tournamentId, teamId })))
-        .execute();
-    }
+    await tptRepo
+      .createQueryBuilder()
+      .insert()
+      .orIgnore()
+      .values(playoffTeamIds.map((teamId) => ({ tournamentId, teamId })))
+      .execute();
 
-    // Use index-based matching: bulkAddParticipants returns participants in the
-    // same order as the input array, so createdParticipants[i] corresponds to seeds[i].
-    for (let i = 0; i < createdParticipants.length; i++) {
-      const seed = seeds[i];
-      if (!seed) continue;
-      await tptRepo.update(
-        { tournamentId, teamId: seed.teamId },
-        { challongeParticipantId: String(createdParticipants[i].id) },
-      );
+    for (const { teamId } of seeds) {
+      const challongeId = challongeIdByTeamId.get(teamId);
+      if (challongeId !== undefined) {
+        await tptRepo.update(
+          { tournamentId, teamId },
+          { challongeParticipantId: String(challongeId) },
+        );
+      }
     }
 
     // Save Playoff entity early so the idempotency guard fires on retry
@@ -112,6 +127,17 @@ export class PlayoffService {
     await this.playoffRepo.save(playoff);
 
     await this.challonge.startTournament(challongeUrl);
+
+    const persistedPlayoff = await this.dataSource
+      .getRepository(Playoff)
+      .findOneOrFail({ where: { id: playoff.id } });
+
+    await this.bootstrapDotaLeagueMirroring(
+      persistedPlayoff,
+      tournamentId,
+      challongeUrl,
+      playoffTeamIds,
+    );
 
     await this.dataSource
       .getRepository(Tournament)
@@ -232,6 +258,8 @@ export class PlayoffService {
       }
     }
 
+    await this.maybeSyncPlayoffFixturesIntoDotaWithBackoff(tournamentId);
+
     return match;
   }
 
@@ -277,24 +305,25 @@ export class PlayoffService {
       activeRows.map((r) => r.teamId),
     );
 
-    const participants = seeds.map((s) => {
-      const row = activeRows.find((r) => r.teamId === s.teamId)!;
-      return { name: row.team.name, seed: s.seed };
-    });
-
-    const createdParticipants = await this.challonge.bulkAddParticipants(
+    const teamMap = new Map(activeRows.map((r) => [r.teamId, r.team]));
+    const challongeRows = this.buildChallongeBulkPayload(seeds, teamMap);
+    const createdParticipants = await this.challonge.bulkAddParticipantsAll(
       newChallongeUrl,
-      participants,
+      challongeRows,
+    );
+    const challongeIdByTeamId = this.resolveChallongeIdsByTeam(
+      challongeRows,
+      createdParticipants,
     );
 
-    // Index-based: createdParticipants[i] corresponds to seeds[i] (same order).
-    for (let i = 0; i < createdParticipants.length; i++) {
-      const seed = seeds[i];
-      if (!seed) continue;
-      await tptRepo.update(
-        { tournamentId, teamId: seed.teamId },
-        { challongeParticipantId: String(createdParticipants[i].id) },
-      );
+    for (const row of activeRows) {
+      const challongeId = challongeIdByTeamId.get(row.teamId);
+      if (challongeId !== undefined) {
+        await tptRepo.update(
+          { tournamentId, teamId: row.teamId },
+          { challongeParticipantId: String(challongeId) },
+        );
+      }
     }
 
     await this.challonge.startTournament(newChallongeUrl);
@@ -309,9 +338,11 @@ export class PlayoffService {
       playoff.id,
     );
     for (const m of remainingMatches) {
+      if (!m.teamAId || !m.teamBId || !m.winnerId) continue;
+
       const rowA = idMap.get(m.teamAId);
       const rowB = idMap.get(m.teamBId);
-      const winnerRow = idMap.get(m.winnerId ?? '');
+      const winnerRow = idMap.get(m.winnerId);
       if (!rowA || !rowB || !winnerRow) continue;
 
       const challongeMatch = await this.challonge.findOpenMatch(
@@ -346,6 +377,17 @@ export class PlayoffService {
       );
     }
 
+    const rebound = await this.playoffRepo.findByTournamentId(tournamentId);
+    if (rebound) {
+      const cleared = await this.discardPlayoffLeagueMirroring(rebound);
+      await this.bootstrapDotaLeagueMirroring(
+        cleared,
+        tournamentId,
+        cleared.challongeUrl,
+        refreshedRows.map((r) => r.teamId),
+      );
+    }
+
     return this.buildPlayoffResponse(newEmbedUrl, tournamentId);
   }
 
@@ -369,12 +411,29 @@ export class PlayoffService {
       challongeParticipants.map((p) => [p.name, String(p.id)]),
     );
 
+    const challongeNameForTeam = (
+      tid: string,
+      displayName: string,
+    ): string | undefined => {
+      const base = displayName.trim() || `Team_${tid.slice(0, 8)}`;
+      let dup = false;
+      for (const row of activeRows) {
+        if (row.teamId === tid) continue;
+        const peer = row.team.name.trim() || `Team_${row.teamId.slice(0, 8)}`;
+        if (peer === base) dup = true;
+      }
+      const disambiguated = dup ? `${base} [${tid.slice(0, 8)}]` : base;
+      return (
+        nameToChallongeId.get(disambiguated) ?? nameToChallongeId.get(base)
+      );
+    };
+
     const challongeIdToTeam = new Map<
       string,
       { id: string; name: string; logoUrl: string | null }
     >();
     for (const row of activeRows) {
-      const cid = nameToChallongeId.get(row.team.name);
+      const cid = challongeNameForTeam(row.teamId, row.team.name);
       if (!cid) continue;
       challongeIdToTeam.set(cid, {
         id: row.teamId,
@@ -526,6 +585,8 @@ export class PlayoffService {
     });
     await this.playoffMatchRepo.save(match);
 
+    await this.maybeSyncPlayoffFixturesIntoDotaWithBackoff(tournamentId);
+
     return this.buildPlayoffResponse(playoff.challongeEmbedUrl, tournamentId);
   }
 
@@ -595,28 +656,32 @@ export class PlayoffService {
       activeRows.map((r) => r.teamId),
     );
 
-    const participants = seeds.map((s) => {
-      const row = activeRows.find((r) => r.teamId === s.teamId)!;
-      return { name: row.team.name, seed: s.seed };
-    });
-
-    const createdParticipants = await this.challonge.bulkAddParticipants(
+    const teamMap = new Map(activeRows.map((r) => [r.teamId, r.team]));
+    const challongeRows = this.buildChallongeBulkPayload(seeds, teamMap);
+    const createdParticipants = await this.challonge.bulkAddParticipantsAll(
       newChallongeUrl,
-      participants,
+      challongeRows,
+    );
+    const challongeIdByTeamId = this.resolveChallongeIdsByTeam(
+      challongeRows,
+      createdParticipants,
     );
 
-    // Build participant ID updates in memory before persisting.
-    // Index-based: createdParticipants[i] corresponds to seeds[i] (same order).
     const participantUpdates: Array<{
       teamId: string;
       challongeParticipantId: string;
     }> = [];
-    for (let i = 0; i < createdParticipants.length; i++) {
-      const seed = seeds[i];
-      if (!seed) continue;
+    for (const s of seeds) {
+      const cid = challongeIdByTeamId.get(s.teamId);
+      if (cid === undefined) {
+        this.logger.warn(
+          `rebuildChallongeBracket: no Challonge participant id for team ${s.teamId}`,
+        );
+        continue;
+      }
       participantUpdates.push({
-        teamId: seed.teamId,
-        challongeParticipantId: String(createdParticipants[i].id),
+        teamId: s.teamId,
+        challongeParticipantId: String(cid),
       });
     }
 
@@ -644,9 +709,11 @@ export class PlayoffService {
     const matchIdUpdates: Array<{ id: string; challongeMatchId: string }> = [];
 
     for (const m of remainingMatches) {
+      if (!m.teamAId || !m.teamBId || !m.winnerId) continue;
+
       const rowA = idMap.get(m.teamAId);
       const rowB = idMap.get(m.teamBId);
-      const winRow = idMap.get(m.winnerId ?? '');
+      const winRow = idMap.get(m.winnerId);
       if (!rowA || !rowB || !winRow) continue;
 
       try {
@@ -703,6 +770,18 @@ export class PlayoffService {
       );
     }
 
+    const playoffFresh =
+      await this.playoffRepo.findByTournamentId(tournamentId);
+    if (playoffFresh) {
+      const cleared = await this.discardPlayoffLeagueMirroring(playoffFresh);
+      await this.bootstrapDotaLeagueMirroring(
+        cleared,
+        tournamentId,
+        cleared.challongeUrl,
+        activeRows.map((r) => r.teamId),
+      );
+    }
+
     return this.buildPlayoffResponse(newEmbedUrl, tournamentId);
   }
 
@@ -736,37 +815,113 @@ export class PlayoffService {
     return { embedUrl, teams };
   }
 
-  private async findVerifiedQualificationTeamIds(
+  /**
+   * Staged playoff roster (tournament_playoff_team) is merged with any ids from the
+   * start request so the bracket always includes every team the admin pre-selected.
+   */
+  private async mergeStagedPlayoffTeamsWithRequested(
     tournamentId: string,
+    requestedTeamIds: string[],
   ): Promise<string[]> {
-    const result: { teamId: string }[] = await this.dataSource.query(
-      `
-      SELECT DISTINCT qm."teamAId" AS "teamId"
-      FROM qualification_match qm
-      JOIN qualification q ON q.id = qm."qualificationId"
-      WHERE q."tournamentId" = $1 AND qm."winnerId" IS NOT NULL
-      UNION
-      SELECT DISTINCT qm."teamBId"
-      FROM qualification_match qm
-      JOIN qualification q ON q.id = qm."qualificationId"
-      WHERE q."tournamentId" = $1 AND qm."winnerId" IS NOT NULL
-      `,
-      [tournamentId],
-    );
-    return result.map((r) => r.teamId);
+    const staged = await this.dataSource
+      .getRepository(TournamentPlayoffTeam)
+      .find({
+        where: { tournamentId, isDisqualified: false },
+        select: ['teamId'],
+        order: { id: 'ASC' },
+      });
+
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const pushUnique = (id: string) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      out.push(id);
+    };
+
+    for (const row of staged) pushUnique(row.teamId);
+    for (const id of requestedTeamIds) pushUnique(id);
+    return out;
+  }
+
+  /**
+   * Uses `misc` (Core team UUID) on Challonge plus disambiguated display names so
+   * duplicate team labels or API name mangling cannot drop participant ids.
+   */
+  private buildChallongeBulkPayload(
+    seeds: { teamId: string; seed: number }[],
+    teamById: Map<string, Team>,
+  ): { name: string; seed: number; misc: string }[] {
+    const bases = seeds.map((s) => {
+      const t = teamById.get(s.teamId);
+      const raw = (t?.name ?? '').trim();
+      const base = raw.length > 0 ? raw : `Team_${s.teamId.slice(0, 8)}`;
+      return { s, base };
+    });
+
+    const freq = new Map<string, number>();
+    for (const { base } of bases) {
+      freq.set(base, (freq.get(base) ?? 0) + 1);
+    }
+
+    return bases.map(({ s, base }) => {
+      const dup = freq.get(base)! > 1;
+      const name = dup ? `${base} [${s.teamId.slice(0, 8)}]` : base;
+      return { name, seed: s.seed, misc: s.teamId };
+    });
+  }
+
+  private resolveChallongeIdsByTeam(
+    rows: { name: string; misc: string }[],
+    created: { id: number; name: string; misc: string | null }[],
+  ): Map<string, number> {
+    const norm = (m: string | null | undefined) => (m ?? '').trim();
+
+    const byMisc = new Map<string, number>();
+    for (const c of created) {
+      const k = norm(c.misc);
+      if (k) byMisc.set(k, c.id);
+    }
+
+    const byName = new Map<string, number>();
+    for (const c of created) byName.set(c.name, c.id);
+
+    const out = new Map<string, number>();
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const id =
+        byMisc.get(r.misc.trim()) ?? byName.get(r.name) ?? created[i]?.id;
+      if (id !== undefined) {
+        out.set(r.misc, id);
+      } else {
+        this.logger.warn(
+          `Challonge participant not resolved for Core team ${r.misc} display "${r.name}"`,
+        );
+      }
+    }
+    return out;
   }
 
   private async computeSeeds(
     tournamentId: string,
     teamIds: string[],
   ): Promise<{ teamId: string; seed: number }[]> {
+    const uniq = [...new Set(teamIds)];
     const teamRepo = this.dataSource.getRepository(Team);
     const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
 
     const teams = await teamRepo.find({
-      where: { id: In(teamIds) },
+      where: { id: In(uniq) },
       relations: ['captain'],
     });
+
+    if (teams.length !== uniq.length) {
+      const found = new Set(teams.map((t) => t.id));
+      const missing = uniq.filter((id) => !found.has(id));
+      throw new BadRequestException(
+        `Playoff references unknown or removed teams: ${missing.join(', ')}`,
+      );
+    }
 
     const teamsWithPoints = await Promise.all(
       teams.map(async (team) => {
@@ -784,5 +939,222 @@ export class PlayoffService {
     teamsWithPoints.sort((a, b) => b.points - a.points);
 
     return teamsWithPoints.map((t, i) => ({ teamId: t.teamId, seed: i + 1 }));
+  }
+
+  private async discardPlayoffLeagueMirroring(
+    playoff: Playoff,
+  ): Promise<Playoff> {
+    await this.dataSource.getRepository(PlayoffLeagueFixture).delete({
+      playoffId: playoff.id,
+    });
+    playoff.dotaPlayoffContainingNodeGroupId = null;
+    return this.playoffRepo.save(playoff);
+  }
+
+  /**
+   * After Challonge playoff starts or bracket is recreated: organisational node in Dota league,
+   * register playoff teams under it, RR-style pair fixtures for current open Challonge slots.
+   */
+  private async bootstrapDotaLeagueMirroring(
+    playoffRow: Playoff,
+    tournamentId: string,
+    challongeUrl: string,
+    coreTeamIds: string[],
+  ): Promise<void> {
+    if (!this.dota2.isLeagueApiConfigured()) {
+      this.logger.warn(
+        'Dota league API not configured (DOTA_* env) — skipping playoff league mirrors',
+      );
+      return;
+    }
+    try {
+      const playoff = await this.ensureDotaOrganizationalShell(playoffRow);
+      const shell = playoff.dotaPlayoffContainingNodeGroupId;
+      if (!shell) return;
+      await this.registerTeamsInPlayoffLeague(shell, coreTeamIds);
+      await this.syncOpenChallongeMatchesIntoLeague(
+        shell,
+        playoff.id,
+        tournamentId,
+        challongeUrl,
+      );
+    } catch (err) {
+      this.logger.warn(
+        'Dota league playoff mirror (bootstrap/sync) failed; Challonge state is unchanged.',
+        err,
+      );
+    }
+  }
+
+  private async maybeSyncPlayoffFixturesIntoDota(
+    tournamentId: string,
+  ): Promise<void> {
+    const playoff = await this.playoffRepo.findByTournamentId(tournamentId);
+    if (!playoff?.dotaPlayoffContainingNodeGroupId || !playoff.challongeUrl)
+      return;
+    if (!this.dota2.isLeagueApiConfigured()) return;
+
+    try {
+      await this.syncOpenChallongeMatchesIntoLeague(
+        playoff.dotaPlayoffContainingNodeGroupId,
+        playoff.id,
+        tournamentId,
+        playoff.challongeUrl,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Dota league sync for open Challonge fixtures failed (playoff=${playoff.id})`,
+        err,
+      );
+    }
+  }
+
+  /** Challonge can lag behind after report; second pass picks up upper-bracket slots. */
+  private async maybeSyncPlayoffFixturesIntoDotaWithBackoff(
+    tournamentId: string,
+  ): Promise<void> {
+    await this.maybeSyncPlayoffFixturesIntoDota(tournamentId);
+    await this.sleep(800);
+    await this.maybeSyncPlayoffFixturesIntoDota(tournamentId);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Map Challonge participant id → Dota pro team id. Prefer `misc` (Core team UUID) from the
+   * Challonge API so upper-bracket slots stay correct even when DB `challongeParticipantId` is stale.
+   */
+  private async buildChallongeParticipantIdToDotaTeamId(
+    tournamentId: string,
+    challongeUrl: string,
+  ): Promise<Map<string, string>> {
+    const tptRepo = this.dataSource.getRepository(TournamentPlayoffTeam);
+    const rows = await tptRepo.find({
+      where: { tournamentId, isDisqualified: false },
+      relations: ['team'],
+    });
+
+    const teamByCoreId = new Map(rows.map((r) => [r.teamId, r.team]));
+    const map = new Map<string, string>();
+
+    const participants = await this.challonge.listParticipants(challongeUrl);
+    for (const p of participants) {
+      const misc = (p.misc ?? '').trim();
+      if (!misc) continue;
+      const teamEntity = teamByCoreId.get(misc);
+      const dota = (teamEntity?.dotaTeamId ?? '').trim();
+      if (dota) map.set(String(p.id), dota);
+    }
+
+    for (const r of rows) {
+      const cid = (r.challongeParticipantId ?? '').trim();
+      const dota = (r.team?.dotaTeamId ?? '').trim();
+      if (!cid || !dota) continue;
+      if (!map.has(cid)) map.set(cid, dota);
+    }
+
+    return map;
+  }
+
+  private async ensureDotaOrganizationalShell(
+    playoff: Playoff,
+  ): Promise<Playoff> {
+    if (!this.dota2.isLeagueApiConfigured()) return playoff;
+    if (playoff.dotaPlayoffContainingNodeGroupId) return playoff;
+
+    await this.dota2.addNodeGroup({
+      nodeGroupId: '',
+      nodeGroupType: 1,
+      teamCount: 0,
+      containingNodeGroupId: '0',
+      phase: 2,
+      defaultNodeType: 0,
+    });
+    const id = await this.dota2.resolveOrganizationalNodeGroupId();
+    playoff.dotaPlayoffContainingNodeGroupId = id;
+    await this.playoffRepo.save(playoff);
+    return playoff;
+  }
+
+  private async registerTeamsInPlayoffLeague(
+    shellGroupId: string,
+    coreTeamIds: string[],
+  ): Promise<void> {
+    if (coreTeamIds.length === 0) return;
+
+    const teamRepo = this.dataSource.getRepository(Team);
+    const teams = await teamRepo.find({
+      where: { id: In(coreTeamIds) },
+    });
+
+    for (const team of teams) {
+      const dotaTeamId = (team.dotaTeamId ?? '').trim();
+      if (!dotaTeamId) {
+        this.logger.warn(
+          `Playoff league: skip team ${team.id} — no dotaTeamId registered`,
+        );
+        continue;
+      }
+      try {
+        await this.dota2.addNodeGroupTeam(shellGroupId, dotaTeamId);
+      } catch (err) {
+        this.logger.warn(
+          `addNodeGroupTeam failed for team ${team.id} in playoff shell`,
+          err,
+        );
+      }
+    }
+  }
+
+  private async syncOpenChallongeMatchesIntoLeague(
+    shellGroupId: string,
+    playoffId: string,
+    tournamentId: string,
+    challongeUrl: string,
+  ): Promise<void> {
+    const fixtureRepo = this.dataSource.getRepository(PlayoffLeagueFixture);
+
+    const challongeParticipantIdToDota =
+      await this.buildChallongeParticipantIdToDotaTeamId(
+        tournamentId,
+        challongeUrl,
+      );
+
+    const fixtures = await fixtureRepo.find({ where: { playoffId } });
+    const existingMatches = new Set(fixtures.map((f) => f.challongeMatchId));
+
+    const opens = await this.challonge.listOpenMatches(challongeUrl);
+
+    for (const m of opens) {
+      const dA = challongeParticipantIdToDota.get(String(m.participant1Id));
+      const dB = challongeParticipantIdToDota.get(String(m.participant2Id));
+      if (!dA || !dB || dA === dB) continue;
+
+      const mid = String(m.id);
+      if (existingMatches.has(mid)) continue;
+
+      try {
+        const nodeId = await this.dota2.createTwoTeamFixtureNode(
+          shellGroupId,
+          dA,
+          dB,
+        );
+        await fixtureRepo.save(
+          fixtureRepo.create({
+            playoffId,
+            challongeMatchId: mid,
+            dotaFixtureNodeGroupId: nodeId,
+          }),
+        );
+        existingMatches.add(mid);
+      } catch (err) {
+        this.logger.warn(
+          `Dota RR fixture create failed for Challonge match ${mid} (${dA} vs ${dB})`,
+          err,
+        );
+      }
+    }
   }
 }

@@ -4,7 +4,7 @@ import { IsOptional, IsUUID } from 'class-validator';
 export class JoinTournamentDto {
   @ApiPropertyOptional({
     description:
-      "Admin-only: join a specific team by ID instead of the requester's team",
+      'UUID команди для реєстрації вручну (адмін-панель). Дозволено лише JWT користувачу з адміністративною роллю; для dev також BYPASS_TEAM_VERIFICATION.',
   })
   @IsOptional()
   @IsUUID()
