@@ -770,7 +770,8 @@ export class PlayoffService {
       );
     }
 
-    const playoffFresh = await this.playoffRepo.findByTournamentId(tournamentId);
+    const playoffFresh =
+      await this.playoffRepo.findByTournamentId(tournamentId);
     if (playoffFresh) {
       const cleared = await this.discardPlayoffLeagueMirroring(playoffFresh);
       await this.bootstrapDotaLeagueMirroring(
@@ -940,7 +941,9 @@ export class PlayoffService {
     return teamsWithPoints.map((t, i) => ({ teamId: t.teamId, seed: i + 1 }));
   }
 
-  private async discardPlayoffLeagueMirroring(playoff: Playoff): Promise<Playoff> {
+  private async discardPlayoffLeagueMirroring(
+    playoff: Playoff,
+  ): Promise<Playoff> {
     await this.dataSource.getRepository(PlayoffLeagueFixture).delete({
       playoffId: playoff.id,
     });
@@ -1055,7 +1058,9 @@ export class PlayoffService {
     return map;
   }
 
-  private async ensureDotaOrganizationalShell(playoff: Playoff): Promise<Playoff> {
+  private async ensureDotaOrganizationalShell(
+    playoff: Playoff,
+  ): Promise<Playoff> {
     if (!this.dota2.isLeagueApiConfigured()) return playoff;
     if (playoff.dotaPlayoffContainingNodeGroupId) return playoff;
 

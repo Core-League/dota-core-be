@@ -96,7 +96,8 @@ export class TeamDeleteSetNullMatchFks1779640000000 implements MigrationInterfac
     `);
   }
 
-  public async down(queryRunner: QueryRunner): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public async down(_queryRunner: QueryRunner): Promise<void> {
     // Forward-only: reverting breaks if match rows contain NULL side references.
   }
 }

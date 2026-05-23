@@ -66,8 +66,11 @@ export class TeamResponseDto {
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   verifiedAt: Date | null;
 
-  @ApiProperty({ type: PlayerResponseDto })
-  captain: PlayerResponseDto;
+  @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
+  disbandedAt: Date | null;
+
+  @ApiPropertyOptional({ type: PlayerResponseDto, nullable: true })
+  captain: PlayerResponseDto | null;
 
   @ApiPropertyOptional({ type: PlayerResponseDto, nullable: true })
   coach: PlayerResponseDto | null;

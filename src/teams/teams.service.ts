@@ -193,13 +193,22 @@ export class TeamsService {
   async remove(id: string): Promise<void> {
     const team = await this.teamsRepo.findOneById(id);
     if (!team) throw new NotFoundException('Команду не знайдено');
+    if (team.disbandedAt) throw new NotFoundException('Команду вже розпущено');
     const captainId = team.captain?.id;
     const captainDiscordId = team.captain?.discordId ?? null;
     const { discordRoleId, discordChannelId } = team;
 
     await this.dataSource.transaction(async (manager) => {
       await this.resetPlayersTeamIdColumn(id, manager);
-      await manager.remove(team);
+      await manager.query(`DELETE FROM "tournament_team" WHERE "teamId" = $1`, [
+        id,
+      ]);
+      await manager.query(
+        `DELETE FROM "tournament_playoff_team" WHERE "teamId" = $1`,
+        [id],
+      );
+      team.disbandedAt = new Date();
+      await manager.save(team);
     });
 
     if (captainId) {
@@ -643,7 +652,7 @@ export class TeamsService {
   }
 
   private mapTeamResponse(team: Team): TeamResponseDto {
-    if (!team.captain) {
+    if (!team.captain && !team.disbandedAt) {
       throw new InternalServerErrorException('Команда без капітана');
     }
     return {
@@ -654,7 +663,10 @@ export class TeamsService {
       isVerified: team.isVerified,
       isPlayingTournament: team.isPlayingTournament,
       verifiedAt: team.verifiedAt ?? null,
-      captain: this.mapPlayerForTeamResponse(team.captain),
+      disbandedAt: team.disbandedAt ?? null,
+      captain: team.captain
+        ? this.mapPlayerForTeamResponse(team.captain)
+        : null,
       coach: team.coach ? this.mapPlayerForTeamResponse(team.coach) : null,
       mainPlayers: (team.mainPlayers ?? []).map((p) =>
         this.mapPlayerForTeamResponse(p),

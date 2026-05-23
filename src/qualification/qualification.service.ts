@@ -175,7 +175,7 @@ export class QualificationService {
     const teamRepo = this.dataSource.getRepository(Team);
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
-          where: { id: requestedTeamId! },
+          where: { id: requestedTeamId },
           relations: [
             'captain',
             'mainPlayers',
@@ -215,7 +215,8 @@ export class QualificationService {
           t.id !== tournament.id &&
           t.tournamentStartsAt.getTime() <
             tournament.tournamentEndsAt.getTime() &&
-          t.tournamentEndsAt.getTime() > tournament.tournamentStartsAt.getTime(),
+          t.tournamentEndsAt.getTime() >
+            tournament.tournamentStartsAt.getTime(),
       );
       if (hasOverlappingOtherTournament) {
         throw new ConflictException(
