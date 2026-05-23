@@ -77,6 +77,9 @@ export class PlayersService {
     const safePayload = { ...(payload as Record<string, unknown>) };
     delete safePayload['teamId'];
     delete safePayload['verifiedAt'];
+    // Unique nullable columns must be null (not empty string) to satisfy the DB constraint
+    if (safePayload['steamId'] === '') safePayload['steamId'] = null;
+    if (safePayload['discordId'] === '') safePayload['discordId'] = null;
     Object.assign(player, safePayload);
     await this.playersRepo.save(player);
     const refreshed = await this.playersRepo.findOneById(id);
