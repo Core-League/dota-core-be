@@ -138,9 +138,11 @@ export class DevService {
     });
     await matchRepo.save(match);
 
-    const bo3Rounds = await this.challonge.getBO3Rounds(playoff.challongeUrl);
+    const finalsBo3 = await this.challonge.getFinalBo3ChallongeMatchIds(
+      playoff.challongeUrl,
+    );
 
-    if (!bo3Rounds.has(challongeMatch.round)) {
+    if (!finalsBo3.has(challongeMatch.id)) {
       await this.challonge.reportMatchResult(
         playoff.challongeUrl,
         challongeMatch.id,
