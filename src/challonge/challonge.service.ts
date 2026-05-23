@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 
+import { resolveFinalBo3ChallongeMatchIds } from '../playoff/playoff-finals-bo3';
+
 interface V2TournamentResponse {
   data: {
     id: string;
@@ -334,14 +336,11 @@ export class ChallongeService {
   }
 
   /**
-   * Returns the set of Challonge round numbers that should be played as BO3:
-   * upper bracket final, lower bracket final, grand final, and bracket reset.
-   *
-   * Detection: BO3 rounds are all positive rounds that come after the last
-   * multi-match winners-bracket round (i.e., every single-match round at the
-   * end of the bracket), plus the most-negative (lower bracket final) round.
+   * All scheduled Challonge bracket nodes (one row == one Challonge bracket slot).
    */
-  async getBO3Rounds(url: string): Promise<Set<number>> {
+  async listMatchesIdRound(
+    url: string,
+  ): Promise<{ id: number; round: number }[]> {
     let allMatches: V2MatchItem[];
     try {
       const resp = await firstValueFrom(
@@ -352,54 +351,33 @@ export class ChallongeService {
       );
       allMatches = resp.data.data;
     } catch (err) {
-      this.logger.error('getBO3Rounds HTTP call failed', err);
+      this.logger.error('listMatchesIdRound HTTP call failed', err);
       throw new InternalServerErrorException(
         'Failed to fetch matches from Challonge',
       );
     }
 
-    const bo3Rounds = new Set<number>();
+    return allMatches.map((m) => ({
+      id: Number(m.id),
+      round: m.attributes.round,
+    }));
+  }
 
+  /**
+   * UB final + LB grand-final feeder + GF nodes (typically 3 unique ids; GF reset can add more GF-round rows).
+   * BO3 semantics apply per slot; Challonge advancing still keys off that single node.
+   */
+  async getFinalBo3ChallongeMatchIds(url: string): Promise<Set<number>> {
+    const rows = await this.listMatchesIdRound(url);
+    const ids = resolveFinalBo3ChallongeMatchIds(rows);
     this.logger.log(
-      `getBO3Rounds: total matches=${allMatches.length} rounds=${allMatches
-        .map((m) => m.attributes.round)
+      `getFinalBo3ChallongeMatchIds: totalBracketNodes=${rows.length} finalsSlots=${[
+        ...ids,
+      ]
         .sort((a, b) => a - b)
         .join(',')}`,
     );
-
-    const positiveRounds = [
-      ...new Set(
-        allMatches.map((m) => m.attributes.round).filter((r) => r > 0),
-      ),
-    ].sort((a, b) => a - b);
-
-    const negativeRounds = [
-      ...new Set(
-        allMatches.map((m) => m.attributes.round).filter((r) => r < 0),
-      ),
-    ].sort((a, b) => a - b);
-
-    // Mark winners semifinal + everything after it (GF, bracket reset) as BO3.
-    // The winners semifinal is the second-to-last unique positive round.
-    // (Round 3 for a 4-team bracket holds both GF and bracket-reset matches,
-    //  so the old "rounds after last multi-match" heuristic breaks — it treats
-    //  round 3 as the last multi-match and finds nothing after it.)
-    const bo3PositiveThreshold =
-      positiveRounds.length >= 2
-        ? positiveRounds[positiveRounds.length - 2]
-        : (positiveRounds[0] ?? Infinity);
-
-    positiveRounds
-      .filter((r) => r >= bo3PositiveThreshold)
-      .forEach((r) => bo3Rounds.add(r));
-
-    if (negativeRounds.length > 0) bo3Rounds.add(negativeRounds[0]);
-
-    this.logger.log(
-      `getBO3Rounds: bo3PositiveThreshold=${bo3PositiveThreshold} bo3Rounds=${[...bo3Rounds].sort((a, b) => a - b).join(',')}`,
-    );
-
-    return bo3Rounds;
+    return ids;
   }
 
   async reportMatchResult(
