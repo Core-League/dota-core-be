@@ -1622,6 +1622,9 @@ export class PlayoffService {
     const fixtures = await fixtureRepo.find({ where: { playoffId } });
     const existingMatches = new Set(fixtures.map((f) => f.challongeMatchId));
 
+    const finalsBo3ChallongeIds =
+      await this.challonge.getFinalBo3ChallongeMatchIds(challongeUrl);
+
     const opens = await this.challonge.listOpenMatches(challongeUrl);
 
     for (const m of opens) {
@@ -1632,11 +1635,14 @@ export class PlayoffService {
       const mid = String(m.id);
       if (existingMatches.has(mid)) continue;
 
+      const mirrorAsBo1 = !finalsBo3ChallongeIds.has(m.id);
+
       try {
         const nodeId = await this.dota2.createTwoTeamFixtureNode(
           shellGroupId,
           dA,
           dB,
+          mirrorAsBo1,
         );
         await fixtureRepo.save(
           fixtureRepo.create({

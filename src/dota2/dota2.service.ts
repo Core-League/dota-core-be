@@ -158,9 +158,9 @@ export class Dota2Service {
       team_count: String(params.teamCount),
       start_time: '0',
       end_time: '0',
-      advancing_team_count: '',
-      secondary_advancing_team_count: '',
-      tertiary_advancing_team_count: '',
+      advancing_team_count: '0',
+      secondary_advancing_team_count: '0',
+      tertiary_advancing_team_count: '0',
       node_group_type: String(params.nodeGroupType),
       default_node_type: String(params.defaultNodeType ?? 0),
       max_rounds: '0',
@@ -316,9 +316,9 @@ export class Dota2Service {
   }
 
   /**
-   * After calling addNodeGroup (nodeGroupType=7, round-robin match) inside a
+   * After calling addNodeGroup (nodeGroupType=2, RR pairing) inside a
    * qualification group, fetch the tournament page and return the id of the
-   * last .TypeRoundRobin.NodeGroup element that is a descendant of
+   * last .TypeRoundRobin.NodeGroup element under
    * #NodeGroup{containingNodeGroupId}.
    */
   async resolveRoundRobinNodeGroupId(
@@ -347,27 +347,79 @@ export class Dota2Service {
   }
 
   /**
-   * RR-style pair node under organisational parent (same sequence as qualification join).
-   * Returns Dota RR nodeGroupId for the fixture.
+   * After addNodeGroup for league BO-series fixtures (`node_group_type=7`;
+   * `default_node_type=2` for BO3, matching Valve `post_editnodegroup`).
+   * Prefer RR scrape (often still works); fall back to elimination/series wrappers.
+   */
+  async resolveBestOfSeriesNodeGroupId(
+    containingNodeGroupId: string,
+  ): Promise<string> {
+    try {
+      return await this.resolveRoundRobinNodeGroupId(containingNodeGroupId);
+    } catch {
+      this.logger.warn(
+        `RR scrape missed BO-series node inside NodeGroup${containingNodeGroupId} — trying fallbacks`,
+      );
+    }
+
+    const html = await this.fetchTournamentPage();
+    const $ = cheerio.load(html);
+    const root = $(`#NodeGroup${containingNodeGroupId}`);
+    const trySelectors = [
+      '.TypeElimination.NodeGroup',
+      '.TypeSeries.NodeGroup',
+    ];
+
+    for (const selector of trySelectors) {
+      const el = root.find(selector).last();
+      const rawId = el.attr('id');
+      const match = rawId?.match(/^NodeGroup(\d+)$/);
+      if (match) {
+        this.logger.log(
+          `Resolved BO series nodeGroupId=${match[1]} via ${selector} under NodeGroup${containingNodeGroupId}`,
+        );
+        return match[1];
+      }
+    }
+
+    this.logger.error(
+      `Could not resolve BO series NodeGroup inside #NodeGroup${containingNodeGroupId}`,
+    );
+    throw new InternalServerErrorException(
+      `Could not resolve BO series NodeGroup inside NodeGroup${containingNodeGroupId} from Dota2 page`,
+    );
+  }
+
+  /**
+   * Pair node under organisational parent (same flow as qualification join for BO1).
+   * BO3 playoff finals mirror `post_editnodegroup`: node_group_type=7, default_node_type=2.
+   *
+   * @param bestOfOne — When false, creates league BO3-series slot (`node_group_type=7`).
    */
   async createTwoTeamFixtureNode(
     containingOrganizationalGroupId: string,
     dotaTeamIdA: string,
     dotaTeamIdB: string,
+    bestOfOne = true,
   ): Promise<string> {
     await this.addNodeGroup({
       nodeGroupId: '',
-      nodeGroupType: 2,
+      nodeGroupType: bestOfOne ? 2 : 7,
       teamCount: 2,
       containingNodeGroupId: containingOrganizationalGroupId,
       phase: 0,
-      defaultNodeType: 1,
+      defaultNodeType: bestOfOne ? 1 : 2,
     });
     let matchNodeGroupId: string | undefined;
     try {
-      matchNodeGroupId = await this.resolveRoundRobinNodeGroupId(
-        containingOrganizationalGroupId,
-      );
+      matchNodeGroupId = bestOfOne
+        ? await this.resolveRoundRobinNodeGroupId(
+            containingOrganizationalGroupId,
+          )
+        : await this.resolveBestOfSeriesNodeGroupId(
+            containingOrganizationalGroupId,
+          );
+
       await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdA);
       await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdB);
       return matchNodeGroupId;
