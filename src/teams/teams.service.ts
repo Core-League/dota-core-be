@@ -232,27 +232,56 @@ export class TeamsService {
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) throw new NotFoundException('Команду не знайдено');
 
-    const isAdmin = actorPlayerId === '__admin__';
+    const actorPlayer = await this.dataSource.getRepository(Player).findOne({
+      where: { id: actorPlayerId },
+      relations: ['roles'],
+    });
+    const isAdmin = (actorPlayer?.roles ?? []).some((r) => r.isAdminRole);
+
     if (!isAdmin && team.captain?.id !== actorPlayerId) {
       throw new ForbiddenException(
         'Тільки капітан або адмін може передати капітанство',
       );
     }
 
-    const newCaptain = (team.mainPlayers ?? []).find(
-      (p) => p.id === newCaptainPlayerId,
-    );
-    if (!newCaptain) {
-      throw new BadRequestException(
-        'Новий капітан повинен бути основним гравцем команди',
-      );
-    }
     if (newCaptainPlayerId === team.captain?.id) {
       throw new BadRequestException('Цей гравець вже є капітаном');
     }
 
+    const mainPlayers = team.mainPlayers ?? [];
+    const reservedPlayers = team.reservedPlayers ?? [];
+
+    const newCaptainInMain = mainPlayers.find(
+      (p) => p.id === newCaptainPlayerId,
+    );
+    const newCaptainInReserved = reservedPlayers.find(
+      (p) => p.id === newCaptainPlayerId,
+    );
+    const newCaptain = newCaptainInMain ?? newCaptainInReserved;
+
+    if (!newCaptain) {
+      throw new BadRequestException(
+        'Новий капітан повинен бути гравцем команди',
+      );
+    }
+
     const oldCaptain = team.captain;
-    const oldCaptainDiscordId = team.captain?.discordId ?? null;
+    const oldCaptainDiscordId = oldCaptain?.discordId ?? null;
+
+    if (newCaptainInReserved) {
+      // Move new captain from reserved to main, old captain from main to reserved
+      team.mainPlayers = [
+        ...mainPlayers.filter((p) => p.id !== oldCaptain?.id),
+        newCaptain,
+      ];
+      team.reservedPlayers = oldCaptain
+        ? [
+            ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
+            oldCaptain,
+          ]
+        : reservedPlayers.filter((p) => p.id !== newCaptainPlayerId);
+    }
+
     team.captain = newCaptain;
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(teamId);
