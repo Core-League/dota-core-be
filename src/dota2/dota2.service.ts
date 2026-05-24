@@ -150,11 +150,12 @@ export class Dota2Service {
     containingNodeGroupId: string;
     phase: number;
     defaultNodeType?: number;
+    name?: string;
   }): Promise<void> {
     const body = new URLSearchParams({
       sessionid: this.sessionId,
       node_group_id: params.nodeGroupId,
-      name: '',
+      name: params.name ?? '',
       team_count: String(params.teamCount),
       start_time: '0',
       end_time: '0',
@@ -391,34 +392,35 @@ export class Dota2Service {
   }
 
   /**
-   * Pair node under organisational parent (same flow as qualification join for BO1).
-   * BO3: `node_group_type=7` and **`default_node_type=2`** (Valve playoff series slot).
+   * Pair node under organisational parent.
+   * Both BO1 and BO3 use `node_group_type=7`; only `default_node_type` differs:
+   *   BO1 → default_node_type=1
+   *   BO3 → default_node_type=2
    *
-   * @param bestOfOne — When false, creates league BO3-series slot (`node_group_type=7`).
+   * @param bestOfOne — When false, creates a BO3-series slot.
+   * @param name — Optional display label shown on the Dota 2 admin page ("Team A vs Team B").
    */
   async createTwoTeamFixtureNode(
     containingOrganizationalGroupId: string,
     dotaTeamIdA: string,
     dotaTeamIdB: string,
     bestOfOne = true,
+    name = '',
   ): Promise<string> {
     await this.addNodeGroup({
       nodeGroupId: '',
-      nodeGroupType: bestOfOne ? 2 : 7,
+      nodeGroupType: 7,
       teamCount: 2,
       containingNodeGroupId: containingOrganizationalGroupId,
       phase: 0,
       defaultNodeType: bestOfOne ? 1 : 2,
+      name,
     });
     let matchNodeGroupId: string | undefined;
     try {
-      matchNodeGroupId = bestOfOne
-        ? await this.resolveRoundRobinNodeGroupId(
-            containingOrganizationalGroupId,
-          )
-        : await this.resolveBestOfSeriesNodeGroupId(
-            containingOrganizationalGroupId,
-          );
+      matchNodeGroupId = await this.resolveBestOfSeriesNodeGroupId(
+        containingOrganizationalGroupId,
+      );
 
       await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdA);
       await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdB);
@@ -429,7 +431,7 @@ export class Dota2Service {
           await this.removeNodeGroup(matchNodeGroupId);
         } catch (removeErr) {
           this.logger.warn(
-            `removeNodeGroup failed for orphan RR node ${matchNodeGroupId}`,
+            `removeNodeGroup failed for orphan fixture node ${matchNodeGroupId}`,
             removeErr,
           );
         }
