@@ -48,6 +48,12 @@ export class PlayoffMatch {
   @Column({ type: 'varchar' })
   challongeMatchId: string;
 
+  @Column({ type: 'int', default: 1 })
+  gameNumber: number;
+
+  @Column({ type: 'boolean', default: false })
+  isVerified: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 }
