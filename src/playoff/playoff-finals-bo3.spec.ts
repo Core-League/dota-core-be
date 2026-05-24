@@ -1,42 +1,68 @@
 import {
-  PLAYOFF_TAIL_BO3_COUNT,
-  bo3TailSortedMatchIds,
-  computePlayoffBo3ChallongeMatchIds,
-  expectedDoubleEliminationMatchCount,
+  bracketOrdinalFromChallongeMatchAttrs,
+  expectedDoubleEliminationMatchTotal,
+  deFinalsBracketIndices,
+  resolveDoubleElimBo3ByBracketOrdinal,
+  PLAYOFF_BO3_FINALS_COUNT,
 } from './playoff-finals-bo3';
 
-describe('expectedDoubleEliminationMatchCount', () => {
-  it('follows 2*N-2 for N≥2', () => {
-    expect(expectedDoubleEliminationMatchCount(0)).toBe(0);
-    expect(expectedDoubleEliminationMatchCount(1)).toBe(0);
-    expect(expectedDoubleEliminationMatchCount(4)).toBe(6);
-    expect(expectedDoubleEliminationMatchCount(8)).toBe(14);
-    expect(expectedDoubleEliminationMatchCount(16)).toBe(30);
+describe('deFinalsBracketIndices', () => {
+  it('examples N=4,8,16', () => {
+    expect(deFinalsBracketIndices(4)).toEqual({
+      upperBracketFinalIndex: 2,
+      lowerBracketFinalIndex: 4,
+      grandFinalIndex: 5,
+    });
+    expect(deFinalsBracketIndices(8)).toEqual({
+      upperBracketFinalIndex: 6,
+      lowerBracketFinalIndex: 12,
+      grandFinalIndex: 13,
+    });
+    expect(deFinalsBracketIndices(16)).toEqual({
+      upperBracketFinalIndex: 14,
+      lowerBracketFinalIndex: 28,
+      grandFinalIndex: 29,
+    });
+  });
+
+  it('total matches formula 2N-2', () => {
+    expect(expectedDoubleEliminationMatchTotal(8)).toBe(14);
   });
 });
 
-describe('bo3TailSortedMatchIds', () => {
-  it('marks last PLAYOFF_TAIL_BO3_COUNT ids when sorted ascending', () => {
-    const mids = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-    expect(PLAYOFF_TAIL_BO3_COUNT).toBe(3);
-    expect([...bo3TailSortedMatchIds(mids)].sort((a, b) => a - b)).toEqual([
-      80, 90, 100,
-    ]);
+describe('resolveDoubleElimBo3ByBracketOrdinal', () => {
+  it('maps ordinals exactly to Challonge IDs for clean 8-team bracket', () => {
+    const rows = Array.from({ length: 14 }, (_, ord) => ({
+      challongeNumericId: 5000 + ord,
+      bracketOrdinal1Based: ord + 1,
+    }));
+    const out = resolveDoubleElimBo3ByBracketOrdinal(rows, 8);
+    expect(out.bo3ChallongeIds.size).toBe(PLAYOFF_BO3_FINALS_COUNT);
+    expect(out.finalTypeByChallongeId.get(5005)).toBe('upper_bracket_final');
+    expect(out.finalTypeByChallongeId.get(5011)).toBe('lower_bracket_final');
+    expect(out.finalTypeByChallongeId.get(5012)).toBe('grand_final');
   });
 
-  it('when fewer matches than tail, all are tail BO3', () => {
-    expect([...bo3TailSortedMatchIds([900, 30])].sort((a, b) => a - b)).toEqual(
-      [30, 900],
+  it('flags missing ordinal data', () => {
+    const out = resolveDoubleElimBo3ByBracketOrdinal(
+      [{ challongeNumericId: 77, bracketOrdinal1Based: null }],
+      8,
     );
+    expect(out.bo3ChallongeIds.size).toBe(0);
+    expect(out.diagnostics.some((d) => d.includes('WARN'))).toBe(true);
   });
 });
 
-describe('computePlayoffBo3ChallongeMatchIds', () => {
-  it('delegates tail selection', () => {
-    const mids = Array.from({ length: 14 }, (_, i) => i + 501);
-    const res = computePlayoffBo3ChallongeMatchIds(mids, 8);
-    expect(res.expectedMatchCount).toBe(14);
-    expect(res.fetchedMatchCount).toBe(14);
-    expect([...res.bo3Ids]).toEqual([512, 513, 514]);
+describe('bracketOrdinalFromChallongeMatchAttrs', () => {
+  it('prefers suggested_play_order', () => {
+    expect(
+      bracketOrdinalFromChallongeMatchAttrs({ suggested_play_order: 7 }),
+    ).toBe(7);
+  });
+  it('parses numeric identifier prefixes', () => {
+    expect(bracketOrdinalFromChallongeMatchAttrs({ identifier: 'M29' })).toBe(
+      29,
+    );
+    expect(bracketOrdinalFromChallongeMatchAttrs({ identifier: '6' })).toBe(6);
   });
 });

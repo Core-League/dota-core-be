@@ -10,6 +10,11 @@ import {
 import { Team } from '../teams/team.entity';
 import { Playoff } from './playoff.entity';
 
+export type PlayoffFinalType =
+  | 'upper_bracket_final'
+  | 'lower_bracket_final'
+  | 'grand_final';
+
 @Entity('playoff_series')
 @Unique('UQ_playoff_series_playoff_challonge', [
   'playoffId',
@@ -34,8 +39,12 @@ export class PlayoffSeries {
   @Column({ type: 'smallint' })
   bestOf: number;
 
+  /** BO3-finals slot (Ub/LB/GF) — синхрон з `bestOf===3`. */
   @Column({ type: 'boolean', default: false })
-  isFinalsBo3: boolean;
+  isFinalSeries: boolean;
+
+  @Column({ type: 'varchar', nullable: true })
+  finalType: PlayoffFinalType | null;
 
   @Column({ type: 'uuid', nullable: true })
   teamAId: string | null;

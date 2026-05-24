@@ -7,7 +7,13 @@ import {
 } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 
-import { computePlayoffBo3ChallongeMatchIds } from '../playoff/playoff-finals-bo3';
+import {
+  type BracketIndexedRow,
+  type ResolvedDeBo3,
+  bracketOrdinalFromChallongeMatchAttrs,
+  resolveDoubleElimBo3ByBracketOrdinal,
+  PLAYOFF_BO3_FINALS_COUNT,
+} from '../playoff/playoff-finals-bo3';
 
 interface V2TournamentResponse {
   data: {
@@ -355,35 +361,56 @@ export class ChallongeService {
     }));
   }
 
+  /** Усі Challonge міси разом із 1-based canonical ordinal (поле порядку сітки). */
+  async listBracketIndexedMatches(url: string): Promise<BracketIndexedRow[]> {
+    const rows = await this.fetchAllMatchPagesJsonApi(url);
+    return rows.map((m) => {
+      const attrs = (m.attributes ?? {}) as Record<string, unknown>;
+      return {
+        challongeNumericId: Number(m.id),
+        bracketOrdinal1Based: bracketOrdinalFromChallongeMatchAttrs(attrs),
+      };
+    });
+  }
+
   /**
-   * BO3 у повній DE сітці: загальне число матчів очікується 2*activeTeams−2;
-   * останні 3 Challonge-міси (за numeric id ascending) — BO3, решта BO1.
+   * У double elimination із N активних команд очікуємо лише три BO3-finals:
+   * UB final (N−2), LB final (2N−4), GF (2N−3) за canonical bracket порядком.
    */
+  async getDoubleElimBo3BracketResolution(
+    url: string,
+    activeTeamCount: number,
+  ): Promise<ResolvedDeBo3> {
+    const indexed = await this.listBracketIndexedMatches(url);
+    const resolved = resolveDoubleElimBo3ByBracketOrdinal(
+      indexed,
+      activeTeamCount,
+    );
+    for (const line of resolved.diagnostics) {
+      if (line.startsWith('ERROR')) this.logger.error(line);
+      else if (line.startsWith('WARN')) this.logger.warn(line);
+      else this.logger.log(line);
+    }
+    const got = resolved.bo3ChallongeIds.size;
+    if (got !== PLAYOFF_BO3_FINALS_COUNT && activeTeamCount >= 4) {
+      this.logger.error(
+        `DE BO3 safety: expected=${PLAYOFF_BO3_FINALS_COUNT} assigned=${got} ` +
+          `ids=[${[...resolved.bo3ChallongeIds].sort((a, b) => a - b).join(',')}]`,
+      );
+    }
+    return resolved;
+  }
+
+  /** Back-compat: набір Challonge numeric id з BO3. */
   async getFinalBo3ChallongeMatchIds(
     url: string,
     activeTeamCount: number,
   ): Promise<Set<number>> {
-    const rows = await this.fetchAllMatchPagesJsonApi(url);
-    const matchIds = rows.map((m) => Number(m.id));
-    const { bo3Ids, expectedMatchCount, fetchedMatchCount } =
-      computePlayoffBo3ChallongeMatchIds(matchIds, activeTeamCount);
-
-    const teamsInt = Math.trunc(activeTeamCount);
-    if (expectedMatchCount > 0 && fetchedMatchCount !== expectedMatchCount) {
-      this.logger.warn(
-        `getFinalBo3ChallongeMatchIds: for ${teamsInt} active teams expected ` +
-          `${expectedMatchCount} matches (2*N-2) but Challonge has ${fetchedMatchCount}`,
-      );
-    }
-
-    this.logger.log(
-      `getFinalBo3ChallongeMatchIds: teams=${teamsInt} fetched=${fetchedMatchCount} ` +
-        `expectedTotal=${expectedMatchCount} tailBo3=${[...bo3Ids]
-          .sort((a, b) => a - b)
-          .join(',')}`,
+    const r = await this.getDoubleElimBo3BracketResolution(
+      url,
+      activeTeamCount,
     );
-
-    return bo3Ids;
+    return r.bo3ChallongeIds;
   }
 
   async reportMatchResult(

@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class ManualPlayoffSeriesGameDto {
   @ApiProperty({
@@ -23,4 +31,14 @@ export class ManualPlayoffSeriesGameDto {
   @IsString()
   @MaxLength(128)
   dotaMatchId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Для BO3: номер підігри (gameNumber у Core, 1..3). Якщо не вказано — береться найменший підігровий слот без переможця.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3)
+  seriesGameSlot?: number;
 }

@@ -7,7 +7,7 @@ export class OpenPlayoffMatchTeamDto {
   @ApiProperty({ nullable: true, type: String }) logoUrl: string | null;
 }
 
-/** One bracket slot grouping (BO1 counts as series of bestOf 1); finals BO3 are visually distinct via `seriesKind`. */
+/** One bracket slot grouping (BO1 counts as series of bestOf 1); finals BO3 групуються через `seriesKind`. */
 export class OpenPlayoffMatchDto {
   @ApiProperty() challongeMatchId: number;
   @ApiProperty() round: number;
@@ -25,9 +25,21 @@ export class OpenPlayoffMatchDto {
   @ApiProperty({
     enum: ['standard', 'finals_bo3'],
     description:
-      '`finals_bo3` denotes one of UB final / LB final / GF Challonge finals slots.',
+      '`finals_bo3` — один із BO3-finals (верхній / нижній / grand final сітки).',
   })
   seriesKind: 'standard' | 'finals_bo3';
+
+  @ApiPropertyOptional({
+    nullable: true,
+    enum: ['upper_bracket_final', 'lower_bracket_final', 'grand_final'],
+    description:
+      'Конкретний тип finals-серії (лише коли BO3-finals). Інакше null.',
+  })
+  finalSeriesType:
+    | 'upper_bracket_final'
+    | 'lower_bracket_final'
+    | 'grand_final'
+    | null;
 
   @ApiProperty() winsTeamA: number;
   @ApiProperty() winsTeamB: number;
