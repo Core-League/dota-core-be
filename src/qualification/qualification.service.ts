@@ -566,7 +566,7 @@ export class QualificationService {
       await this.awardPoints(manager, loserMainPlayers ?? [], tournamentId, 40);
     });
 
-    void this.duelo.sendMatchResult(matchData);
+    void this.duelo.sendMatchResult(matchData, 'qualification');
 
     return qualMatch;
   }

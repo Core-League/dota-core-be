@@ -11,6 +11,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In } from 'typeorm';
 import { ChallongeService } from '../challonge/challonge.service';
 import { Dota2Service } from '../dota2/dota2.service';
+import { DueloService } from '../duelo/duelo.service';
 import { Team } from '../teams/team.entity';
 import { TeamsService } from '../teams/teams.service';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
@@ -39,6 +40,7 @@ export class PlayoffService {
     private readonly playoffMatchRepo: PlayoffMatchRepository,
     private readonly challonge: ChallongeService,
     private readonly dota2: Dota2Service,
+    private readonly duelo: DueloService,
     private readonly teamsService: TeamsService,
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
@@ -215,6 +217,8 @@ export class PlayoffService {
       loserTeamId: loserRow.teamId,
       dotaMatchId,
     });
+
+    void this.duelo.sendMatchResult(matchData, 'playoff');
 
     await this.maybeSyncPlayoffFixturesIntoDotaWithBackoff(tournamentId);
 
