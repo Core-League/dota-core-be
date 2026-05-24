@@ -1108,6 +1108,24 @@ export class PlayoffService {
     }
   }
 
+  /** Maps dotaTeamId → team display name for active playoff participants. */
+  private async buildDotaTeamIdToName(
+    tournamentId: string,
+  ): Promise<Map<string, string>> {
+    const rows = await this.dataSource
+      .getRepository(TournamentPlayoffTeam)
+      .find({
+        where: { tournamentId, isDisqualified: false },
+        relations: ['team'],
+      });
+    const map = new Map<string, string>();
+    for (const r of rows) {
+      const dota = (r.team?.dotaTeamId ?? '').trim();
+      if (dota) map.set(dota, r.team.name ?? '');
+    }
+    return map;
+  }
+
   private async syncOpenChallongeMatchesIntoLeague(
     shellGroupId: string,
     playoffId: string,
@@ -1116,11 +1134,15 @@ export class PlayoffService {
   ): Promise<void> {
     const fixtureRepo = this.dataSource.getRepository(PlayoffLeagueFixture);
 
-    const challongeParticipantIdToDota =
-      await this.buildChallongeParticipantIdToDotaTeamId(
-        tournamentId,
-        challongeUrl,
-      );
+    const [challongeParticipantIdToDota, dotaTeamIdToName, bo3Rounds] =
+      await Promise.all([
+        this.buildChallongeParticipantIdToDotaTeamId(
+          tournamentId,
+          challongeUrl,
+        ),
+        this.buildDotaTeamIdToName(tournamentId),
+        this.challonge.getBO3Rounds(challongeUrl),
+      ]);
 
     const fixtures = await fixtureRepo.find({ where: { playoffId } });
     const existingMatches = new Set(fixtures.map((f) => f.challongeMatchId));
@@ -1135,11 +1157,18 @@ export class PlayoffService {
       const mid = String(m.id);
       if (existingMatches.has(mid)) continue;
 
+      // BO3 for Upper Bracket Final, Lower Bracket Final, and Grand Final; BO1 for all others
+      const isBO3 = bo3Rounds.has(m.round);
+      const nameA = dotaTeamIdToName.get(dA) ?? dA;
+      const nameB = dotaTeamIdToName.get(dB) ?? dB;
+
       try {
         const nodeId = await this.dota2.createTwoTeamFixtureNode(
           shellGroupId,
           dA,
           dB,
+          !isBO3,
+          `${nameA} vs ${nameB}`,
         );
         await fixtureRepo.save(
           fixtureRepo.create({
@@ -1151,7 +1180,7 @@ export class PlayoffService {
         existingMatches.add(mid);
       } catch (err) {
         this.logger.warn(
-          `Dota RR fixture create failed for Challonge match ${mid} (${dA} vs ${dB})`,
+          `Dota fixture create failed for Challonge match ${mid} (${dA} vs ${dB}, bo3=${isBO3})`,
           err,
         );
       }
