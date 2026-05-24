@@ -402,6 +402,48 @@ export class ChallongeService {
     return bo3Rounds;
   }
 
+  async updateMatchScores(
+    url: string,
+    matchId: number,
+    player1ParticipantId: number,
+    player2ParticipantId: number,
+    player1Score: number,
+    player2Score: number,
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.http.put(
+          `${this.baseUrl}/tournaments/${url}/matches/${matchId}.json`,
+          {
+            data: {
+              type: 'match',
+              attributes: {
+                match: [
+                  {
+                    participant_id: player1ParticipantId,
+                    score_set: String(player1Score),
+                    advancing: false,
+                  },
+                  {
+                    participant_id: player2ParticipantId,
+                    score_set: String(player2Score),
+                    advancing: false,
+                  },
+                ],
+              },
+            },
+          },
+          { headers: this.headers },
+        ),
+      );
+    } catch (err) {
+      this.logger.error('updateMatchScores failed', err);
+      throw new InternalServerErrorException(
+        'Failed to update match scores on Challonge',
+      );
+    }
+  }
+
   async reportMatchResult(
     url: string,
     matchId: number,

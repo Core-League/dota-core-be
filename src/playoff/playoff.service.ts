@@ -263,6 +263,19 @@ export class PlayoffService {
           seriesWinnerWins,
           seriesLoserWins,
         );
+      } else {
+        // Intermediate game — update score display without advancing either side
+        const winnerIsP1 =
+          Number(winnerRow.challongeParticipantId) ===
+          challongeMatch.player1_id;
+        await this.challonge.updateMatchScores(
+          playoff.challongeUrl,
+          challongeMatch.id,
+          challongeMatch.player1_id,
+          challongeMatch.player2_id,
+          wins.get(winnerIsP1 ? winnerRow.teamId : loserRow.teamId) ?? 0,
+          wins.get(winnerIsP1 ? loserRow.teamId : winnerRow.teamId) ?? 0,
+        );
       }
     }
 
