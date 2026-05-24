@@ -621,9 +621,37 @@ export class PlayoffService {
         'Loser team is not an active playoff participant',
       );
 
+    // If there is a currently open Challonge match between these two teams, we are
+    // in an ongoing series — record the next game directly. Skipping the
+    // existingIncorrectMatch check here prevents a spurious bracket rebuild when
+    // the same pair played in an earlier stage (e.g. prelim) or when the BO3
+    // series alternates winners across games.
+    let hasOpenMatch = false;
+    try {
+      await this.challonge.findOpenMatch(
+        playoff.challongeUrl,
+        Number(winnerRow.challongeParticipantId),
+        Number(loserRow.challongeParticipantId),
+      );
+      hasOpenMatch = true;
+    } catch {
+      // No open match between these teams right now
+    }
+
+    if (hasOpenMatch) {
+      return this.techLossOpenMatch(
+        playoff,
+        tournamentId,
+        winnerRow,
+        loserRow,
+        winnerTeamId,
+        loserTeamId,
+      );
+    }
+
     const pmRepo = this.dataSource.getRepository(PlayoffMatch);
 
-    // Check if a match exists where the loser team incorrectly won
+    // No open match — the loser may have incorrectly won and already advanced.
     const existingIncorrectMatch = await pmRepo.findOne({
       where: [
         {
@@ -651,13 +679,8 @@ export class PlayoffService {
       );
     }
 
-    return this.techLossOpenMatch(
-      playoff,
-      tournamentId,
-      winnerRow,
-      loserRow,
-      winnerTeamId,
-      loserTeamId,
+    throw new NotFoundException(
+      'No open Challonge match found between these two participants',
     );
   }
 
