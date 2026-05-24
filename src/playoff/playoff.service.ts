@@ -1134,10 +1134,12 @@ export class PlayoffService {
   ): Promise<void> {
     const fixtureRepo = this.dataSource.getRepository(PlayoffLeagueFixture);
 
-    const [challongeParticipantIdToDota, dotaTeamIdToName] = await Promise.all([
-      this.buildChallongeParticipantIdToDotaTeamId(tournamentId, challongeUrl),
-      this.buildDotaTeamIdToName(tournamentId),
-    ]);
+    const [challongeParticipantIdToDota, dotaTeamIdToName, bo3Rounds] =
+      await Promise.all([
+        this.buildChallongeParticipantIdToDotaTeamId(tournamentId, challongeUrl),
+        this.buildDotaTeamIdToName(tournamentId),
+        this.challonge.getBO3Rounds(challongeUrl),
+      ]);
 
     const fixtures = await fixtureRepo.find({ where: { playoffId } });
     const existingMatches = new Set(fixtures.map((f) => f.challongeMatchId));
@@ -1161,6 +1163,7 @@ export class PlayoffService {
           dA,
           dB,
           `${nameA} vs ${nameB}`,
+          bo3Rounds.has(m.round),
         );
         await fixtureRepo.save(
           fixtureRepo.create({
