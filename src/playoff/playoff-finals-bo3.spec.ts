@@ -1,4 +1,5 @@
 import {
+  extractPrerequisiteParentMatchIds,
   resolveStructuralFinalBo3Slots,
   type ChallongeBracketMatchNode,
 } from './playoff-finals-bo3';
@@ -48,5 +49,46 @@ describe('resolveStructuralFinalBo3Slots', () => {
       { id: 101, round: 8, prerequisiteMatchIds: [] },
     ];
     expect(resolveStructuralFinalBo3Slots(nodes).bo3MatchIds.size).toBe(0);
+  });
+
+  it('double elim: LB final via loser-slot flag even when both feeder rounds ≥ 0', () => {
+    const nodes: ChallongeBracketMatchNode[] = [
+      { id: 10, round: 1, prerequisiteMatchIds: [] },
+      { id: 11, round: 1, prerequisiteMatchIds: [] },
+      {
+        id: 20,
+        round: 2,
+        prerequisiteMatchIds: [10, 11],
+      },
+      {
+        id: 90,
+        round: 5,
+        prerequisiteMatchIds: [50],
+        prerequisiteLinks: [
+          { upstreamMatchId: 20, feedsFromUpstreamLoser: true },
+          { upstreamMatchId: 50, feedsFromUpstreamLoser: false },
+        ],
+      },
+      { id: 50, round: -1, prerequisiteMatchIds: [] },
+      {
+        id: 300,
+        round: 9,
+        prerequisiteMatchIds: [20, 90],
+      },
+    ];
+
+    const { bo3MatchIds } = resolveStructuralFinalBo3Slots(nodes);
+    expect([...bo3MatchIds].sort((a, b) => a - b)).toEqual([20, 90, 300]);
+  });
+});
+
+describe('extractPrerequisiteParentMatchIds', () => {
+  it('parses prerequisite_match_ids_csv into ids', () => {
+    expect(
+      extractPrerequisiteParentMatchIds({
+        attributes: { prerequisite_match_ids_csv: ' 12 , 34; 56 ' },
+      }),
+    ).toEqual(expect.arrayContaining([12, 34, 56]));
+    expect(extractPrerequisiteParentMatchIds({ attributes: {} })).toEqual([]);
   });
 });

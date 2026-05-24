@@ -8,6 +8,7 @@ import {
 import { firstValueFrom } from 'rxjs';
 
 import {
+  extractPrerequisiteLinks,
   extractPrerequisiteParentMatchIds,
   resolveStructuralFinalBo3Slots,
 } from '../playoff/playoff-finals-bo3';
@@ -361,14 +362,22 @@ export class ChallongeService {
   /** BO3 slots from prerequisite graph (grand final + feeders in DE; GF-only for SE). */
   async getFinalBo3ChallongeMatchIds(url: string): Promise<Set<number>> {
     const rows = await this.fetchAllMatchPagesJsonApi(url);
-    const nodes = rows.map((m) => ({
-      id: Number(m.id),
-      round: typeof m.attributes.round === 'number' ? m.attributes.round : 0,
-      prerequisiteMatchIds: extractPrerequisiteParentMatchIds({
-        attributes: m.attributes ?? {},
-        relationships: m.relationships,
-      }),
-    }));
+    const nodes = rows.map((m) => {
+      const attrs = m.attributes ?? {};
+      const rel = m.relationships;
+      return {
+        id: Number(m.id),
+        round: typeof attrs.round === 'number' ? attrs.round : 0,
+        prerequisiteMatchIds: extractPrerequisiteParentMatchIds({
+          attributes: attrs,
+          relationships: rel,
+        }),
+        prerequisiteLinks: extractPrerequisiteLinks({
+          attributes: attrs,
+          relationships: rel,
+        }),
+      };
+    });
 
     const { bo3MatchIds, slotByMatchId } =
       resolveStructuralFinalBo3Slots(nodes);
