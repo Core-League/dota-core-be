@@ -19,6 +19,7 @@ import {
 import { TournamentDivision } from '../tournaments/tournaments.model';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { QualificationMatch } from '../qualification/qualification-match.entity';
+import { PlayoffMatch } from '../playoff/playoff-match.entity';
 import { DiscordBotService } from '../discord/discord-bot.service';
 import { OverrideMatchResultDto } from './dto/override-match-result.dto';
 import { AuthService } from '../auth/auth.service';
@@ -566,6 +567,40 @@ export class AdminService {
         await repo.save(existing);
       }
     }
+  }
+
+  async overridePlayoffMatchResult(
+    matchId: string,
+    dto: OverrideMatchResultDto,
+  ): Promise<{ matchId: string; winnerId: string }> {
+    const matchRepo = this.dataSource.getRepository(PlayoffMatch);
+
+    const match = await matchRepo.findOne({
+      where: { id: matchId },
+      relations: ['teamA', 'teamB'],
+    });
+    if (!match) throw new NotFoundException('Playoff match not found');
+
+    if (!match.teamA || !match.teamB) {
+      throw new BadRequestException(
+        'Match is missing one or both sides — team rows may have been deleted',
+      );
+    }
+
+    if (
+      dto.winnerTeamId !== match.teamAId &&
+      dto.winnerTeamId !== match.teamBId
+    ) {
+      throw new BadRequestException(
+        'winnerTeamId must be one of the two teams in this match',
+      );
+    }
+
+    match.winnerId = dto.winnerTeamId;
+    match.isVerified = false;
+    await matchRepo.save(match);
+
+    return { matchId, winnerId: dto.winnerTeamId };
   }
 
   private async findPlayerWithRoles(playerId: string): Promise<Player> {

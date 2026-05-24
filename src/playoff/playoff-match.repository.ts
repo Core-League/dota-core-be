@@ -22,7 +22,7 @@ export class PlayoffMatchRepository {
   findByPlayoffId(playoffId: string): Promise<PlayoffMatch[]> {
     return this.repo.find({
       where: { playoffId },
-      order: { createdAt: 'ASC' },
+      order: { gameNumber: 'ASC' },
     });
   }
 

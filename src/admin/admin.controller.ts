@@ -59,6 +59,20 @@ export class AdminController {
     return this.adminService.overrideMatchResult(matchId, body);
   }
 
+  @Post('playoff-matches/:matchId/result')
+  @ApiOperation({
+    summary: 'Override a playoff game result',
+    description:
+      'Changes the winner of an individual playoff game and resets isVerified to false.',
+  })
+  @ApiParam({ name: 'matchId', type: String, format: 'uuid' })
+  overridePlayoffMatchResult(
+    @Param('matchId', ParseUUIDPipe) matchId: string,
+    @Body() body: OverrideMatchResultDto,
+  ): Promise<{ matchId: string; winnerId: string }> {
+    return this.adminService.overridePlayoffMatchResult(matchId, body);
+  }
+
   @Post('discord/sync')
   @ApiOperation({
     summary: 'Sync Discord roles and voice channels for all verified teams',

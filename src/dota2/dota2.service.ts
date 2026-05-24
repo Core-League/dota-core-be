@@ -404,8 +404,8 @@ export class Dota2Service {
     containingOrganizationalGroupId: string,
     dotaTeamIdA: string,
     dotaTeamIdB: string,
-    bestOfOne = true,
-    name = '',
+    name?: string,
+    isBo3?: boolean,
   ): Promise<string> {
     await this.addNodeGroup({
       nodeGroupId: '',
@@ -413,7 +413,7 @@ export class Dota2Service {
       teamCount: 2,
       containingNodeGroupId: containingOrganizationalGroupId,
       phase: 0,
-      defaultNodeType: bestOfOne ? 1 : 2,
+      defaultNodeType: isBo3 ? 2 : 1,
       name,
     });
     let matchNodeGroupId: string | undefined;

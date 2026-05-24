@@ -57,6 +57,7 @@ export class UserRolesService {
   async findAll(): Promise<UserRoleResponseDto[]> {
     const rows = await this.userRolesRepo.findAllCatalog();
     const byId = new Map(rows.map((r) => [r.id, r]));
+
     const merged = ROLE_CATALOG_DISPLAY_ORDER.map((id) => {
       const existing = byId.get(id);
       if (existing) {
