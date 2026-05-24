@@ -1,19 +1,52 @@
-import { resolveFinalBo3ChallongeMatchIds } from './playoff-finals-bo3';
+import {
+  resolveStructuralFinalBo3Slots,
+  type ChallongeBracketMatchNode,
+} from './playoff-finals-bo3';
 
-describe('resolveFinalBo3ChallongeMatchIds', () => {
-  it('detects UB final (-2 pos), LB feeder (-1 neg), GF (max pos) for synthetic schedule', () => {
-    const matches = [
-      { id: 10, round: 1 }, // UB semis-ish
-      { id: 11, round: 1 },
-      { id: 20, round: 2 }, // UB final (single UB match before GF)
-      { id: 30, round: 3 }, // GF
-      { id: 40, round: -2 },
-      { id: 41, round: -2 },
-      { id: 50, round: -1 }, // LB final (closest to zero)
+describe('resolveStructuralFinalBo3Slots', () => {
+  it('double elim: UB final (+), LB final (-), GF (never referenced upstream)', () => {
+    const nodes: ChallongeBracketMatchNode[] = [
+      { id: 10, round: 1, prerequisiteMatchIds: [] },
+      { id: 11, round: 1, prerequisiteMatchIds: [] },
+      { id: 50, round: -12, prerequisiteMatchIds: [] },
+      { id: 20, round: 4, prerequisiteMatchIds: [10, 11] },
+      { id: 90, round: -2, prerequisiteMatchIds: [50] },
+      { id: 300, round: 42, prerequisiteMatchIds: [20, 90] },
     ];
-    const ids = resolveFinalBo3ChallongeMatchIds(matches);
-    expect(ids.has(30)).toBe(true);
-    expect(ids.has(20)).toBe(true);
-    expect(ids.has(50)).toBe(true);
+
+    const { bo3MatchIds, slotByMatchId } =
+      resolveStructuralFinalBo3Slots(nodes);
+    expect([...bo3MatchIds].sort((a, b) => a - b)).toEqual([20, 90, 300]);
+    expect(slotByMatchId.get(300)).toBe('grand_final');
+    expect(slotByMatchId.get(20)).toBe('upper_bracket_final');
+    expect(slotByMatchId.get(90)).toBe('lower_bracket_final');
+  });
+
+  it('single elim (all nonnegative rounds): only grand final BO3', () => {
+    const semiW = { id: 10, round: 2, prerequisiteMatchIds: [] as number[] };
+    const semiX = { id: 11, round: 2, prerequisiteMatchIds: [] as number[] };
+
+    const grandFinal = {
+      id: 30,
+      round: 7,
+      prerequisiteMatchIds: [10, 11],
+    };
+
+    const { bo3MatchIds, slotByMatchId } = resolveStructuralFinalBo3Slots([
+      semiW,
+      semiX,
+      grandFinal,
+    ]);
+    expect([...bo3MatchIds]).toEqual([30]);
+    expect(slotByMatchId.get(30)).toBe('grand_final');
+    expect(slotByMatchId.has(10)).toBe(false);
+  });
+
+  it('defaults to BO1 everywhere when prerequisites are missing', () => {
+    const nodes: ChallongeBracketMatchNode[] = [
+      { id: 100, round: 1, prerequisiteMatchIds: [] },
+      { id: 101, round: 8, prerequisiteMatchIds: [] },
+    ];
+    expect(resolveStructuralFinalBo3Slots(nodes).bo3MatchIds.size).toBe(0);
   });
 });
