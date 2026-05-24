@@ -589,27 +589,22 @@ export class PlayoffService {
     const bo3Rounds = await this.challonge.getBO3Rounds(playoff.challongeUrl);
     const isBO3 = bo3Rounds.has(challongeMatch.round);
     const pmRepo = this.dataSource.getRepository(PlayoffMatch);
-    const base = `tech_loss_${Date.now()}`;
     const mid = String(challongeMatch.id);
 
-    const gameDotaIds = isBO3 ? [`${base}_g1`, `${base}_g2`] : [base];
-
-    for (const dotaMatchId of gameDotaIds) {
-      const gameCount = await pmRepo.count({
-        where: { playoffId: playoff.id, challongeMatchId: mid },
-      });
-      await this.playoffMatchRepo.save(
-        this.playoffMatchRepo.create({
-          playoffId: playoff.id,
-          teamAId: winnerTeamId,
-          teamBId: loserTeamId,
-          winnerId: winnerTeamId,
-          dotaMatchId,
-          challongeMatchId: mid,
-          gameNumber: gameCount + 1,
-        }),
-      );
-    }
+    const gameCount = await pmRepo.count({
+      where: { playoffId: playoff.id, challongeMatchId: mid },
+    });
+    await this.playoffMatchRepo.save(
+      this.playoffMatchRepo.create({
+        playoffId: playoff.id,
+        teamAId: winnerTeamId,
+        teamBId: loserTeamId,
+        winnerId: winnerTeamId,
+        dotaMatchId: `tech_loss_${Date.now()}`,
+        challongeMatchId: mid,
+        gameNumber: gameCount + 1,
+      }),
+    );
 
     // Tally wins and report to Challonge once series winner is clear
     const allGames = await pmRepo.find({
@@ -632,8 +627,8 @@ export class PlayoffService {
         seriesWinnerWins,
         seriesLoserWins,
       );
-    } else {
-      // BO1 — 1 game, report immediately
+    } else if (!isBO3) {
+      // BO1 — report immediately after the single game
       await this.challonge.reportMatchResult(
         playoff.challongeUrl,
         challongeMatch.id,
