@@ -264,11 +264,12 @@ export class PlayoffService {
           seriesLoserWins,
         );
       } else {
-        // Intermediate game — update score display without advancing either side
+        // Intermediate game in a BO3 series — update score display without closing the match.
+        // Omit `advancing` entirely; advancing:false for both signals a v2.1 tie and closes the match.
         const winnerIsP1 =
           Number(winnerRow.challongeParticipantId) ===
           challongeMatch.player1_id;
-        await this.challonge.updateMatchScores(
+        await this.challonge.updateLiveScores(
           playoff.challongeUrl,
           challongeMatch.id,
           challongeMatch.player1_id,

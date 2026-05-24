@@ -402,7 +402,12 @@ export class ChallongeService {
     return bo3Rounds;
   }
 
-  async updateMatchScores(
+  /**
+   * Updates the live score display for an in-progress match without closing it.
+   * Omits `advancing` entirely — sending advancing:false for both signals a tie
+   * in v2.1 and would close the match. No advancing field = scores update only.
+   */
+  async updateLiveScores(
     url: string,
     matchId: number,
     player1ParticipantId: number,
@@ -422,12 +427,10 @@ export class ChallongeService {
                   {
                     participant_id: player1ParticipantId,
                     score_set: String(player1Score),
-                    advancing: false,
                   },
                   {
                     participant_id: player2ParticipantId,
                     score_set: String(player2Score),
-                    advancing: false,
                   },
                 ],
               },
@@ -437,9 +440,9 @@ export class ChallongeService {
         ),
       );
     } catch (err) {
-      this.logger.error('updateMatchScores failed', err);
+      this.logger.error('updateLiveScores failed', err);
       throw new InternalServerErrorException(
-        'Failed to update match scores on Challonge',
+        'Failed to update live scores on Challonge',
       );
     }
   }
