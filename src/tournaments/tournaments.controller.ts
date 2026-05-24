@@ -19,6 +19,8 @@ import {
   ApiBody,
   ApiConsumes,
   ApiOkResponse,
+  ApiOperation,
+  ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -44,6 +46,7 @@ import { SubmitPlayoffMatchDto } from '../playoff/dto/submit-playoff-match.dto';
 import { DisqualifyTeamDto } from '../playoff/dto/disqualify-team.dto';
 import { TechLossPlayoffDto } from '../playoff/dto/tech-loss-playoff.dto';
 import { OpenPlayoffMatchDto } from '../playoff/dto/open-playoff-match.dto';
+import { PlayoffMatch } from '../playoff/playoff-match.entity';
 
 const IMAGE_INTERCEPTOR_OPTIONS = {
   fileFilter: imageFileFilter,
@@ -233,6 +236,19 @@ export class TournamentsController {
     @Body() body: SubmitPlayoffMatchDto,
   ) {
     return this.playoffService.submitMatch(tournamentId, body.dotaMatchId);
+  }
+
+  @Post(':id/playoff/matches/:matchId/verify')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Verify a playoff game result' })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiParam({ name: 'matchId', type: String, format: 'uuid' })
+  verifyPlayoffMatch(
+    @Param('id', new ParseUUIDPipe()) tournamentId: string,
+    @Param('matchId', new ParseUUIDPipe()) matchId: string,
+  ): Promise<PlayoffMatch> {
+    return this.playoffService.verifyPlayoffMatch(tournamentId, matchId);
   }
 
   @Post(':id/playoff/disqualify')

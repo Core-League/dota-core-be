@@ -271,6 +271,22 @@ export class PlayoffService {
     return match;
   }
 
+  async verifyPlayoffMatch(
+    tournamentId: string,
+    matchId: string,
+  ): Promise<PlayoffMatch> {
+    const playoff = await this.playoffRepo.findByTournamentId(tournamentId);
+    if (!playoff) throw new NotFoundException('Playoff not found');
+
+    const match = await this.dataSource
+      .getRepository(PlayoffMatch)
+      .findOne({ where: { id: matchId, playoffId: playoff.id } });
+    if (!match) throw new NotFoundException('Playoff match not found');
+
+    match.isVerified = true;
+    return this.dataSource.getRepository(PlayoffMatch).save(match);
+  }
+
   async disqualifyTeam(
     tournamentId: string,
     teamId: string,
