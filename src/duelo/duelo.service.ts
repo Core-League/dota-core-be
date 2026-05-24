@@ -144,22 +144,26 @@ export class DueloService {
         })
       : [];
 
-    const realPlayoffMatches = playoffMatches.filter(
-      (m) =>
-        m.dotaMatchId &&
-        !m.dotaMatchId.startsWith('tech_loss_') &&
-        !m.dotaMatchId.startsWith('manual_'),
-    );
+    const isRealMatchId = (id: string | null): id is string =>
+      !!id && !id.startsWith('tech_loss_') && !id.startsWith('manual_');
 
-    const skipped = playoffMatches.length - realPlayoffMatches.length;
+    const realQualIds = qualMatches
+      .map((m) => m.dotaMatchId)
+      .filter(isRealMatchId);
 
-    const allDotaIds = [
-      ...qualMatches.map((m) => m.dotaMatchId!),
-      ...realPlayoffMatches.map((m) => m.dotaMatchId!),
-    ];
+    const realPlayoffIds = playoffMatches
+      .map((m) => m.dotaMatchId)
+      .filter(isRealMatchId);
+
+    const skipped =
+      qualMatches.length -
+      realQualIds.length +
+      (playoffMatches.length - realPlayoffIds.length);
+
+    const allDotaIds = [...realQualIds, ...realPlayoffIds];
 
     this.logger.log(
-      `[Duelo] Syncing tournament ${tournamentId}: ${qualMatches.length} qual + ${realPlayoffMatches.length} playoff matches (${skipped} playoff skipped — no real dotaMatchId)`,
+      `[Duelo] Syncing tournament ${tournamentId}: ${realQualIds.length}/${qualMatches.length} qual + ${realPlayoffIds.length}/${playoffMatches.length} playoff (${skipped} skipped — synthetic dotaMatchId)`,
     );
 
     let sent = 0;
