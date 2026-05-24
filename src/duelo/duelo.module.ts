@@ -1,6 +1,8 @@
 import { HttpModule } from '@nestjs/axios';
 import { Module } from '@nestjs/common';
+import { AdminGuard } from '../admin/guards/admin.guard';
 import { Dota2Module } from '../dota2/dota2.module';
+import { DueloController } from './duelo.controller';
 import { DueloService } from './duelo.service';
 
 @Module({
@@ -8,7 +10,8 @@ import { DueloService } from './duelo.service';
     HttpModule.register({ timeout: 15000, maxRedirects: 3 }),
     Dota2Module,
   ],
-  providers: [DueloService],
+  controllers: [DueloController],
+  providers: [DueloService, AdminGuard],
   exports: [DueloService],
 })
 export class DueloModule {}
