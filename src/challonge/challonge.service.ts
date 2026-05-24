@@ -402,51 +402,6 @@ export class ChallongeService {
     return bo3Rounds;
   }
 
-  /**
-   * Updates the live score display for an in-progress match without closing it.
-   * Omits `advancing` entirely — sending advancing:false for both signals a tie
-   * in v2.1 and would close the match. No advancing field = scores update only.
-   */
-  async updateLiveScores(
-    url: string,
-    matchId: number,
-    player1ParticipantId: number,
-    player2ParticipantId: number,
-    player1Score: number,
-    player2Score: number,
-  ): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.http.put(
-          `${this.baseUrl}/tournaments/${url}/matches/${matchId}.json`,
-          {
-            data: {
-              type: 'match',
-              attributes: {
-                match: [
-                  {
-                    participant_id: player1ParticipantId,
-                    score_set: String(player1Score),
-                  },
-                  {
-                    participant_id: player2ParticipantId,
-                    score_set: String(player2Score),
-                  },
-                ],
-              },
-            },
-          },
-          { headers: this.headers },
-        ),
-      );
-    } catch (err) {
-      this.logger.error('updateLiveScores failed', err);
-      throw new InternalServerErrorException(
-        'Failed to update live scores on Challonge',
-      );
-    }
-  }
-
   async reportMatchResult(
     url: string,
     matchId: number,

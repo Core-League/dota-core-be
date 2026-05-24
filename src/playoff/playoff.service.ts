@@ -245,6 +245,11 @@ export class PlayoffService {
         if (g.winnerId) wins.set(g.winnerId, (wins.get(g.winnerId) ?? 0) + 1);
       }
 
+      this.logger.log(
+        `BO3 tally challongeMatchId=${challongeMatch.id} round=${challongeMatch.round} ` +
+          `gamesFound=${allGames.length} wins=${JSON.stringify(Object.fromEntries(wins))}`,
+      );
+
       const seriesWinnerId = [...wins.entries()].find(([, w]) => w >= 2)?.[0];
       if (seriesWinnerId) {
         const seriesWinnerRow =
@@ -262,20 +267,6 @@ export class PlayoffService {
           challongeMatch.player2_id,
           seriesWinnerWins,
           seriesLoserWins,
-        );
-      } else {
-        // Intermediate game in a BO3 series — update score display without closing the match.
-        // Omit `advancing` entirely; advancing:false for both signals a v2.1 tie and closes the match.
-        const winnerIsP1 =
-          Number(winnerRow.challongeParticipantId) ===
-          challongeMatch.player1_id;
-        await this.challonge.updateLiveScores(
-          playoff.challongeUrl,
-          challongeMatch.id,
-          challongeMatch.player1_id,
-          challongeMatch.player2_id,
-          wins.get(winnerIsP1 ? winnerRow.teamId : loserRow.teamId) ?? 0,
-          wins.get(winnerIsP1 ? loserRow.teamId : winnerRow.teamId) ?? 0,
         );
       }
     }
