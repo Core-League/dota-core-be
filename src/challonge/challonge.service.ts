@@ -450,8 +450,28 @@ export class ChallongeService {
     }
   }
 
+  async resetTournamentToPending(url: string): Promise<void> {
+    await firstValueFrom(
+      this.http.put(
+        `${this.baseUrl}/tournaments/${url}/change_state.json`,
+        {
+          data: {
+            type: 'TournamentState',
+            attributes: { state: 'reset' },
+          },
+        },
+        { headers: this.headers },
+      ),
+    );
+  }
+
   async deleteTournament(url: string): Promise<void> {
     try {
+      try {
+        await this.resetTournamentToPending(url);
+      } catch {
+        // Ignore — tournament may already be pending or reset is unsupported
+      }
       await firstValueFrom(
         this.http.delete(`${this.baseUrl}/tournaments/${url}.json`, {
           headers: this.headers,
