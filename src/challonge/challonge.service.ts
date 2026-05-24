@@ -11,7 +11,7 @@ import {
   type BracketIndexedRow,
   type ResolvedDeBo3,
   bracketOrdinalFromChallongeMatchAttrs,
-  resolveDoubleElimBo3ByBracketOrdinal,
+  resolveDoubleElimFinalsFromRounds,
   PLAYOFF_BO3_FINALS_COUNT,
 } from '../playoff/playoff-finals-bo3';
 
@@ -374,18 +374,20 @@ export class ChallongeService {
   }
 
   /**
-   * У double elimination із N активних команд очікуємо лише три BO3-finals:
-   * UB final (N−2), LB final (2N−4), GF (2N−3) за canonical bracket порядком.
+   * Identify the three BO3 finals (UBF, LBF, GF) for a DE bracket using
+   * Challonge round numbers — GF = max positive round, UBF = max−1,
+   * LBF = most negative round. Works for any power-of-two N.
    */
   async getDoubleElimBo3BracketResolution(
     url: string,
     activeTeamCount: number,
   ): Promise<ResolvedDeBo3> {
-    const indexed = await this.listBracketIndexedMatches(url);
-    const resolved = resolveDoubleElimBo3ByBracketOrdinal(
-      indexed,
-      activeTeamCount,
-    );
+    const rawRows = await this.listMatchesIdRound(url);
+    const rows = rawRows.map((r) => ({
+      challongeNumericId: r.id,
+      round: r.round,
+    }));
+    const resolved = resolveDoubleElimFinalsFromRounds(rows, activeTeamCount);
     for (const line of resolved.diagnostics) {
       if (line.startsWith('ERROR')) this.logger.error(line);
       else if (line.startsWith('WARN')) this.logger.warn(line);

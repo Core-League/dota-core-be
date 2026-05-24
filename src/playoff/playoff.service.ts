@@ -1443,12 +1443,11 @@ export class PlayoffService {
       });
       let persisted = existing;
 
-      const basePatch = (): Partial<PlayoffSeries> =>
-        ({
-          bestOf,
-          isFinalSeries: isBo3,
-          finalType: isBo3 ? finalType : null,
-        }) as Partial<PlayoffSeries>;
+      const basePatch = (): Partial<PlayoffSeries> => ({
+        bestOf,
+        isFinalSeries: isBo3,
+        finalType: isBo3 ? finalType : null,
+      });
 
       if (!existing) {
         persisted = await repo.save(
@@ -1786,6 +1785,24 @@ export class PlayoffService {
     return map;
   }
 
+  /** Dota team ID → display name, for labelling league fixture nodes. */
+  private async buildDotaTeamIdToName(
+    tournamentId: string,
+  ): Promise<Map<string, string>> {
+    const tptRepo = this.dataSource.getRepository(TournamentPlayoffTeam);
+    const rows = await tptRepo.find({
+      where: { tournamentId, isDisqualified: false },
+      relations: ['team'],
+    });
+    const map = new Map<string, string>();
+    for (const r of rows) {
+      const dota = (r.team?.dotaTeamId ?? '').trim();
+      const name = (r.team?.name ?? '').trim();
+      if (dota && name) map.set(dota, name);
+    }
+    return map;
+  }
+
   private async ensureDotaOrganizationalShell(
     playoff: Playoff,
   ): Promise<Playoff> {
@@ -1844,11 +1861,10 @@ export class PlayoffService {
   ): Promise<void> {
     const fixtureRepo = this.dataSource.getRepository(PlayoffLeagueFixture);
 
-    const challongeParticipantIdToDota =
-      await this.buildChallongeParticipantIdToDotaTeamId(
-        tournamentId,
-        challongeUrl,
-      );
+    const [challongeParticipantIdToDota, dotaTeamIdToName] = await Promise.all([
+      this.buildChallongeParticipantIdToDotaTeamId(tournamentId, challongeUrl),
+      this.buildDotaTeamIdToName(tournamentId),
+    ]);
 
     const fixtures = await fixtureRepo.find({ where: { playoffId } });
 
@@ -1877,6 +1893,9 @@ export class PlayoffService {
       if (!dA || !dB || dA === dB) continue;
 
       const mid = String(m.id);
+      const nameA = dotaTeamIdToName.get(dA) ?? dA;
+      const nameB = dotaTeamIdToName.get(dB) ?? dB;
+      const fixtureName = `${nameA} vs ${nameB}`;
 
       try {
         if (finalsBo3ChallongeIds.has(m.id)) {
@@ -1888,6 +1907,7 @@ export class PlayoffService {
               dA,
               dB,
               false,
+              fixtureName,
             );
             await fixtureRepo.save(
               fixtureRepo.create({
@@ -1912,6 +1932,7 @@ export class PlayoffService {
             dA,
             dB,
             true,
+            fixtureName,
           );
           await fixtureRepo.save(
             fixtureRepo.create({
