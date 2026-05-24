@@ -348,60 +348,27 @@ export class Dota2Service {
   }
 
   /**
-   * After addNodeGroup (nodeGroupType=7), resolves the created node's id from the page.
-   * nodeGroupType=7 may render as TypeSeries, TypeRoundRobin, or TypeElimination depending
-   * on the Dota2 page version, so all three selectors are tried in order.
-   */
-  async resolveBestOfSeriesNodeGroupId(
-    containingNodeGroupId: string,
-  ): Promise<string> {
-    const html = await this.fetchTournamentPage();
-    const $ = cheerio.load(html);
-    const container = `#NodeGroup${containingNodeGroupId}`;
-    for (const cls of ['.TypeSeries', '.TypeRoundRobin', '.TypeElimination']) {
-      const el = $(`${container} ${cls}.NodeGroup`).last();
-      const rawId = el.attr('id');
-      const m = rawId?.match(/^NodeGroup(\d+)$/);
-      if (m) {
-        this.logger.log(
-          `Resolved series nodeGroupId=${m[1]} (${cls}) inside NodeGroup${containingNodeGroupId}`,
-        );
-        return m[1];
-      }
-    }
-    this.logger.error(
-      `Could not find series NodeGroup inside #NodeGroup${containingNodeGroupId}`,
-    );
-    throw new InternalServerErrorException(
-      `Could not resolve series NodeGroup id inside NodeGroup${containingNodeGroupId} from Dota2 page`,
-    );
-  }
-
-  /**
-   * Creates a single series fixture node (nodeGroupType=7) under the given organisational shell.
-   * Pass bestOfOne=false for BO3 matches (UBF, LBF, Grand Final); default is BO1.
-   * Returns the Dota nodeGroupId of the created fixture.
+   * RR-style pair node under organisational parent (same sequence as qualification join).
+   * Returns Dota RR nodeGroupId for the fixture.
    */
   async createTwoTeamFixtureNode(
     containingOrganizationalGroupId: string,
     dotaTeamIdA: string,
     dotaTeamIdB: string,
-    bestOfOne = true,
     name?: string,
   ): Promise<string> {
     await this.addNodeGroup({
       nodeGroupId: '',
-      // nodeGroupType=7 is "series" — default_node_type 1=BO1, 2=BO3
-      nodeGroupType: 7,
+      nodeGroupType: 2,
       teamCount: 2,
       containingNodeGroupId: containingOrganizationalGroupId,
       phase: 0,
-      defaultNodeType: bestOfOne ? 1 : 2,
+      defaultNodeType: 1,
       name,
     });
     let matchNodeGroupId: string | undefined;
     try {
-      matchNodeGroupId = await this.resolveBestOfSeriesNodeGroupId(
+      matchNodeGroupId = await this.resolveRoundRobinNodeGroupId(
         containingOrganizationalGroupId,
       );
       await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdA);
@@ -413,7 +380,7 @@ export class Dota2Service {
           await this.removeNodeGroup(matchNodeGroupId);
         } catch (removeErr) {
           this.logger.warn(
-            `removeNodeGroup failed for orphan series node ${matchNodeGroupId}`,
+            `removeNodeGroup failed for orphan RR node ${matchNodeGroupId}`,
             removeErr,
           );
         }
