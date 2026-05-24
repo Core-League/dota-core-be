@@ -1,94 +1,42 @@
 import {
-  extractPrerequisiteParentMatchIds,
-  resolveStructuralFinalBo3Slots,
-  type ChallongeBracketMatchNode,
+  PLAYOFF_TAIL_BO3_COUNT,
+  bo3TailSortedMatchIds,
+  computePlayoffBo3ChallongeMatchIds,
+  expectedDoubleEliminationMatchCount,
 } from './playoff-finals-bo3';
 
-describe('resolveStructuralFinalBo3Slots', () => {
-  it('double elim: UB final (+), LB final (-), GF (never referenced upstream)', () => {
-    const nodes: ChallongeBracketMatchNode[] = [
-      { id: 10, round: 1, prerequisiteMatchIds: [] },
-      { id: 11, round: 1, prerequisiteMatchIds: [] },
-      { id: 50, round: -12, prerequisiteMatchIds: [] },
-      { id: 20, round: 4, prerequisiteMatchIds: [10, 11] },
-      { id: 90, round: -2, prerequisiteMatchIds: [50] },
-      { id: 300, round: 42, prerequisiteMatchIds: [20, 90] },
-    ];
-
-    const { bo3MatchIds, slotByMatchId } =
-      resolveStructuralFinalBo3Slots(nodes);
-    expect([...bo3MatchIds].sort((a, b) => a - b)).toEqual([20, 90, 300]);
-    expect(slotByMatchId.get(300)).toBe('grand_final');
-    expect(slotByMatchId.get(20)).toBe('upper_bracket_final');
-    expect(slotByMatchId.get(90)).toBe('lower_bracket_final');
-  });
-
-  it('single elim (all nonnegative rounds): only grand final BO3', () => {
-    const semiW = { id: 10, round: 2, prerequisiteMatchIds: [] as number[] };
-    const semiX = { id: 11, round: 2, prerequisiteMatchIds: [] as number[] };
-
-    const grandFinal = {
-      id: 30,
-      round: 7,
-      prerequisiteMatchIds: [10, 11],
-    };
-
-    const { bo3MatchIds, slotByMatchId } = resolveStructuralFinalBo3Slots([
-      semiW,
-      semiX,
-      grandFinal,
-    ]);
-    expect([...bo3MatchIds]).toEqual([30]);
-    expect(slotByMatchId.get(30)).toBe('grand_final');
-    expect(slotByMatchId.has(10)).toBe(false);
-  });
-
-  it('defaults to BO1 everywhere when prerequisites are missing', () => {
-    const nodes: ChallongeBracketMatchNode[] = [
-      { id: 100, round: 1, prerequisiteMatchIds: [] },
-      { id: 101, round: 8, prerequisiteMatchIds: [] },
-    ];
-    expect(resolveStructuralFinalBo3Slots(nodes).bo3MatchIds.size).toBe(0);
-  });
-
-  it('double elim: LB final via loser-slot flag even when both feeder rounds ≥ 0', () => {
-    const nodes: ChallongeBracketMatchNode[] = [
-      { id: 10, round: 1, prerequisiteMatchIds: [] },
-      { id: 11, round: 1, prerequisiteMatchIds: [] },
-      {
-        id: 20,
-        round: 2,
-        prerequisiteMatchIds: [10, 11],
-      },
-      {
-        id: 90,
-        round: 5,
-        prerequisiteMatchIds: [50],
-        prerequisiteLinks: [
-          { upstreamMatchId: 20, feedsFromUpstreamLoser: true },
-          { upstreamMatchId: 50, feedsFromUpstreamLoser: false },
-        ],
-      },
-      { id: 50, round: -1, prerequisiteMatchIds: [] },
-      {
-        id: 300,
-        round: 9,
-        prerequisiteMatchIds: [20, 90],
-      },
-    ];
-
-    const { bo3MatchIds } = resolveStructuralFinalBo3Slots(nodes);
-    expect([...bo3MatchIds].sort((a, b) => a - b)).toEqual([20, 90, 300]);
+describe('expectedDoubleEliminationMatchCount', () => {
+  it('follows 2*N-2 for N≥2', () => {
+    expect(expectedDoubleEliminationMatchCount(0)).toBe(0);
+    expect(expectedDoubleEliminationMatchCount(1)).toBe(0);
+    expect(expectedDoubleEliminationMatchCount(4)).toBe(6);
+    expect(expectedDoubleEliminationMatchCount(8)).toBe(14);
+    expect(expectedDoubleEliminationMatchCount(16)).toBe(30);
   });
 });
 
-describe('extractPrerequisiteParentMatchIds', () => {
-  it('parses prerequisite_match_ids_csv into ids', () => {
-    expect(
-      extractPrerequisiteParentMatchIds({
-        attributes: { prerequisite_match_ids_csv: ' 12 , 34; 56 ' },
-      }),
-    ).toEqual(expect.arrayContaining([12, 34, 56]));
-    expect(extractPrerequisiteParentMatchIds({ attributes: {} })).toEqual([]);
+describe('bo3TailSortedMatchIds', () => {
+  it('marks last PLAYOFF_TAIL_BO3_COUNT ids when sorted ascending', () => {
+    const mids = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+    expect(PLAYOFF_TAIL_BO3_COUNT).toBe(3);
+    expect([...bo3TailSortedMatchIds(mids)].sort((a, b) => a - b)).toEqual([
+      80, 90, 100,
+    ]);
+  });
+
+  it('when fewer matches than tail, all are tail BO3', () => {
+    expect([...bo3TailSortedMatchIds([900, 30])].sort((a, b) => a - b)).toEqual(
+      [30, 900],
+    );
+  });
+});
+
+describe('computePlayoffBo3ChallongeMatchIds', () => {
+  it('delegates tail selection', () => {
+    const mids = Array.from({ length: 14 }, (_, i) => i + 501);
+    const res = computePlayoffBo3ChallongeMatchIds(mids, 8);
+    expect(res.expectedMatchCount).toBe(14);
+    expect(res.fetchedMatchCount).toBe(14);
+    expect([...res.bo3Ids]).toEqual([512, 513, 514]);
   });
 });

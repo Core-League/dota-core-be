@@ -138,8 +138,17 @@ export class DevService {
     });
     await matchRepo.save(match);
 
+    const activeTeams = await tptRepo.count({
+      where: { tournamentId, isDisqualified: false },
+    });
+    const teamCt =
+      typeof activeTeams === 'bigint'
+        ? Number(activeTeams)
+        : Math.trunc(Number(activeTeams));
+
     const finalsBo3 = await this.challonge.getFinalBo3ChallongeMatchIds(
       playoff.challongeUrl,
+      Number.isFinite(teamCt) ? teamCt : 0,
     );
 
     if (!finalsBo3.has(challongeMatch.id)) {

@@ -662,6 +662,7 @@ export class PlayoffService {
 
     const finalsBo3 = await this.challonge.getFinalBo3ChallongeMatchIds(
       playoff.challongeUrl,
+      await this.activePlayoffTeamCount(playoff.tournamentId),
     );
     const isFinalsBo3 = finalsBo3.has(challongeMatch.id);
 
@@ -1288,12 +1289,31 @@ export class PlayoffService {
     return { matchIdUpdates, seriesIdUpdates };
   }
 
+  /** Активні учасники playoff (DQ не враховуються); для формули розміру DE-сітки 2*N−2. */
+  private async activePlayoffTeamCount(tournamentId: string): Promise<number> {
+    const raw = await this.dataSource
+      .getRepository(TournamentPlayoffTeam)
+      .count({
+        where: { tournamentId, isDisqualified: false },
+      });
+    const n = typeof raw === 'bigint' ? Number(raw) : Math.trunc(Number(raw));
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
+  }
+
   private async ensurePlayoffSeriesForBracket(
     playoffId: string,
     challongeUrl: string,
   ): Promise<void> {
-    const finalsBo3Ids =
-      await this.challonge.getFinalBo3ChallongeMatchIds(challongeUrl);
+    const playoff = await this.dataSource.getRepository(Playoff).findOne({
+      where: { id: playoffId },
+    });
+    const teamCt = playoff
+      ? await this.activePlayoffTeamCount(playoff.tournamentId)
+      : 0;
+    const finalsBo3Ids = await this.challonge.getFinalBo3ChallongeMatchIds(
+      challongeUrl,
+      teamCt,
+    );
     const nodes = await this.challonge.listMatchesIdRound(challongeUrl);
     const repo = this.dataSource.getRepository(PlayoffSeries);
     for (const n of nodes) {
@@ -1623,7 +1643,10 @@ export class PlayoffService {
     const existingMatches = new Set(fixtures.map((f) => f.challongeMatchId));
 
     const finalsBo3ChallongeIds =
-      await this.challonge.getFinalBo3ChallongeMatchIds(challongeUrl);
+      await this.challonge.getFinalBo3ChallongeMatchIds(
+        challongeUrl,
+        await this.activePlayoffTeamCount(tournamentId),
+      );
 
     const opens = await this.challonge.listOpenMatches(challongeUrl);
 

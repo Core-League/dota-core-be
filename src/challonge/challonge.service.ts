@@ -7,11 +7,7 @@ import {
 } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 
-import {
-  extractPrerequisiteLinks,
-  extractPrerequisiteParentMatchIds,
-  resolveStructuralFinalBo3Slots,
-} from '../playoff/playoff-finals-bo3';
+import { computePlayoffBo3ChallongeMatchIds } from '../playoff/playoff-finals-bo3';
 
 interface V2TournamentResponse {
   data: {
@@ -359,56 +355,35 @@ export class ChallongeService {
     }));
   }
 
-  /** BO3 slots from prerequisite graph (grand final + feeders in DE; GF-only for SE). */
-  async getFinalBo3ChallongeMatchIds(url: string): Promise<Set<number>> {
+  /**
+   * BO3 у повній DE сітці: загальне число матчів очікується 2*activeTeams−2;
+   * останні 3 Challonge-міси (за numeric id ascending) — BO3, решта BO1.
+   */
+  async getFinalBo3ChallongeMatchIds(
+    url: string,
+    activeTeamCount: number,
+  ): Promise<Set<number>> {
     const rows = await this.fetchAllMatchPagesJsonApi(url);
-    const nodes = rows.map((m) => {
-      const attrs = m.attributes ?? {};
-      const rel = m.relationships;
-      return {
-        id: Number(m.id),
-        round: typeof attrs.round === 'number' ? attrs.round : 0,
-        prerequisiteMatchIds: extractPrerequisiteParentMatchIds({
-          attributes: attrs,
-          relationships: rel,
-        }),
-        prerequisiteLinks: extractPrerequisiteLinks({
-          attributes: attrs,
-          relationships: rel,
-        }),
-      };
-    });
+    const matchIds = rows.map((m) => Number(m.id));
+    const { bo3Ids, expectedMatchCount, fetchedMatchCount } =
+      computePlayoffBo3ChallongeMatchIds(matchIds, activeTeamCount);
 
-    const { bo3MatchIds, slotByMatchId } =
-      resolveStructuralFinalBo3Slots(nodes);
-
-    const slotStr = [...slotByMatchId.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([id, slot]) => `${id}:${slot}`)
-      .join(', ');
-
-    const anyUpstream = rows.some(
-      (m) =>
-        extractPrerequisiteParentMatchIds({
-          attributes: m.attributes ?? {},
-          relationships: m.relationships,
-        }).length > 0,
-    );
-    if (rows.length > 0 && !anyUpstream && bo3MatchIds.size === 0) {
+    const teamsInt = Math.trunc(activeTeamCount);
+    if (expectedMatchCount > 0 && fetchedMatchCount !== expectedMatchCount) {
       this.logger.warn(
-        'getFinalBo3ChallongeMatchIds: prerequisite fields missing / empty on all matches — all slots stay BO1',
+        `getFinalBo3ChallongeMatchIds: for ${teamsInt} active teams expected ` +
+          `${expectedMatchCount} matches (2*N-2) but Challonge has ${fetchedMatchCount}`,
       );
     }
 
     this.logger.log(
-      `getFinalBo3ChallongeMatchIds: bracketNodes=${rows.length} finals=${[
-        ...bo3MatchIds,
-      ]
-        .sort((a, b) => a - b)
-        .join(',')} slots=${slotStr}`,
+      `getFinalBo3ChallongeMatchIds: teams=${teamsInt} fetched=${fetchedMatchCount} ` +
+        `expectedTotal=${expectedMatchCount} tailBo3=${[...bo3Ids]
+          .sort((a, b) => a - b)
+          .join(',')}`,
     );
 
-    return bo3MatchIds;
+    return bo3Ids;
   }
 
   async reportMatchResult(
