@@ -159,9 +159,9 @@ export class Dota2Service {
       team_count: String(params.teamCount),
       start_time: '0',
       end_time: '0',
-      advancing_team_count: '',
-      secondary_advancing_team_count: '',
-      tertiary_advancing_team_count: '',
+      advancing_team_count: '0',
+      secondary_advancing_team_count: '0',
+      tertiary_advancing_team_count: '0',
       node_group_type: String(params.nodeGroupType),
       default_node_type: String(params.defaultNodeType ?? 0),
       max_rounds: '0',
@@ -317,9 +317,9 @@ export class Dota2Service {
   }
 
   /**
-   * After calling addNodeGroup (nodeGroupType=7, round-robin match) inside a
+   * After calling addNodeGroup (nodeGroupType=2, RR pairing) inside a
    * qualification group, fetch the tournament page and return the id of the
-   * last .TypeRoundRobin.NodeGroup element that is a descendant of
+   * last .TypeRoundRobin.NodeGroup element under
    * #NodeGroup{containingNodeGroupId}.
    */
   async resolveRoundRobinNodeGroupId(
@@ -348,8 +348,77 @@ export class Dota2Service {
   }
 
   /**
-   * RR-style pair node under organisational parent (same sequence as qualification join).
-   * Returns Dota RR nodeGroupId for the fixture.
+   * After addNodeGroup for league BO-series fixtures (`node_group_type=7`;
+   * `default_node_type=2` for BO3, matching Valve `post_editnodegroup`).
+   * Prefer RR scrape (often still works); fall back to elimination/series wrappers.
+   */
+  async resolveBestOfSeriesNodeGroupId(
+    containingNodeGroupId: string,
+  ): Promise<string> {
+    try {
+      return await this.resolveRoundRobinNodeGroupId(containingNodeGroupId);
+    } catch {
+      this.logger.warn(
+        `RR scrape missed BO-series node inside NodeGroup${containingNodeGroupId} — trying fallbacks`,
+      );
+    }
+
+    const html = await this.fetchTournamentPage();
+    const $ = cheerio.load(html);
+    const root = $(`#NodeGroup${containingNodeGroupId}`);
+    const trySelectors = [
+      '.TypeElimination.NodeGroup',
+      '.TypeSeries.NodeGroup',
+    ];
+
+    for (const selector of trySelectors) {
+      const el = root.find(selector).last();
+      const rawId = el.attr('id');
+      const match = rawId?.match(/^NodeGroup(\d+)$/);
+      if (match) {
+        this.logger.log(
+          `Resolved BO series nodeGroupId=${match[1]} via ${selector} under NodeGroup${containingNodeGroupId}`,
+        );
+        return match[1];
+      }
+    }
+
+    // Fallback: find the highest-ID NodeGroup on the page that is newer than the
+    // parent org group. Since IDs are monotonically increasing and we just called
+    // addNodeGroup, the newly created node will have the largest ID.
+    const parentId = parseInt(containingNodeGroupId, 10);
+    let bestId = -1;
+    $('[id^="NodeGroup"]').each((_, el) => {
+      const rawId = $(el).attr('id');
+      const m = rawId?.match(/^NodeGroup(\d+)$/);
+      if (m) {
+        const id = parseInt(m[1], 10);
+        if (id > parentId && id > bestId) bestId = id;
+      }
+    });
+    if (bestId > -1) {
+      this.logger.log(
+        `Resolved BO series nodeGroupId=${bestId} via max-ID fallback (parent NodeGroup${containingNodeGroupId})`,
+      );
+      return String(bestId);
+    }
+
+    this.logger.error(
+      `Could not resolve BO series NodeGroup inside #NodeGroup${containingNodeGroupId}`,
+    );
+    throw new InternalServerErrorException(
+      `Could not resolve BO series NodeGroup inside NodeGroup${containingNodeGroupId} from Dota2 page`,
+    );
+  }
+
+  /**
+   * Pair node under organisational parent.
+   * Both BO1 and BO3 use `node_group_type=7`; only `default_node_type` differs:
+   *   BO1 → default_node_type=1
+   *   BO3 → default_node_type=2
+   *
+   * @param bestOfOne — When false, creates a BO3-series slot.
+   * @param name — Optional display label shown on the Dota 2 admin page ("Team A vs Team B").
    */
   async createTwoTeamFixtureNode(
     containingOrganizationalGroupId: string,
@@ -360,7 +429,7 @@ export class Dota2Service {
   ): Promise<string> {
     await this.addNodeGroup({
       nodeGroupId: '',
-      nodeGroupType: 2,
+      nodeGroupType: 7,
       teamCount: 2,
       containingNodeGroupId: containingOrganizationalGroupId,
       phase: 0,
@@ -369,9 +438,10 @@ export class Dota2Service {
     });
     let matchNodeGroupId: string | undefined;
     try {
-      matchNodeGroupId = await this.resolveRoundRobinNodeGroupId(
+      matchNodeGroupId = await this.resolveBestOfSeriesNodeGroupId(
         containingOrganizationalGroupId,
       );
+
       await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdA);
       await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdB);
       return matchNodeGroupId;
@@ -381,7 +451,7 @@ export class Dota2Service {
           await this.removeNodeGroup(matchNodeGroupId);
         } catch (removeErr) {
           this.logger.warn(
-            `removeNodeGroup failed for orphan RR node ${matchNodeGroupId}`,
+            `removeNodeGroup failed for orphan fixture node ${matchNodeGroupId}`,
             removeErr,
           );
         }

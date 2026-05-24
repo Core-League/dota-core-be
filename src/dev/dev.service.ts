@@ -138,9 +138,20 @@ export class DevService {
     });
     await matchRepo.save(match);
 
-    const bo3Rounds = await this.challonge.getBO3Rounds(playoff.challongeUrl);
+    const activeTeams = await tptRepo.count({
+      where: { tournamentId, isDisqualified: false },
+    });
+    const teamCt =
+      typeof activeTeams === 'bigint'
+        ? Number(activeTeams)
+        : Math.trunc(Number(activeTeams));
 
-    if (!bo3Rounds.has(challongeMatch.round)) {
+    const finalsBo3 = await this.challonge.getFinalBo3ChallongeMatchIds(
+      playoff.challongeUrl,
+      Number.isFinite(teamCt) ? teamCt : 0,
+    );
+
+    if (!finalsBo3.has(challongeMatch.id)) {
       await this.challonge.reportMatchResult(
         playoff.challongeUrl,
         challongeMatch.id,

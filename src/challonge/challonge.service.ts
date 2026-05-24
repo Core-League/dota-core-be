@@ -7,6 +7,14 @@ import {
 } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 
+import {
+  type BracketIndexedRow,
+  type ResolvedDeBo3,
+  bracketOrdinalFromChallongeMatchAttrs,
+  resolveDoubleElimFinalsFromRounds,
+  PLAYOFF_BO3_FINALS_COUNT,
+} from '../playoff/playoff-finals-bo3';
+
 interface V2TournamentResponse {
   data: {
     id: string;
@@ -21,12 +29,14 @@ interface V2ParticipantItem {
 
 interface V2MatchItem {
   id: string;
+  type?: string;
   attributes: {
     state: string;
     round: number;
     points_by_participant: Array<{ participant_id: number }>;
     [key: string]: unknown;
   };
+  relationships?: Record<string, unknown>;
 }
 
 /** Challonge accepts large rosters safely if we bulk-add in chunks. */
@@ -43,6 +53,57 @@ export class ChallongeService {
     if (!this.apiKey) {
       this.logger.warn('CHALLONGE_API_KEY not set in environment');
     }
+  }
+
+  /** Paginates through Challonge `/matches.json` until a short page / empty slice. */
+  private async fetchAllMatchPagesJsonApi(
+    url: string,
+    extraParams?: Record<string, string | undefined>,
+  ): Promise<V2MatchItem[]> {
+    const merged: V2MatchItem[] = [];
+    const perPage = 100;
+    const capPages = 200;
+
+    for (let page = 1; page <= capPages; page += 1) {
+      let slice: V2MatchItem[];
+      try {
+        const resp = await firstValueFrom(
+          this.http.get<{ data: V2MatchItem[] }>(
+            `${this.baseUrl}/tournaments/${url}/matches.json`,
+            {
+              headers: this.headers,
+              params: (() => {
+                const params: Record<string, string> = {
+                  page: String(page),
+                  per_page: String(perPage),
+                };
+                if (extraParams) {
+                  for (const [k, v] of Object.entries(extraParams)) {
+                    if (v !== undefined && v !== '') params[k] = v;
+                  }
+                }
+                return params;
+              })(),
+            },
+          ),
+        );
+        slice = resp.data.data ?? [];
+      } catch (err) {
+        this.logger.error(
+          `fetchAllMatchPagesJsonApi HTTP failed page=${page}`,
+          err,
+        );
+        throw new InternalServerErrorException(
+          'Failed to fetch matches from Challonge',
+        );
+      }
+
+      if (slice.length === 0) break;
+      merged.push(...slice);
+      if (slice.length < perPage) break;
+    }
+
+    return merged;
   }
 
   private get headers() {
@@ -170,24 +231,7 @@ export class ChallongeService {
       state: string;
     }[]
   > {
-    let matches: V2MatchItem[];
-    try {
-      const resp = await firstValueFrom(
-        this.http.get<{ data: V2MatchItem[] }>(
-          `${this.baseUrl}/tournaments/${url}/matches.json`,
-          { headers: this.headers },
-        ),
-      );
-      matches = resp.data.data;
-    } catch (err) {
-      this.logger.error(
-        'listAllMatchesWithBothParticipants HTTP call failed',
-        err,
-      );
-      throw new InternalServerErrorException(
-        'Failed to fetch matches from Challonge',
-      );
-    }
+    const matches = await this.fetchAllMatchPagesJsonApi(url);
 
     return matches
       .filter((m) => (m.attributes.points_by_participant ?? []).length >= 2)
@@ -233,21 +277,9 @@ export class ChallongeService {
       round: number;
     }[]
   > {
-    let matches: V2MatchItem[];
-    try {
-      const resp = await firstValueFrom(
-        this.http.get<{ data: V2MatchItem[] }>(
-          `${this.baseUrl}/tournaments/${url}/matches.json`,
-          { headers: this.headers, params: { state: 'open' } },
-        ),
-      );
-      matches = resp.data.data;
-    } catch (err) {
-      this.logger.error('listOpenMatches HTTP call failed', err);
-      throw new InternalServerErrorException(
-        'Failed to fetch matches from Challonge',
-      );
-    }
+    const matches = await this.fetchAllMatchPagesJsonApi(url, {
+      state: 'open',
+    });
 
     return matches
       .filter((m) => {
@@ -282,24 +314,9 @@ export class ChallongeService {
     this.logger.log(
       `findOpenMatch: looking for participants ${participantIdA} vs ${participantIdB} in ${url}`,
     );
-    let matches: V2MatchItem[];
-    try {
-      const resp = await firstValueFrom(
-        this.http.get<{ data: V2MatchItem[] }>(
-          `${this.baseUrl}/tournaments/${url}/matches.json`,
-          {
-            headers: this.headers,
-            params: { state: 'open' },
-          },
-        ),
-      );
-      matches = resp.data.data;
-    } catch (err) {
-      this.logger.error('findOpenMatch HTTP call failed', err);
-      throw new InternalServerErrorException(
-        'Failed to fetch matches from Challonge',
-      );
-    }
+    const matches = await this.fetchAllMatchPagesJsonApi(url, {
+      state: 'open',
+    });
 
     this.logger.log(`findOpenMatch: received ${matches.length} open matches`);
     for (const m of matches) {
@@ -333,73 +350,69 @@ export class ChallongeService {
     };
   }
 
+  /** All bracket nodes `{id, round}` (paginates). */
+  async listMatchesIdRound(
+    url: string,
+  ): Promise<{ id: number; round: number }[]> {
+    const allMatches = await this.fetchAllMatchPagesJsonApi(url);
+    return allMatches.map((m) => ({
+      id: Number(m.id),
+      round: m.attributes.round,
+    }));
+  }
+
+  /** Усі Challonge міси разом із 1-based canonical ordinal (поле порядку сітки). */
+  async listBracketIndexedMatches(url: string): Promise<BracketIndexedRow[]> {
+    const rows = await this.fetchAllMatchPagesJsonApi(url);
+    return rows.map((m) => {
+      const attrs = (m.attributes ?? {}) as Record<string, unknown>;
+      return {
+        challongeNumericId: Number(m.id),
+        bracketOrdinal1Based: bracketOrdinalFromChallongeMatchAttrs(attrs),
+      };
+    });
+  }
+
   /**
-   * Returns the set of Challonge round numbers that should be played as BO3:
-   * upper bracket final, lower bracket final, grand final, and bracket reset.
-   *
-   * Detection: BO3 rounds are all positive rounds that come after the last
-   * multi-match winners-bracket round (i.e., every single-match round at the
-   * end of the bracket), plus the most-negative (lower bracket final) round.
+   * Identify the three BO3 finals (UBF, LBF, GF) for a DE bracket using
+   * Challonge round numbers — GF = max positive round, UBF = max−1,
+   * LBF = most negative round. Works for any power-of-two N.
    */
-  async getBO3Rounds(url: string): Promise<Set<number>> {
-    let allMatches: V2MatchItem[];
-    try {
-      const resp = await firstValueFrom(
-        this.http.get<{ data: V2MatchItem[] }>(
-          `${this.baseUrl}/tournaments/${url}/matches.json`,
-          { headers: this.headers },
-        ),
-      );
-      allMatches = resp.data.data;
-    } catch (err) {
-      this.logger.error('getBO3Rounds HTTP call failed', err);
-      throw new InternalServerErrorException(
-        'Failed to fetch matches from Challonge',
+  async getDoubleElimBo3BracketResolution(
+    url: string,
+    activeTeamCount: number,
+  ): Promise<ResolvedDeBo3> {
+    const rawRows = await this.listMatchesIdRound(url);
+    const rows = rawRows.map((r) => ({
+      challongeNumericId: r.id,
+      round: r.round,
+    }));
+    const resolved = resolveDoubleElimFinalsFromRounds(rows, activeTeamCount);
+    for (const line of resolved.diagnostics) {
+      if (line.startsWith('ERROR')) this.logger.error(line);
+      else if (line.startsWith('WARN')) this.logger.warn(line);
+      else this.logger.log(line);
+    }
+    const got = resolved.bo3ChallongeIds.size;
+    if (got !== PLAYOFF_BO3_FINALS_COUNT && activeTeamCount >= 3) {
+      this.logger.error(
+        `DE BO3 safety: expected=${PLAYOFF_BO3_FINALS_COUNT} assigned=${got} ` +
+          `ids=[${[...resolved.bo3ChallongeIds].sort((a, b) => a - b).join(',')}]`,
       );
     }
+    return resolved;
+  }
 
-    const bo3Rounds = new Set<number>();
-
-    this.logger.log(
-      `getBO3Rounds: total matches=${allMatches.length} rounds=${allMatches
-        .map((m) => m.attributes.round)
-        .sort((a, b) => a - b)
-        .join(',')}`,
+  /** Back-compat: набір Challonge numeric id з BO3. */
+  async getFinalBo3ChallongeMatchIds(
+    url: string,
+    activeTeamCount: number,
+  ): Promise<Set<number>> {
+    const r = await this.getDoubleElimBo3BracketResolution(
+      url,
+      activeTeamCount,
     );
-
-    const positiveRounds = [
-      ...new Set(
-        allMatches.map((m) => m.attributes.round).filter((r) => r > 0),
-      ),
-    ].sort((a, b) => a - b);
-
-    const negativeRounds = [
-      ...new Set(
-        allMatches.map((m) => m.attributes.round).filter((r) => r < 0),
-      ),
-    ].sort((a, b) => a - b);
-
-    // Mark winners semifinal + everything after it (GF, bracket reset) as BO3.
-    // The winners semifinal is the second-to-last unique positive round.
-    // (Round 3 for a 4-team bracket holds both GF and bracket-reset matches,
-    //  so the old "rounds after last multi-match" heuristic breaks — it treats
-    //  round 3 as the last multi-match and finds nothing after it.)
-    const bo3PositiveThreshold =
-      positiveRounds.length >= 2
-        ? positiveRounds[positiveRounds.length - 2]
-        : (positiveRounds[0] ?? Infinity);
-
-    positiveRounds
-      .filter((r) => r >= bo3PositiveThreshold)
-      .forEach((r) => bo3Rounds.add(r));
-
-    if (negativeRounds.length > 0) bo3Rounds.add(negativeRounds[0]);
-
-    this.logger.log(
-      `getBO3Rounds: bo3PositiveThreshold=${bo3PositiveThreshold} bo3Rounds=${[...bo3Rounds].sort((a, b) => a - b).join(',')}`,
-    );
-
-    return bo3Rounds;
+    return r.bo3ChallongeIds;
   }
 
   async reportMatchResult(

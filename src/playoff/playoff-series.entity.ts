@@ -5,13 +5,22 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Unique,
 } from 'typeorm';
 import { Team } from '../teams/team.entity';
-import { PlayoffSeries } from './playoff-series.entity';
 import { Playoff } from './playoff.entity';
 
-@Entity('playoff_match')
-export class PlayoffMatch {
+export type PlayoffFinalType =
+  | 'upper_bracket_final'
+  | 'lower_bracket_final'
+  | 'grand_final';
+
+@Entity('playoff_series')
+@Unique('UQ_playoff_series_playoff_challonge', [
+  'playoffId',
+  'challongeMatchId',
+])
+export class PlayoffSeries {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -22,16 +31,20 @@ export class PlayoffMatch {
   @JoinColumn({ name: 'playoffId' })
   playoff: Playoff;
 
-  @Column({ type: 'uuid', nullable: true })
-  seriesId: string | null;
+  /** Challonge bracket node this series resolves (winner advances downstream). */
+  @Column({ type: 'varchar' })
+  challongeMatchId: string;
 
-  @ManyToOne(() => PlayoffSeries, { nullable: true, onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'seriesId' })
-  series: PlayoffSeries | null;
+  /** 1 = regular BO1 playoff round; 3 = BO3 finals series. */
+  @Column({ type: 'smallint' })
+  bestOf: number;
 
-  /** 1-based index within BO3 games; normally 1 for BO1 legacy rows. */
-  @Column({ type: 'smallint', nullable: true })
-  gameNumber: number | null;
+  /** BO3-finals slot (Ub/LB/GF) — синхрон з `bestOf===3`. */
+  @Column({ type: 'boolean', default: false })
+  isFinalSeries: boolean;
+
+  @Column({ type: 'varchar', nullable: true })
+  finalType: PlayoffFinalType | null;
 
   @Column({ type: 'uuid', nullable: true })
   teamAId: string | null;
@@ -47,21 +60,16 @@ export class PlayoffMatch {
   @JoinColumn({ name: 'teamBId' })
   teamB: Team | null;
 
+  /** Set once a side reaches ⌈bestOf / 2⌉ wins (2 for BO3). */
   @Column({ type: 'uuid', nullable: true })
-  winnerId: string | null;
+  seriesWinnerId: string | null;
 
   @ManyToOne(() => Team, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'winnerId' })
-  winner: Team | null;
+  @JoinColumn({ name: 'seriesWinnerId' })
+  seriesWinner: Team | null;
 
-  @Column({ type: 'varchar', nullable: true })
-  dotaMatchId: string | null;
-
-  @Column({ type: 'varchar' })
-  challongeMatchId: string;
-
-  @Column({ type: 'boolean', default: false })
-  isVerified: boolean;
+  @Column({ type: 'timestamptz', nullable: true })
+  resolvedAt: Date | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

@@ -47,6 +47,7 @@ import { DisqualifyTeamDto } from '../playoff/dto/disqualify-team.dto';
 import { TechLossPlayoffDto } from '../playoff/dto/tech-loss-playoff.dto';
 import { OpenPlayoffMatchDto } from '../playoff/dto/open-playoff-match.dto';
 import { PlayoffMatch } from '../playoff/playoff-match.entity';
+import { ManualPlayoffSeriesGameDto } from '../playoff/dto/manual-playoff-series-game.dto';
 
 const IMAGE_INTERCEPTOR_OPTIONS = {
   fileFilter: imageFileFilter,
@@ -226,6 +227,19 @@ export class TournamentsController {
     @Body() body: PlayoffTeamsDto,
   ) {
     return this.playoffService.startPlayoff(id, body.teamIds ?? []);
+  }
+
+  @Post(':id/playoff/submit-manual')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  submitPlayoffBracketGameManual(
+    @Param('id', new ParseUUIDPipe()) tournamentId: string,
+    @Body() body: ManualPlayoffSeriesGameDto,
+  ) {
+    return this.playoffService.submitPlayoffBracketGameManual(
+      tournamentId,
+      body,
+    );
   }
 
   @Post(':id/playoff/submit')
