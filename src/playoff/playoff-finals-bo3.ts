@@ -68,8 +68,8 @@ export function resolveDoubleElimFinalsFromRounds(
     `DE sizing: N(active)=${N} expectedTotalMatches=${expectedTotal} strategy=round-based`,
   );
 
-  if (!Number.isFinite(N) || N < 4) {
-    diags.push('Skip DE BO3: invalid teamCount (< 4)');
+  if (!Number.isFinite(N) || N < 3) {
+    diags.push('Skip DE BO3: invalid teamCount (< 3)');
     return empty(diags);
   }
 
@@ -147,7 +147,19 @@ export function resolveDoubleElimFinalsFromRounds(
     }
   };
 
-  register(gfMatches, 'grand_final', maxRound);
+  // When Challonge creates a bracket-reset slot, there are 2 matches at the max round.
+  // Only the one with the lowest numeric ID is the real GF; the reset slot is never
+  // played with grand_finals_modifier: 'single match'.
+  const effectiveGfMatches =
+    gfMatches.length > 1
+      ? [
+          gfMatches.reduce((a, b) =>
+            a.challongeNumericId < b.challongeNumericId ? a : b,
+          ),
+        ]
+      : gfMatches;
+
+  register(effectiveGfMatches, 'grand_final', maxRound);
   register(ubfMatches, 'upper_bracket_final', ubfRound);
   register(lbfMatches, 'lower_bracket_final', lbfRound);
 

@@ -383,6 +383,26 @@ export class Dota2Service {
       }
     }
 
+    // Fallback: find the highest-ID NodeGroup on the page that is newer than the
+    // parent org group. Since IDs are monotonically increasing and we just called
+    // addNodeGroup, the newly created node will have the largest ID.
+    const parentId = parseInt(containingNodeGroupId, 10);
+    let bestId = -1;
+    $('[id^="NodeGroup"]').each((_, el) => {
+      const rawId = $(el).attr('id');
+      const m = rawId?.match(/^NodeGroup(\d+)$/);
+      if (m) {
+        const id = parseInt(m[1], 10);
+        if (id > parentId && id > bestId) bestId = id;
+      }
+    });
+    if (bestId > -1) {
+      this.logger.log(
+        `Resolved BO series nodeGroupId=${bestId} via max-ID fallback (parent NodeGroup${containingNodeGroupId})`,
+      );
+      return String(bestId);
+    }
+
     this.logger.error(
       `Could not resolve BO series NodeGroup inside #NodeGroup${containingNodeGroupId}`,
     );

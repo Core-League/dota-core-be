@@ -394,7 +394,7 @@ export class ChallongeService {
       else this.logger.log(line);
     }
     const got = resolved.bo3ChallongeIds.size;
-    if (got !== PLAYOFF_BO3_FINALS_COUNT && activeTeamCount >= 4) {
+    if (got !== PLAYOFF_BO3_FINALS_COUNT && activeTeamCount >= 3) {
       this.logger.error(
         `DE BO3 safety: expected=${PLAYOFF_BO3_FINALS_COUNT} assigned=${got} ` +
           `ids=[${[...resolved.bo3ChallongeIds].sort((a, b) => a - b).join(',')}]`,

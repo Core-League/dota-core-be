@@ -106,7 +106,7 @@ describe('resolveDoubleElimFinalsFromRounds', () => {
     expect(out.diagnostics.some((d) => d.startsWith('ERROR'))).toBe(false);
   });
 
-  it('returns empty and logs error for teamCount < 4', () => {
+  it('returns empty and logs error for teamCount < 3', () => {
     const out = resolveDoubleElimFinalsFromRounds([], 2);
     expect(out.bo3ChallongeIds.size).toBe(0);
     expect(out.diagnostics.some((d) => d.includes('invalid teamCount'))).toBe(
