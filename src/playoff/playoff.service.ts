@@ -560,8 +560,6 @@ export class PlayoffService {
         playoff,
         tournamentId,
         existingIncorrectMatch,
-        winnerRow,
-        loserRow,
         winnerTeamId,
         loserTeamId,
       );
@@ -632,16 +630,19 @@ export class PlayoffService {
         seriesWinnerWins,
         seriesLoserWins,
       );
-    } else if (!isBO3) {
-      // BO1 — report immediately after the single game
+    } else {
+      // Series not yet decided — close immediately.
+      // For BO1 this is always 1:0; for BO3 a tech-loss forfeits the entire series (2:loserWins).
+      const reportWins = isBO3 ? 2 : 1;
+      const reportLosses = wins.get(loserTeamId) ?? 0;
       await this.challonge.reportMatchResult(
         playoff.challongeUrl,
         challongeMatch.id,
         Number(winnerRow.challongeParticipantId),
         challongeMatch.player1_id,
         challongeMatch.player2_id,
-        1,
-        0,
+        reportWins,
+        reportLosses,
       );
     }
 
@@ -654,8 +655,6 @@ export class PlayoffService {
     playoff: Playoff,
     tournamentId: string,
     incorrectMatch: PlayoffMatch,
-    winnerRow: TournamentPlayoffTeam,
-    loserRow: TournamentPlayoffTeam,
     winnerTeamId: string,
     loserTeamId: string,
   ): Promise<PlayoffResponseDto> {
