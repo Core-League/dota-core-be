@@ -588,26 +588,62 @@ export class PlayoffService {
 
     const bo3Rounds = await this.challonge.getBO3Rounds(playoff.challongeUrl);
     const isBO3 = bo3Rounds.has(challongeMatch.round);
+    const pmRepo = this.dataSource.getRepository(PlayoffMatch);
+    const base = `tech_loss_${Date.now()}`;
+    const mid = String(challongeMatch.id);
 
-    await this.challonge.reportMatchResult(
-      playoff.challongeUrl,
-      challongeMatch.id,
-      Number(winnerRow.challongeParticipantId),
-      challongeMatch.player1_id,
-      challongeMatch.player2_id,
-      isBO3 ? 2 : 1,
-      0,
-    );
+    const gameDotaIds = isBO3 ? [`${base}_g1`, `${base}_g2`] : [base];
 
-    const match = this.playoffMatchRepo.create({
-      playoffId: playoff.id,
-      teamAId: winnerTeamId,
-      teamBId: loserTeamId,
-      winnerId: winnerTeamId,
-      dotaMatchId: `tech_loss_${Date.now()}`,
-      challongeMatchId: String(challongeMatch.id),
+    for (const dotaMatchId of gameDotaIds) {
+      const gameCount = await pmRepo.count({
+        where: { playoffId: playoff.id, challongeMatchId: mid },
+      });
+      await this.playoffMatchRepo.save(
+        this.playoffMatchRepo.create({
+          playoffId: playoff.id,
+          teamAId: winnerTeamId,
+          teamBId: loserTeamId,
+          winnerId: winnerTeamId,
+          dotaMatchId,
+          challongeMatchId: mid,
+          gameNumber: gameCount + 1,
+        }),
+      );
+    }
+
+    // Tally wins and report to Challonge once series winner is clear
+    const allGames = await pmRepo.find({
+      where: { playoffId: playoff.id, challongeMatchId: mid },
     });
-    await this.playoffMatchRepo.save(match);
+    const wins = new Map<string, number>();
+    for (const g of allGames) {
+      if (g.winnerId) wins.set(g.winnerId, (wins.get(g.winnerId) ?? 0) + 1);
+    }
+    const seriesWinnerId = [...wins.entries()].find(([, w]) => w >= 2)?.[0];
+    if (seriesWinnerId) {
+      const seriesWinnerWins = wins.get(seriesWinnerId) ?? 0;
+      const seriesLoserWins = wins.get(loserTeamId) ?? 0;
+      await this.challonge.reportMatchResult(
+        playoff.challongeUrl,
+        challongeMatch.id,
+        Number(winnerRow.challongeParticipantId),
+        challongeMatch.player1_id,
+        challongeMatch.player2_id,
+        seriesWinnerWins,
+        seriesLoserWins,
+      );
+    } else {
+      // BO1 — 1 game, report immediately
+      await this.challonge.reportMatchResult(
+        playoff.challongeUrl,
+        challongeMatch.id,
+        Number(winnerRow.challongeParticipantId),
+        challongeMatch.player1_id,
+        challongeMatch.player2_id,
+        1,
+        0,
+      );
+    }
 
     await this.maybeSyncPlayoffFixturesIntoDotaWithBackoff(tournamentId);
 
