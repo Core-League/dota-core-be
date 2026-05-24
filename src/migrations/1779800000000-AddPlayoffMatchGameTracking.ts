@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddPlayoffMatchGameTracking1779800000000
-  implements MigrationInterface
-{
+export class AddPlayoffMatchGameTracking1779800000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
       ALTER TABLE "playoff_match"

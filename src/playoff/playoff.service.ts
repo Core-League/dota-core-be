@@ -202,6 +202,13 @@ export class PlayoffService {
       Number(loserRow.challongeParticipantId),
     );
 
+    const gameCount = await this.dataSource.getRepository(PlayoffMatch).count({
+      where: {
+        playoffId: playoff.id,
+        challongeMatchId: String(challongeMatch.id),
+      },
+    });
+
     const match = this.playoffMatchRepo.create({
       playoffId: playoff.id,
       teamAId: winnerRow.teamId,
@@ -209,6 +216,7 @@ export class PlayoffService {
       winnerId: winnerRow.teamId,
       dotaMatchId,
       challongeMatchId: String(challongeMatch.id),
+      gameNumber: gameCount + 1,
     });
     await this.playoffMatchRepo.save(match);
 
@@ -1136,7 +1144,10 @@ export class PlayoffService {
 
     const [challongeParticipantIdToDota, dotaTeamIdToName, bo3Rounds] =
       await Promise.all([
-        this.buildChallongeParticipantIdToDotaTeamId(tournamentId, challongeUrl),
+        this.buildChallongeParticipantIdToDotaTeamId(
+          tournamentId,
+          challongeUrl,
+        ),
         this.buildDotaTeamIdToName(tournamentId),
         this.challonge.getBO3Rounds(challongeUrl),
       ]);
