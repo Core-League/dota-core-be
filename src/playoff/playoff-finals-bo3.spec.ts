@@ -1,52 +1,68 @@
 import {
-  resolveStructuralFinalBo3Slots,
-  type ChallongeBracketMatchNode,
+  bracketOrdinalFromChallongeMatchAttrs,
+  expectedDoubleEliminationMatchTotal,
+  deFinalsBracketIndices,
+  resolveDoubleElimBo3ByBracketOrdinal,
+  PLAYOFF_BO3_FINALS_COUNT,
 } from './playoff-finals-bo3';
 
-describe('resolveStructuralFinalBo3Slots', () => {
-  it('double elim: UB final (+), LB final (-), GF (never referenced upstream)', () => {
-    const nodes: ChallongeBracketMatchNode[] = [
-      { id: 10, round: 1, prerequisiteMatchIds: [] },
-      { id: 11, round: 1, prerequisiteMatchIds: [] },
-      { id: 50, round: -12, prerequisiteMatchIds: [] },
-      { id: 20, round: 4, prerequisiteMatchIds: [10, 11] },
-      { id: 90, round: -2, prerequisiteMatchIds: [50] },
-      { id: 300, round: 42, prerequisiteMatchIds: [20, 90] },
-    ];
-
-    const { bo3MatchIds, slotByMatchId } =
-      resolveStructuralFinalBo3Slots(nodes);
-    expect([...bo3MatchIds].sort((a, b) => a - b)).toEqual([20, 90, 300]);
-    expect(slotByMatchId.get(300)).toBe('grand_final');
-    expect(slotByMatchId.get(20)).toBe('upper_bracket_final');
-    expect(slotByMatchId.get(90)).toBe('lower_bracket_final');
+describe('deFinalsBracketIndices', () => {
+  it('examples N=4,8,16', () => {
+    expect(deFinalsBracketIndices(4)).toEqual({
+      upperBracketFinalIndex: 2,
+      lowerBracketFinalIndex: 4,
+      grandFinalIndex: 5,
+    });
+    expect(deFinalsBracketIndices(8)).toEqual({
+      upperBracketFinalIndex: 6,
+      lowerBracketFinalIndex: 12,
+      grandFinalIndex: 13,
+    });
+    expect(deFinalsBracketIndices(16)).toEqual({
+      upperBracketFinalIndex: 14,
+      lowerBracketFinalIndex: 28,
+      grandFinalIndex: 29,
+    });
   });
 
-  it('single elim (all nonnegative rounds): only grand final BO3', () => {
-    const semiW = { id: 10, round: 2, prerequisiteMatchIds: [] as number[] };
-    const semiX = { id: 11, round: 2, prerequisiteMatchIds: [] as number[] };
+  it('total matches formula 2N-2', () => {
+    expect(expectedDoubleEliminationMatchTotal(8)).toBe(14);
+  });
+});
 
-    const grandFinal = {
-      id: 30,
-      round: 7,
-      prerequisiteMatchIds: [10, 11],
-    };
-
-    const { bo3MatchIds, slotByMatchId } = resolveStructuralFinalBo3Slots([
-      semiW,
-      semiX,
-      grandFinal,
-    ]);
-    expect([...bo3MatchIds]).toEqual([30]);
-    expect(slotByMatchId.get(30)).toBe('grand_final');
-    expect(slotByMatchId.has(10)).toBe(false);
+describe('resolveDoubleElimBo3ByBracketOrdinal', () => {
+  it('maps ordinals exactly to Challonge IDs for clean 8-team bracket', () => {
+    const rows = Array.from({ length: 14 }, (_, ord) => ({
+      challongeNumericId: 5000 + ord,
+      bracketOrdinal1Based: ord + 1,
+    }));
+    const out = resolveDoubleElimBo3ByBracketOrdinal(rows, 8);
+    expect(out.bo3ChallongeIds.size).toBe(PLAYOFF_BO3_FINALS_COUNT);
+    expect(out.finalTypeByChallongeId.get(5005)).toBe('upper_bracket_final');
+    expect(out.finalTypeByChallongeId.get(5011)).toBe('lower_bracket_final');
+    expect(out.finalTypeByChallongeId.get(5012)).toBe('grand_final');
   });
 
-  it('defaults to BO1 everywhere when prerequisites are missing', () => {
-    const nodes: ChallongeBracketMatchNode[] = [
-      { id: 100, round: 1, prerequisiteMatchIds: [] },
-      { id: 101, round: 8, prerequisiteMatchIds: [] },
-    ];
-    expect(resolveStructuralFinalBo3Slots(nodes).bo3MatchIds.size).toBe(0);
+  it('flags missing ordinal data', () => {
+    const out = resolveDoubleElimBo3ByBracketOrdinal(
+      [{ challongeNumericId: 77, bracketOrdinal1Based: null }],
+      8,
+    );
+    expect(out.bo3ChallongeIds.size).toBe(0);
+    expect(out.diagnostics.some((d) => d.includes('WARN'))).toBe(true);
+  });
+});
+
+describe('bracketOrdinalFromChallongeMatchAttrs', () => {
+  it('prefers suggested_play_order', () => {
+    expect(
+      bracketOrdinalFromChallongeMatchAttrs({ suggested_play_order: 7 }),
+    ).toBe(7);
+  });
+  it('parses numeric identifier prefixes', () => {
+    expect(bracketOrdinalFromChallongeMatchAttrs({ identifier: 'M29' })).toBe(
+      29,
+    );
+    expect(bracketOrdinalFromChallongeMatchAttrs({ identifier: '6' })).toBe(6);
   });
 });

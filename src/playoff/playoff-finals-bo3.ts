@@ -1,192 +1,223 @@
 /**
- * BO3 finals classification for Challonge brackets using prerequisite topology:
- * matches that feed downstream slots appear as prerequisite/parent refs on children.
- *
- * Championship match(es) ("grand finals") never appear as another match's
- * prerequisite upstream id — Challonge never schedules play after the champ is decided,
- * ignoring optional bracket-reset row which is modeled as its own non-referenced GF.
- *
- * Upper / lower finals for double elimination are the two feeders of the GF when
- * one feeder comes from winners (round > 0) and one from losers (round < 0).
+ * Детерміновані BO3-фінали для подвійної елімінації (N — степінь двійки).
+ * Індекси матчів 1..(2N−2) у канонічному порядку Challonge bracket (поле ordinal).
  */
 
-/** Explicit finals slot tagging for callers (UI / logging); BO3-only types. */
 export type FinalsSlotKind =
   | 'upper_bracket_final'
   | 'lower_bracket_final'
   | 'grand_final';
 
-/** One bracket node plus upstream prerequisite match ids Challonge attaches to it. */
-export interface ChallongeBracketMatchNode {
-  id: number;
-  round: number;
-  /** Parent match ids feeding this node's participant slots (winners bracket / losers / etc.). */
-  prerequisiteMatchIds: number[];
+export const PLAYOFF_BO3_FINALS_COUNT = 3;
+
+export function isPowerOfTwoTeamCount(teamCount: number): boolean {
+  const n = Math.trunc(teamCount);
+  return n >= 2 && Number.isFinite(n) && (n & (n - 1)) === 0;
 }
 
-/** Pull numeric upstream match ids out of Challonge JSON:API match payload. */
-export function extractPrerequisiteParentMatchIds(match: {
-  attributes?: Record<string, unknown> | null | undefined;
-  relationships?: Record<string, unknown> | null | undefined;
-}): number[] {
-  const nums = new Set<number>();
-  const consider = (v: unknown): void => {
-    if (v === null || v === undefined) return;
-    if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
-      nums.add(Math.trunc(v));
-      return;
-    }
-    if (typeof v === 'string') {
-      const n = Number(v);
-      if (Number.isFinite(n) && n > 0) nums.add(Math.trunc(n));
-      return;
-    }
-    if (Array.isArray(v)) {
-      for (const x of v) consider(x);
-      return;
-    }
-    if (typeof v === 'object') {
-      const o = v as Record<string, unknown>;
-      if ('id' in o) consider(o.id);
-      if ('data' in o) consider(o.data);
-      return;
-    }
-  };
-
-  const attrs = match.attributes ?? {};
-
-  const keyHints = /^player[12].*(prerequisite|prereq)/i;
-
-  for (const [key, val] of Object.entries(attrs)) {
-    const lk = key.toLowerCase();
-
-    const looksLikeUpstreamRef =
-      (keyHints.test(key) ||
-        lk.includes('prerequisite_match') ||
-        lk.includes('prereq_match') ||
-        (/\bplayer[12]_/.test(lk) &&
-          lk.includes('match') &&
-          (lk.includes('pre') ||
-            lk.includes('prior') ||
-            lk.includes('parent') ||
-            lk.includes('from')))) &&
-      /\b(match|uuid|id)s?\b/.test(lk);
-
-    if (!looksLikeUpstreamRef) continue;
-
-    consider(val);
-  }
-  const rel = match.relationships ?? {};
-
-  const relKeyHints =
-    /prerequisite|upstream|prior|dependency|depends|parents|ancestor/i;
-
-  for (const [key, val] of Object.entries(rel)) {
-    if (!relKeyHints.test(key)) continue;
-
-    consider(val);
-
-    if (typeof val === 'object' && val !== null && 'links' in val) {
-      const linksVal = (val as { links?: unknown }).links;
-      consider(linksVal);
-    }
-  }
-
-  return [...nums];
-}
-
-export interface ResolvedFinalsBo3 {
-  /** Challonge ids that Core must treat as BO3. */
-  bo3MatchIds: Set<number>;
-  /** Optional per-id slot labels (omit when unknown / SE-only GF). */
-  slotByMatchId: Map<number, FinalsSlotKind>;
+/** Загальна кількість матчів у повній DE сітці (один матч GF). */
+export function expectedDoubleEliminationMatchTotal(teamCount: number): number {
+  const N = Math.trunc(teamCount);
+  if (!Number.isFinite(N) || N < 2) return 0;
+  return 2 * N - 2;
 }
 
 /**
- * Decide which Challonge bracket nodes receive BO3.
- *
- * - Double elimination (`any round < 0`): UB final, LB final, grand final only.
- * - Single elimination (`all rounds >= 0`): grand final only.
- *
- * Prerequisites must be populated in `prerequisiteMatchIds`; if the graph cannot be read,
- * returns an empty BO3 set (everything stays BO1) — callers may log loudly.
+ * UB final = N−2; LB final = 2N−4; GF = 2N−3 — усі значення за 1-based індексом раунду.
  */
-export function resolveStructuralFinalBo3Slots(
-  nodes: ChallongeBracketMatchNode[],
-): ResolvedFinalsBo3 {
-  const empty: ResolvedFinalsBo3 = {
-    bo3MatchIds: new Set(),
-    slotByMatchId: new Map(),
+export function deFinalsBracketIndices(teamCount: number): {
+  upperBracketFinalIndex: number;
+  lowerBracketFinalIndex: number;
+  grandFinalIndex: number;
+} {
+  const N = Math.trunc(teamCount);
+  return {
+    upperBracketFinalIndex: N - 2,
+    lowerBracketFinalIndex: 2 * N - 4,
+    grandFinalIndex: 2 * N - 3,
   };
-  if (nodes.length === 0) return empty;
+}
 
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const prerequisiteIdsReferencedElsewhere = new Set<number>();
+function parseIdentifierOrdinal(identifier: unknown): number | null {
+  if (typeof identifier !== 'string') return null;
+  const m = /^M?\s*(\d+)/i.exec(identifier.trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n >= 1 ? Math.trunc(n) : null;
+}
 
-  for (const n of nodes) {
-    for (const pid of n.prerequisiteMatchIds) {
-      if (Number.isFinite(pid) && pid > 0 && byId.has(pid)) {
-        prerequisiteIdsReferencedElsewhere.add(pid);
-      }
+/** Витяг 1-based canonical bracket ordinal з Challonge Match attributes JSON:API. */
+export function bracketOrdinalFromChallongeMatchAttrs(
+  attributes: Record<string, unknown>,
+): number | null {
+  const hinted = [
+    attributes.suggested_play_order,
+    attributes['suggested-play-order'],
+    attributes.suggestedPlayOrder,
+    attributes.match_sequence,
+    attributes['match-sequence'],
+  ];
+  for (const h of hinted) {
+    if (typeof h === 'number' && Number.isFinite(h) && h >= 1)
+      return Math.trunc(h);
+    if (typeof h === 'string') {
+      const k = Number(h.trim());
+      if (Number.isFinite(k) && k >= 1) return Math.trunc(k);
     }
   }
 
-  /** Matches never listed as an upstream prerequisite of another bracket node — typically champ slot(s). */
-  const dangling = nodes.filter(
-    (n) => !prerequisiteIdsReferencedElsewhere.has(n.id),
+  const fromIdent =
+    parseIdentifierOrdinal(attributes.identifier) ??
+    parseIdentifierOrdinal(attributes.slug);
+  if (fromIdent !== null) return fromIdent;
+
+  return null;
+}
+
+export interface BracketIndexedRow {
+  challongeNumericId: number;
+  bracketOrdinal1Based: number | null;
+}
+
+export interface ResolvedDeBo3 {
+  /** Challonge матч-ids які мають bestOf = 3 */
+  bo3ChallongeIds: Set<number>;
+  finalTypeByChallongeId: Map<number, FinalsSlotKind>;
+  bracketOrdinalByChallongeId: Map<number, number>;
+  diagnostics: string[];
+}
+
+/** Розв’язати BO3 за зіставленням канонічного порядкового номера Challonge-міси з очікуваними індексами. */
+export function resolveDoubleElimBo3ByBracketOrdinal(
+  rows: readonly BracketIndexedRow[],
+  activeTeamCount: number,
+): ResolvedDeBo3 {
+  const diags: string[] = [];
+
+  const N = Math.trunc(activeTeamCount);
+  const expectedTotal = expectedDoubleEliminationMatchTotal(N);
+
+  const { upperBracketFinalIndex, lowerBracketFinalIndex, grandFinalIndex } =
+    deFinalsBracketIndices(N);
+  diags.push(
+    `DE sizing: N(active)=${N} expectedTotalMatches=${expectedTotal} ` +
+      `formula BO3 ordinal indices UB=${upperBracketFinalIndex} LB=${lowerBracketFinalIndex} GF=${grandFinalIndex}`,
   );
 
-  const grandFinalCandidates = dangling
-    .filter((n) => n.prerequisiteMatchIds.length >= 2)
-    .sort((a, b) => b.round - a.round);
-
-  if (grandFinalCandidates.length === 0) return empty;
-
-  const doubleElim = nodes.some((n) => n.round < 0);
-  const bo3Ids = new Set<number>();
-  const slotByMatchId = new Map<number, FinalsSlotKind>();
-
-  for (const gf of grandFinalCandidates) {
-    bo3Ids.add(gf.id);
-    slotByMatchId.set(gf.id, 'grand_final');
-
-    if (!doubleElim) {
-      continue;
-    }
-
-    const feederIds = [...new Set(gf.prerequisiteMatchIds)].filter((fid) =>
-      byId.has(fid),
-    );
-
-    /** Normal DE champ match has UB + LB legs; if prerequisites are malformed, GF alone is BO3. */
-    const feeders = feederIds.map((fid) => byId.get(fid)!).filter(Boolean);
-
-    if (feeders.length < 2) continue;
-
-    const winnersSide = feeders.filter((f) => f.round > 0);
-    const losersSide = feeders.filter((f) => f.round < 0);
-
-    if (
-      losersSide.length === 0 ||
-      winnersSide.length === feeders.length ||
-      feeders.every((f) => f.round > 0)
-    ) {
-      /** Semis-feeding GF in pure single-elim tree — UB/LB tagging not applicable here. */
-      continue;
-    }
-
-    const ubFinal = winnersSide.sort((a, b) => b.round - a.round)[0];
-    const lbFinal = losersSide.sort((a, b) => b.round - a.round)[0];
-
-    if (ubFinal) {
-      bo3Ids.add(ubFinal.id);
-      slotByMatchId.set(ubFinal.id, 'upper_bracket_final');
-    }
-    if (lbFinal) {
-      bo3Ids.add(lbFinal.id);
-      slotByMatchId.set(lbFinal.id, 'lower_bracket_final');
-    }
+  if (!Number.isFinite(N) || N < 4) {
+    diags.push('Skip DE BO3: invalid teamCount (< 4)');
+    return {
+      bo3ChallongeIds: new Set(),
+      finalTypeByChallongeId: new Map(),
+      bracketOrdinalByChallongeId: new Map(),
+      diagnostics: diags,
+    };
   }
 
-  return { bo3MatchIds: bo3Ids, slotByMatchId };
+  if (!isPowerOfTwoTeamCount(N)) {
+    diags.push(
+      `WARN: activeTeamCount=${N} is not a power of two — BO3 index formula is undefined`,
+    );
+  }
+
+  const withOrd = rows.filter(
+    (r) =>
+      typeof r.bracketOrdinal1Based === 'number' && r.bracketOrdinal1Based >= 1,
+  );
+
+  const ordinalSeen = new Set<number>();
+
+  /** ordinal → один Challonge id */
+  const byOrdinal = new Map<number, number>();
+  for (const r of withOrd) {
+    const ord = r.bracketOrdinal1Based!;
+    if (ordinalSeen.has(ord)) {
+      diags.push(
+        `WARN: duplicate bracket ordinal=${ord}; keeping first Challonge id ${byOrdinal.get(ord)}, also saw ${r.challongeNumericId}`,
+      );
+      continue;
+    }
+    ordinalSeen.add(ord);
+    byOrdinal.set(ord, r.challongeNumericId);
+  }
+
+  const missingOrdinalRows = rows.filter(
+    (r) => r.bracketOrdinal1Based === null,
+  );
+  if (missingOrdinalRows.length > 0) {
+    diags.push(
+      `WARN: ${missingOrdinalRows.length} Challonge rows lack canonical bracket ordinal (suggested_play_order / identifier)` +
+        ` ids=${missingOrdinalRows
+          .map((r) => r.challongeNumericId)
+          .sort((a, b) => a - b)
+          .slice(0, 12)
+          .join(',')}${missingOrdinalRows.length > 12 ? '…' : ''}`,
+    );
+  }
+
+  if (expectedTotal > 0 && byOrdinal.size !== expectedTotal) {
+    diags.push(
+      `WARN: ordinal coverage ${byOrdinal.size} !== expected total ${expectedTotal} (formula 2N-2); BO3 marking may mismatch`,
+    );
+  }
+
+  const bo3Canonical = [
+    upperBracketFinalIndex,
+    lowerBracketFinalIndex,
+    grandFinalIndex,
+  ] as const;
+
+  const bo3ChallongeIds = new Set<number>();
+  const finalTypeByChallongeId = new Map<number, FinalsSlotKind>();
+  const bracketOrdinalByChallongeId = new Map<number, number>();
+
+  for (const ord of bo3Canonical) {
+    const cid = byOrdinal.get(ord);
+    if (cid === undefined) {
+      diags.push(
+        `WARN: canonical BO3 ordinal ${ord} (${labelForCanonical(ord, bo3Canonical)}) has no Challonge row`,
+      );
+      continue;
+    }
+    bo3ChallongeIds.add(cid);
+    finalTypeByChallongeId.set(
+      cid,
+      ord === upperBracketFinalIndex
+        ? 'upper_bracket_final'
+        : ord === lowerBracketFinalIndex
+          ? 'lower_bracket_final'
+          : 'grand_final',
+    );
+    bracketOrdinalByChallongeId.set(cid, ord);
+  }
+
+  diags.push(
+    `Marked BO3 challonge IDs (${bo3ChallongeIds.size}): ${[...bo3ChallongeIds].sort((a, b) => a - b).join(',')} ` +
+      `slotMap=${[...finalTypeByChallongeId.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([id, slot]) => `${id}:${slot}`)
+        .join('; ')}`,
+  );
+
+  if (bo3ChallongeIds.size !== PLAYOFF_BO3_FINALS_COUNT) {
+    diags.push(
+      `ERROR: expected exactly ${PLAYOFF_BO3_FINALS_COUNT} BO3 finals for DE, got ${bo3ChallongeIds.size}`,
+    );
+  }
+
+  return {
+    bo3ChallongeIds,
+    finalTypeByChallongeId,
+    bracketOrdinalByChallongeId,
+    diagnostics: diags,
+  };
+}
+
+function labelForCanonical(
+  ord: number,
+  triple: readonly [number, number, number],
+): string {
+  if (ord === triple[0]) return 'upper_bracket_final';
+  if (ord === triple[1]) return 'lower_bracket_final';
+  return 'grand_final';
 }

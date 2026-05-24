@@ -28,7 +28,7 @@ import { OpenPlayoffMatchDto } from './dto/open-playoff-match.dto';
 import { PlayoffBracketGameSummaryDto } from './dto/series-game-slot.dto';
 import { PlayoffLeagueFixture } from './playoff-league-fixture.entity';
 import { Playoff } from './playoff.entity';
-import { PlayoffSeries } from './playoff-series.entity';
+import { PlayoffSeries, PlayoffFinalType } from './playoff-series.entity';
 
 @Injectable()
 export class PlayoffService {
@@ -310,6 +310,9 @@ export class PlayoffService {
       winnerTeamId: winnerRow.teamId,
       loserTeamId,
       dotaMatchId,
+      ...(body.seriesGameSlot !== undefined
+        ? { seriesGameSlot: body.seriesGameSlot }
+        : {}),
     });
 
     await this.maybeSyncPlayoffFixturesIntoDotaWithBackoff(tournamentId);
@@ -546,7 +549,7 @@ export class PlayoffService {
       }));
 
       const format: 'bo1' | 'bo3' = srs.bestOf >= 3 ? 'bo3' : 'bo1';
-      const seriesKind: 'standard' | 'finals_bo3' = srs.isFinalsBo3
+      const seriesKind: 'standard' | 'finals_bo3' = srs.isFinalSeries
         ? 'finals_bo3'
         : 'standard';
 
@@ -560,6 +563,7 @@ export class PlayoffService {
           seriesId: srs.id,
           format,
           seriesKind,
+          finalSeriesType: srs.finalType ?? null,
           winsTeamA,
           winsTeamB,
           seriesWinnerTeamId: srs.seriesWinnerId,
@@ -662,6 +666,7 @@ export class PlayoffService {
 
     const finalsBo3 = await this.challonge.getFinalBo3ChallongeMatchIds(
       playoff.challongeUrl,
+      await this.activePlayoffTeamCount(playoff.tournamentId),
     );
     const isFinalsBo3 = finalsBo3.has(challongeMatch.id);
 
@@ -1288,37 +1293,196 @@ export class PlayoffService {
     return { matchIdUpdates, seriesIdUpdates };
   }
 
+  /** Активні учасники playoff (DQ не враховуються); для формули розміру DE-сітки 2*N−2. */
+  private async activePlayoffTeamCount(tournamentId: string): Promise<number> {
+    const raw = await this.dataSource
+      .getRepository(TournamentPlayoffTeam)
+      .count({
+        where: { tournamentId, isDisqualified: false },
+      });
+    const n = typeof raw === 'bigint' ? Number(raw) : Math.trunc(Number(raw));
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
+  }
+
+  private async ensureBo3ChildPlaceholders(
+    playoffId: string,
+    srs: PlayoffSeries,
+  ): Promise<void> {
+    if (srs.bestOf < 3) return;
+    const pmRepo = this.dataSource.getRepository(PlayoffMatch);
+    const cnt = await pmRepo.count({ where: { seriesId: srs.id } });
+    if (cnt >= 3) return;
+    const mid = srs.challongeMatchId;
+    for (let gn = 1; gn <= 3; gn += 1) {
+      const row = await pmRepo.findOne({
+        where: { seriesId: srs.id, gameNumber: gn },
+      });
+      if (row) continue;
+      await this.playoffMatchRepo.save(
+        this.playoffMatchRepo.create({
+          playoffId,
+          seriesId: srs.id,
+          gameNumber: gn,
+          teamAId: srs.teamAId,
+          teamBId: srs.teamBId,
+          winnerId: null,
+          challongeMatchId: mid,
+        }),
+      );
+    }
+    const total = await pmRepo.count({ where: { seriesId: srs.id } });
+    this.logger.log(
+      `BO3 placeholders: playoff=${playoffId} challongeMid=${mid} series=${srs.id} childGames=${total}`,
+    );
+  }
+
+  /** Підтягує Команд із Challonge-порів «обидві сторони визначені» у series + слоти ігор BO3. */
+  private async hydratePlayoffTeamsFromBracket(
+    playoffId: string,
+    tournamentId: string,
+    challongeUrl: string,
+  ): Promise<void> {
+    const tptRepo = this.dataSource.getRepository(TournamentPlayoffTeam);
+    const activeRows = await tptRepo.find({
+      where: { tournamentId, isDisqualified: false },
+    });
+    const pidToTeam = new Map<number, string>();
+    for (const r of activeRows) {
+      const p = Number(r.challongeParticipantId);
+      if (Number.isFinite(p)) pidToTeam.set(p, r.teamId);
+    }
+
+    const seriesRepo = this.dataSource.getRepository(PlayoffSeries);
+    const allSeries = await seriesRepo.find({ where: { playoffId } });
+    const seriesByMid = new Map(allSeries.map((s) => [s.challongeMatchId, s]));
+
+    const pmRepo = this.dataSource.getRepository(PlayoffMatch);
+    const bracket =
+      await this.challonge.listAllMatchesWithBothParticipants(challongeUrl);
+
+    for (const bm of bracket) {
+      const a = pidToTeam.get(bm.participant1Id);
+      const b = pidToTeam.get(bm.participant2Id);
+      if (!a || !b || a === b) continue;
+      const midStr = String(bm.id);
+      const srs = seriesByMid.get(midStr);
+      if (!srs) continue;
+
+      const pair = new Set([a, b]);
+      let nextA = a;
+      let nextB = b;
+
+      if (srs.teamAId && srs.teamBId) {
+        if (!pair.has(srs.teamAId) || !pair.has(srs.teamBId)) continue;
+        if (srs.teamAId === a && srs.teamBId === b) {
+          nextA = a;
+          nextB = b;
+        } else if (srs.teamAId === b && srs.teamBId === a) {
+          nextA = b;
+          nextB = a;
+        } else continue;
+      }
+
+      srs.teamAId = nextA;
+      srs.teamBId = nextB;
+      await seriesRepo.save(srs);
+
+      if (srs.bestOf >= 3) {
+        await this.ensureBo3ChildPlaceholders(playoffId, srs);
+        const children = await pmRepo.find({
+          where: { seriesId: srs.id },
+          order: { gameNumber: 'ASC', createdAt: 'ASC' },
+        });
+        for (const row of children) {
+          row.teamAId = nextA;
+          row.teamBId = nextB;
+        }
+        if (children.length > 0) await pmRepo.save(children);
+
+        const openChildren = children.filter((c) => !c.winnerId);
+        this.logger.debug(
+          `hydrateTeams: srs=${srs.id} finalsSlot=${String(srs.finalType)} unresolvedChildGames=${openChildren.length}`,
+        );
+      }
+    }
+  }
+
   private async ensurePlayoffSeriesForBracket(
     playoffId: string,
     challongeUrl: string,
   ): Promise<void> {
-    const finalsBo3Ids =
-      await this.challonge.getFinalBo3ChallongeMatchIds(challongeUrl);
+    const playoff = await this.dataSource.getRepository(Playoff).findOne({
+      where: { id: playoffId },
+    });
+    const teamCt = playoff
+      ? await this.activePlayoffTeamCount(playoff.tournamentId)
+      : 0;
+    const deRes = await this.challonge.getDoubleElimBo3BracketResolution(
+      challongeUrl,
+      teamCt,
+    );
+    const finalsBo3Ids = deRes.bo3ChallongeIds;
+
     const nodes = await this.challonge.listMatchesIdRound(challongeUrl);
     const repo = this.dataSource.getRepository(PlayoffSeries);
+
+    this.logger.log(
+      `ensurePlayoffSeries: playoff=${playoffId} teamCount(active)=${teamCt} challongeBracketNodes=${nodes.length} mappedBo3=${finalsBo3Ids.size}`,
+    );
+
     for (const n of nodes) {
       const mid = String(n.id);
       const isBo3 = finalsBo3Ids.has(n.id);
       const bestOf = isBo3 ? 3 : 1;
+      const finalType: PlayoffFinalType | null = isBo3
+        ? (deRes.finalTypeByChallongeId.get(n.id) ?? null)
+        : null;
+
       const existing = await repo.findOne({
         where: { playoffId, challongeMatchId: mid },
       });
+      let persisted = existing;
+
+      const basePatch = (): Partial<PlayoffSeries> =>
+        ({
+          bestOf,
+          isFinalSeries: isBo3,
+          finalType: isBo3 ? finalType : null,
+        }) as Partial<PlayoffSeries>;
+
       if (!existing) {
-        await repo.save(
+        persisted = await repo.save(
           repo.create({
             playoffId,
             challongeMatchId: mid,
-            bestOf,
-            isFinalsBo3: isBo3,
+            ...basePatch(),
           }),
         );
-        continue;
-      }
-      if (existing.bestOf !== bestOf || existing.isFinalsBo3 !== isBo3) {
+      } else {
         existing.bestOf = bestOf;
-        existing.isFinalsBo3 = isBo3;
-        await repo.save(existing);
+        existing.isFinalSeries = isBo3;
+        existing.finalType = isBo3 ? finalType : null;
+        persisted = await repo.save(existing);
       }
+
+      if (persisted && persisted.bestOf >= 3) {
+        await this.ensureBo3ChildPlaceholders(playoffId, persisted);
+      }
+    }
+
+    if (playoff && teamCt >= 4 && finalsBo3Ids.size !== 3) {
+      this.logger.warn(
+        `ensurePlayoffSeries: DE anomaly — mapped BO3 finals=${finalsBo3Ids.size} (want 3) expected ordinals UB/LB/GF=` +
+          `see challonge ordinal diagnostics above`,
+      );
+    }
+
+    if (playoff) {
+      await this.hydratePlayoffTeamsFromBracket(
+        playoffId,
+        playoff.tournamentId,
+        challongeUrl,
+      );
     }
   }
 
@@ -1333,9 +1497,17 @@ export class PlayoffService {
     winnerTeamId: string;
     loserTeamId: string;
     dotaMatchId: string;
+    /** Для BO3: якщо задано, результат пишеться у конкретний child game (`gameNumber`). */
+    seriesGameSlot?: number;
   }): Promise<PlayoffMatch> {
-    const { playoff, challongeMatch, winnerTeamId, loserTeamId, dotaMatchId } =
-      opts;
+    const {
+      playoff,
+      challongeMatch,
+      winnerTeamId,
+      loserTeamId,
+      dotaMatchId,
+      seriesGameSlot,
+    } = opts;
 
     await this.ensurePlayoffSeriesForBracket(playoff.id, playoff.challongeUrl);
 
@@ -1404,7 +1576,7 @@ export class PlayoffService {
 
     const priorGames = await pmRepo.find({
       where: { seriesId: series.id },
-      order: { createdAt: 'ASC' },
+      order: { gameNumber: 'ASC', createdAt: 'ASC' },
     });
     const resolvedGames = priorGames.filter((g) => !!g.winnerId);
 
@@ -1429,11 +1601,96 @@ export class PlayoffService {
       }
       if (resolvedGames.length >= series.bestOf) {
         throw new BadRequestException(
-          `${series.bestOf} games already stored for this best-of finals slot`,
+          `${series.bestOf} decisive games already stored for this best-of finals slot`,
         );
       }
+
+      await this.ensureBo3ChildPlaceholders(playoff.id, series);
+      const rows = await pmRepo.find({
+        where: { seriesId: series.id },
+        order: { gameNumber: 'ASC', createdAt: 'ASC' },
+      });
+      let target: PlayoffMatch | undefined;
+      if (seriesGameSlot !== undefined) {
+        target = rows.find((g) => g.gameNumber === seriesGameSlot);
+        if (!target) {
+          throw new BadRequestException(
+            `BO3 bracket slot missing child game ${seriesGameSlot} for Challonge mid ${midStr}`,
+          );
+        }
+        if (target.winnerId) {
+          throw new BadRequestException(
+            `Child game ${seriesGameSlot} is already resolved`,
+          );
+        }
+      } else {
+        target = rows.find((g) => !g.winnerId);
+        if (!target) {
+          throw new BadRequestException(
+            `No unresolved BO3 child slot left for Challonge mid ${midStr}`,
+          );
+        }
+      }
+
+      target.teamAId = teamAId;
+      target.teamBId = teamBId;
+      target.winnerId = winnerTeamId;
+      target.dotaMatchId = dotaMatchId;
+      await this.playoffMatchRepo.save(target);
+
+      const resolvedAfterRows = (
+        await pmRepo.find({
+          where: { seriesId: series.id },
+          order: { gameNumber: 'ASC', createdAt: 'ASC' },
+        })
+      ).filter((g) => !!g.winnerId);
+
+      const { winsA, winsB } = this.countWinsOriented(
+        teamAId,
+        teamBId,
+        resolvedAfterRows,
+      );
+
+      const crownedTeamId = this.crownFromWins(
+        series.bestOf,
+        teamAId,
+        teamBId,
+        winsA,
+        winsB,
+      );
+
+      await seriesRepo.update(
+        { id: series.id },
+        {
+          teamAId,
+          teamBId,
+          ...(crownedTeamId
+            ? { seriesWinnerId: crownedTeamId, resolvedAt: new Date() }
+            : {}),
+        },
+      );
+
+      if (crownedTeamId) {
+        const participantWinner = crownedTeamId === teamAId ? p1 : p2;
+        await this.challonge.reportMatchResult(
+          playoff.challongeUrl,
+          challongeMatch.id,
+          participantWinner,
+          p1,
+          p2,
+          winsA,
+          winsB,
+        );
+      }
+
+      this.logger.debug(
+        `record BO3 map: srs=${series.id} challongeMid=${midStr} childGn=${target.gameNumber ?? '?'} crowned=${Boolean(crownedTeamId)}`,
+      );
+
+      return target;
     }
 
+    /** BO1 **/
     const gameNumber =
       priorGames.reduce((mx, g) => Math.max(mx, g.gameNumber ?? 0), 0) + 1;
 
@@ -1461,16 +1718,6 @@ export class PlayoffService {
       winsB,
     );
 
-    if (
-      series.bestOf >= 3 &&
-      decided.length >= series.bestOf &&
-      !crownedTeamId
-    ) {
-      throw new ConflictException(
-        'BO3 ledger is full but no crowned winner — corrupt bracket state',
-      );
-    }
-
     await seriesRepo.update(
       { id: series.id },
       {
@@ -1494,22 +1741,6 @@ export class PlayoffService {
         0,
       );
       return matchEntity;
-    }
-
-    if (series.bestOf >= 3 && crownedTeamId) {
-      const participantWinner = crownedTeamId === teamAId ? p1 : p2;
-      const winnerScore = crownedTeamId === teamAId ? winsA : winsB;
-      const loserScore = crownedTeamId === teamAId ? winsB : winsA;
-
-      await this.challonge.reportMatchResult(
-        playoff.challongeUrl,
-        challongeMatch.id,
-        participantWinner,
-        p1,
-        p2,
-        winnerScore,
-        loserScore,
-      );
     }
 
     return matchEntity;
@@ -1620,12 +1851,25 @@ export class PlayoffService {
       );
 
     const fixtures = await fixtureRepo.find({ where: { playoffId } });
-    const existingMatches = new Set(fixtures.map((f) => f.challongeMatchId));
 
-    const finalsBo3ChallongeIds =
-      await this.challonge.getFinalBo3ChallongeMatchIds(challongeUrl);
+    const existingSlots = new Set(
+      fixtures.map((f) => `${f.challongeMatchId}:${f.fixtureSlot}`),
+    );
+
+    const deBo3 = await this.challonge.getDoubleElimBo3BracketResolution(
+      challongeUrl,
+      await this.activePlayoffTeamCount(tournamentId),
+    );
+    const finalsBo3ChallongeIds = deBo3.bo3ChallongeIds;
 
     const opens = await this.challonge.listOpenMatches(challongeUrl);
+
+    const logBo3Assignments = (): void =>
+      void this.logger.log(
+        `leagueSync: playoff=${playoffId} openMatches=${opens.length} bo3Mapped=${finalsBo3ChallongeIds.size} ` +
+          `dotaFixturesTracked=${fixtures.length}`,
+      );
+    logBo3Assignments();
 
     for (const m of opens) {
       const dA = challongeParticipantIdToDota.get(String(m.participant1Id));
@@ -1633,28 +1877,58 @@ export class PlayoffService {
       if (!dA || !dB || dA === dB) continue;
 
       const mid = String(m.id);
-      if (existingMatches.has(mid)) continue;
-
-      const mirrorAsBo1 = !finalsBo3ChallongeIds.has(m.id);
 
       try {
-        const nodeId = await this.dota2.createTwoTeamFixtureNode(
-          shellGroupId,
-          dA,
-          dB,
-          mirrorAsBo1,
-        );
-        await fixtureRepo.save(
-          fixtureRepo.create({
-            playoffId,
-            challongeMatchId: mid,
-            dotaFixtureNodeGroupId: nodeId,
-          }),
-        );
-        existingMatches.add(mid);
+        if (finalsBo3ChallongeIds.has(m.id)) {
+          for (let slot = 1; slot <= 3; slot += 1) {
+            const key = `${mid}:${slot}`;
+            if (existingSlots.has(key)) continue;
+            const nodeId = await this.dota2.createTwoTeamFixtureNode(
+              shellGroupId,
+              dA,
+              dB,
+              false,
+            );
+            await fixtureRepo.save(
+              fixtureRepo.create({
+                playoffId,
+                challongeMatchId: mid,
+                fixtureSlot: slot,
+                dotaFixtureNodeGroupId: nodeId,
+              }),
+            );
+            existingSlots.add(key);
+            this.logger.log(
+              `league BO3 fixture: playoff=${playoffId} challongeMid=${mid} fixtureSlot=${slot} node=${nodeId}`,
+            );
+          }
+          continue;
+        }
+
+        const key0 = `${mid}:0`;
+        if (!existingSlots.has(key0)) {
+          const nodeId = await this.dota2.createTwoTeamFixtureNode(
+            shellGroupId,
+            dA,
+            dB,
+            true,
+          );
+          await fixtureRepo.save(
+            fixtureRepo.create({
+              playoffId,
+              challongeMatchId: mid,
+              fixtureSlot: 0,
+              dotaFixtureNodeGroupId: nodeId,
+            }),
+          );
+          existingSlots.add(key0);
+          this.logger.log(
+            `league BO1 fixture: playoff=${playoffId} challongeMid=${mid}`,
+          );
+        }
       } catch (err) {
         this.logger.warn(
-          `Dota RR fixture create failed for Challonge match ${mid} (${dA} vs ${dB})`,
+          `Dota fixture create failed for Challonge match ${mid}`,
           err,
         );
       }

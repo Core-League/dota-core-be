@@ -392,7 +392,7 @@ export class Dota2Service {
 
   /**
    * Pair node under organisational parent (same flow as qualification join for BO1).
-   * BO3 playoff finals mirror `post_editnodegroup`: node_group_type=7, default_node_type=2.
+   * BO3: `node_group_type=7` and **`default_node_type=2`** (Valve playoff series slot).
    *
    * @param bestOfOne — When false, creates league BO3-series slot (`node_group_type=7`).
    */
