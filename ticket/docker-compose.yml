@@ -4,4 +4,4 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
-      - /opt/ticket-bot/data/tickets.json:/app/tickets.json
+      - ./data/tickets.json:/app/tickets.json

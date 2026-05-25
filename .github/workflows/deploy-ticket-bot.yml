@@ -27,9 +27,9 @@ jobs:
             cd "$APP_DIR"
             git fetch origin main
             git pull origin main
-            mkdir -p /opt/ticket-bot/data
-            if [ ! -f /opt/ticket-bot/data/tickets.json ]; then
-              echo '[]' > /opt/ticket-bot/data/tickets.json
+            mkdir -p "$APP_DIR/ticket/data"
+            if [ ! -f "$APP_DIR/ticket/data/tickets.json" ]; then
+              echo '[]' > "$APP_DIR/ticket/data/tickets.json"
             fi
             cd ticket
             docker compose up -d --build
