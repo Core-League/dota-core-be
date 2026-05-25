@@ -1,0 +1,35 @@
+name: Deploy Ticket Bot
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ticket/**'
+
+jobs:
+  deploy-ticket-bot:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      APP_DIR: /home/ubuntu/apps/dota-core-be
+    steps:
+      - name: Deploy ticket bot
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script_stop: true
+          envs: APP_DIR
+          script: |
+            cd "$APP_DIR"
+            git fetch origin main
+            git pull origin main
+            mkdir -p /opt/ticket-bot/data
+            if [ ! -f /opt/ticket-bot/data/tickets.json ]; then
+              echo '[]' > /opt/ticket-bot/data/tickets.json
+            fi
+            cd ticket
+            docker compose up -d --build
