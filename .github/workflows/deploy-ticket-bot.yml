@@ -25,8 +25,8 @@ jobs:
           envs: APP_DIR
           script: |
             cd "$APP_DIR"
-            git fetch origin main
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
             mkdir -p "$APP_DIR/ticket/data"
             if [ ! -f "$APP_DIR/ticket/data/tickets.json" ]; then
               echo '[]' > "$APP_DIR/ticket/data/tickets.json"

@@ -25,9 +25,9 @@ jobs:
           envs: APP_DIR,BRANCH
           script: |
             cd "$APP_DIR"
-            git fetch origin "$BRANCH"
+            git fetch origin
             git checkout "$BRANCH"
-            git pull origin "$BRANCH"
+            git reset --hard "origin/$BRANCH"
             npm ci
             npm run build
             pm2 restart core-backend
