@@ -11,14 +11,6 @@ import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
 import { DevModule } from './dev/dev.module';
 
-/**
- * Live deploy uses `NODE_ENV=staging` (see `ecosystem.config.js`). For TypeORM,
- * staging is treated like production: no `synchronize`, migrations on boot.
- * `production` is included for a future split or CI.
- */
-const typeOrmProdLike =
-  process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
-
 @Module({
   imports: [
     TypeOrmModule.forRoot({
@@ -29,9 +21,8 @@ const typeOrmProdLike =
       password: process.env.DB_PASS,
       database: process.env.DB_NAME,
       autoLoadEntities: true,
-      synchronize: !typeOrmProdLike,
+      synchronize: false,
       migrations: ['dist/migrations/*.js'],
-      migrationsRun: typeOrmProdLike,
     }),
     PlayersModule,
     UserRolesModule,
