@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'core-backend',
-      script: 'dist/main.js',
+      script: 'dist/entry-points/http/api-v1/main.js',
       cwd: '/home/ubuntu/apps/dota-core-be',
       env: {
         NODE_ENV: 'production',
@@ -16,7 +16,7 @@ module.exports = {
     },
     {
       name: 'core-backend-staging',
-      script: 'dist/main.js',
+      script: 'dist/entry-points/http/api-v1/main.js',
       cwd: '/home/ubuntu/apps/dota-core-be-staging',
       env: {
         NODE_ENV: 'staging',
