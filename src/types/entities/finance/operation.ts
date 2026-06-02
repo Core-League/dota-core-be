@@ -1,0 +1,29 @@
+import { z } from 'zod';
+import { OperationType } from '../../enums/finance/OperationType';
+
+/**
+ * A classified operation for display, derived from a {@link StoredTransaction}
+ * (or created manually — `transactionId` is then null). Amount is in **kopecks**,
+ * signed; color is derived from `sign(amount)` and never stored. `iconAssetId`
+ * is a FK to the icon asset (sponsor logo / team avatar / chosen icon); `groupId`
+ * is set when the operation belongs to an {@link OperationGroup}.
+ */
+export const OperationSchema = z.object({
+  id: z.string(),
+  transactionId: z.string().nullable(),
+  type: z.enum(OperationType),
+  amount: z.number().int(),
+  time: z.date(),
+  title: z.string(),
+  /** FK to the icon asset (sponsor logo, team avatar, or user-chosen). */
+  iconAssetId: z.string().nullable(),
+  groupId: z.string().nullable(),
+  comment: z.string().nullable(),
+  /** Snapshot of the originating raw fields, kept for audit. */
+  raw: z.record(z.string(), z.unknown()).nullable(),
+});
+
+export type Operation = z.infer<typeof OperationSchema>;
+
+/** An operation not yet persisted (no generated `id`). */
+export type OperationDraft = Omit<Operation, 'id'>;

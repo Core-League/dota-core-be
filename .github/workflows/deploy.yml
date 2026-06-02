@@ -30,4 +30,6 @@ jobs:
             git pull origin "$BRANCH"
             npm ci
             npm run build
+            npm run migration:run:v2
             pm2 restart core-backend
+            pm2 restart core-backend-v2
