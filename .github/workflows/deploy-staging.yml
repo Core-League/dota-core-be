@@ -13,6 +13,8 @@ jobs:
     env:
       APP_DIR: /home/ubuntu/apps/dota-core-be-staging
       BRANCH: dev
+      NODE_ENV: staging
+      DB_HOST: 127.0.0.1
     steps:
       - name: Deploy to staging
         uses: appleboy/ssh-action@v1.0.3
@@ -22,7 +24,7 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
-          envs: APP_DIR,BRANCH
+          envs: APP_DIR,BRANCH,NODE_ENV,DB_HOST
           script: |
             cd "$APP_DIR"
             git fetch origin "$BRANCH"
