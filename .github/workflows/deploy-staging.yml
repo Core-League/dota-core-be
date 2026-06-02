@@ -34,4 +34,4 @@ jobs:
             npm run build
             npm run migration:run:v2
             pm2 restart core-backend-staging
-            pm2 restart core-backend-v2-staging
+            pm2 startOrRestart ecosystem.config.js --only core-backend-v2-staging --update-env
