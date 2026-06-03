@@ -13,6 +13,8 @@ jobs:
     env:
       APP_DIR: /home/ubuntu/apps/dota-core-be
       BRANCH: main
+      NODE_ENV: production
+      DB_HOST: 127.0.0.1
     steps:
       - name: Deploy to production
         uses: appleboy/ssh-action@v1.0.3
@@ -22,7 +24,7 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
-          envs: APP_DIR,BRANCH
+          envs: APP_DIR,BRANCH,NODE_ENV,DB_HOST
           script: |
             cd "$APP_DIR"
             git fetch origin
@@ -30,4 +32,7 @@ jobs:
             git reset --hard "origin/$BRANCH"
             npm ci
             npm run build
-            pm2 restart core-backend
+            npm run migration:run
+            npm run migration:run:v2
+            pm2 startOrRestart ecosystem.config.js --only core-backend --update-env
+            pm2 startOrRestart ecosystem.config.js --only core-backend-v2 --update-env
