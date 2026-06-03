@@ -2,7 +2,6 @@ import { Module, type DynamicModule } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigConnectorModule } from '../connectors/config/config-connector.module';
 import { ConfigConnectorService } from '../connectors/config/config-connector.service';
-import { EnvTypes } from '../types/enums/common/EnvTypes';
 import { entities } from './models';
 
 /**
@@ -23,7 +22,6 @@ export class DbModule {
           inject: [ConfigConnectorService],
           useFactory: (config: ConfigConnectorService) => {
             const env = config.getEnvConfig();
-            const isDev = env.NODE_ENV === EnvTypes.Development;
 
             return {
               type: 'postgres',
@@ -34,8 +32,7 @@ export class DbModule {
               database: env.DB_NAME,
               entities,
               migrations: ['dist/db/migrations/*.js'],
-              synchronize: isDev,
-              migrationsRun: !isDev,
+              synchronize: false,
             };
           },
         }),
