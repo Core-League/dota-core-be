@@ -3,16 +3,22 @@ import {
   PrimaryGeneratedColumn,
   Column,
   OneToOne,
+  ManyToOne,
   ManyToMany,
   OneToMany,
   JoinColumn,
   JoinTable,
+  Index,
 } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
 import { Match } from '../matches/matches.entity';
 
 @Entity()
+@Index('UQ_team_active_captain', ['captain'], {
+  unique: true,
+  where: '"disbandedAt" IS NULL',
+})
 export class Team {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -20,7 +26,7 @@ export class Team {
   @Column()
   name: string;
 
-  @OneToOne(() => Player, {
+  @ManyToOne(() => Player, {
     onDelete: 'RESTRICT',
     nullable: false,
   })
