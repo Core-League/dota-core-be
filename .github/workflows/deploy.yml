@@ -27,10 +27,10 @@ jobs:
           envs: APP_DIR,BRANCH,NODE_ENV,DB_HOST
           script: |
             cd "$APP_DIR"
-            git fetch origin "$BRANCH"
+            git fetch origin
             git checkout "$BRANCH"
-            git pull origin "$BRANCH"
-            npm ci
+            git reset --hard "origin/$BRANCH"
+            npm ci --include=dev
             npm run build
             npm run migration:run
             npm run migration:run:v2
