@@ -18,62 +18,71 @@ jobs:
   deploy:
     runs-on: self-hosted
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+    # Job-level env is inherited by every step, so both compose commands below
+    # (migrate, then up) share one definition. Compose forwards the names listed
+    # under `environment:` in docker-compose.yml into the containers.
     env:
+      # --- Compose interpolation only (NOT forwarded into containers) ---
       # Distinct project/image names -> isolated stacks on the same host.
       COMPOSE_PROJECT_NAME: ${{ github.ref == 'refs/heads/main' && 'dota-core-be' || 'dota-core-be-staging' }}
       IMAGE_NAME: ${{ github.ref == 'refs/heads/main' && 'dota-core-be' || 'dota-core-be-staging' }}
       IMAGE_TAG: ${{ github.sha }}
-      # host networking: these are the ports the apps bind directly on the host.
-      # prod and staging must differ (e.g. prod 3000/3010, staging 3001/3011).
+      # host networking: ports the apps bind directly on the host. prod and
+      # staging must differ (e.g. prod 3000/3010, staging 3001/3011).
       API_V1_PORT: ${{ vars.API_V1_PORT }}
       API_V2_PORT: ${{ vars.API_V2_PORT }}
+      # --- App config, forwarded into containers ---
+      # Non-secret config -> vars.*, credentials/tokens -> secrets.*. Flip any
+      # entry whose GitHub kind differs from yours (wrong kind => empty value).
+      NODE_ENV: ${{ vars.NODE_ENV }}
+      API_BASE_URL: ${{ vars.API_BASE_URL }}
+      CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+      CORS_CREDENTIALS: ${{ vars.CORS_CREDENTIALS }}
+      DB_HOST: ${{ vars.DB_HOST }}
+      DB_PORT: ${{ vars.DB_PORT }}
+      DB_USER: ${{ vars.DB_USER }}
+      DB_NAME: ${{ vars.DB_NAME }}
+      BYPASS_TEAM_VERIFICATION: ${{ vars.BYPASS_TEAM_VERIFICATION }}
+      JWT_EXPIRES_SEC: ${{ vars.JWT_EXPIRES_SEC }}
+      DISCORD_CLIENT_ID: ${{ vars.DISCORD_CLIENT_ID }}
+      DISCORD_PUBLIC_KEY: ${{ vars.DISCORD_PUBLIC_KEY }}
+      DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
+      DISCORD_REDIRECT_URI: ${{ vars.DISCORD_REDIRECT_URI }}
+      DISCORD_SCOPES: ${{ vars.DISCORD_SCOPES }}
+      DISCORD_VERIFIED_ROLE_ID: ${{ vars.DISCORD_VERIFIED_ROLE_ID }}
+      STEAM_CALLBACK_URI: ${{ vars.STEAM_CALLBACK_URI }}
+      STEAM_FRONTEND_REDIRECT: ${{ vars.STEAM_FRONTEND_REDIRECT }}
+      DOTA_LEAGUE_ID: ${{ vars.DOTA_LEAGUE_ID }}
+      CHALLONGE_BASE_URL: ${{ vars.CHALLONGE_BASE_URL }}
+      MONOBANK_ACCOUNT_ID: ${{ vars.MONOBANK_ACCOUNT_ID }}
+      MONOBANK_API_URL: ${{ vars.MONOBANK_API_URL }}
+      MONOBANK_HTTP_TIMEOUT: ${{ vars.MONOBANK_HTTP_TIMEOUT }}
+      DB_PASS: ${{ secrets.DB_PASS }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+      DOTA_SESSION_ID: ${{ secrets.DOTA_SESSION_ID }}
+      DOTA_OAUTH_TOKEN: ${{ secrets.DOTA_OAUTH_TOKEN }}
+      DOTA_OAUTH_INFO: ${{ secrets.DOTA_OAUTH_INFO }}
+      CHALLONGE_API_KEY: ${{ secrets.CHALLONGE_API_KEY }}
+      DUELO_API_KEY: ${{ secrets.DUELO_API_KEY }}
+      STARTZ_API_KEY: ${{ secrets.STARTZ_API_KEY }}
+      MONOBANK_TOKEN: ${{ secrets.MONOBANK_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Each assignment below is forwarded into the container by Compose via the
-      # value-less names under `environment:` in docker-compose.yml. Non-secret
-      # config -> vars.*, credentials/tokens -> secrets.*. Flip any line whose
-      # GitHub kind differs from how you created it (wrong kind => empty value).
-      # --env-file /dev/null ignores the committed root .env (GitHub is the only source).
-      - name: Build & deploy (migrate -> api-v1 -> api-v2)
-        run: |
-          NODE_ENV="${{ vars.NODE_ENV }}" \
-          API_BASE_URL="${{ vars.API_BASE_URL }}" \
-          CORS_ORIGINS="${{ vars.CORS_ORIGINS }}" \
-          CORS_CREDENTIALS="${{ vars.CORS_CREDENTIALS }}" \
-          DB_HOST="${{ vars.DB_HOST }}" \
-          DB_PORT="${{ vars.DB_PORT }}" \
-          DB_USER="${{ vars.DB_USER }}" \
-          DB_NAME="${{ vars.DB_NAME }}" \
-          BYPASS_TEAM_VERIFICATION="${{ vars.BYPASS_TEAM_VERIFICATION }}" \
-          JWT_EXPIRES_SEC="${{ vars.JWT_EXPIRES_SEC }}" \
-          DISCORD_CLIENT_ID="${{ vars.DISCORD_CLIENT_ID }}" \
-          DISCORD_PUBLIC_KEY="${{ vars.DISCORD_PUBLIC_KEY }}" \
-          DISCORD_SYNC_GUILD_ID="${{ vars.DISCORD_SYNC_GUILD_ID }}" \
-          DISCORD_REDIRECT_URI="${{ vars.DISCORD_REDIRECT_URI }}" \
-          DISCORD_SCOPES="${{ vars.DISCORD_SCOPES }}" \
-          DISCORD_VERIFIED_ROLE_ID="${{ vars.DISCORD_VERIFIED_ROLE_ID }}" \
-          STEAM_CALLBACK_URI="${{ vars.STEAM_CALLBACK_URI }}" \
-          STEAM_FRONTEND_REDIRECT="${{ vars.STEAM_FRONTEND_REDIRECT }}" \
-          DOTA_LEAGUE_ID="${{ vars.DOTA_LEAGUE_ID }}" \
-          CHALLONGE_BASE_URL="${{ vars.CHALLONGE_BASE_URL }}" \
-          MONOBANK_ACCOUNT_ID="${{ vars.MONOBANK_ACCOUNT_ID }}" \
-          MONOBANK_API_URL="${{ vars.MONOBANK_API_URL }}" \
-          MONOBANK_HTTP_TIMEOUT="${{ vars.MONOBANK_HTTP_TIMEOUT }}" \
-          DB_PASS="${{ secrets.DB_PASS }}" \
-          JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-          DISCORD_CLIENT_SECRET="${{ secrets.DISCORD_CLIENT_SECRET }}" \
-          DISCORD_BOT_TOKEN="${{ secrets.DISCORD_BOT_TOKEN }}" \
-          STEAM_API_KEY="${{ secrets.STEAM_API_KEY }}" \
-          DOTA_SESSION_ID="${{ secrets.DOTA_SESSION_ID }}" \
-          DOTA_OAUTH_TOKEN="${{ secrets.DOTA_OAUTH_TOKEN }}" \
-          DOTA_OAUTH_INFO="${{ secrets.DOTA_OAUTH_INFO }}" \
-          CHALLONGE_API_KEY="${{ secrets.CHALLONGE_API_KEY }}" \
-          DUELO_API_KEY="${{ secrets.DUELO_API_KEY }}" \
-          STARTZ_API_KEY="${{ secrets.STARTZ_API_KEY }}" \
-          MONOBANK_TOKEN="${{ secrets.MONOBANK_TOKEN }}" \
-          docker compose --env-file /dev/null up -d --build --remove-orphans
+      # Runs v1 + v2 migrations to completion and exits. Non-zero exit fails the
+      # job here, before any app container is touched. --env-file /dev/null
+      # ignores the committed root .env (GitHub is the only config source).
+      - name: Run DB migrations (v1 + v2)
+        run: docker compose --env-file /dev/null run --rm --build migrate
+
+      # Migrations already ran above, so --no-deps skips re-triggering `migrate`
+      # via the apps' depends_on.
+      - name: Start apps (api-v1 + api-v2)
+        run: docker compose --env-file /dev/null up -d --build --no-deps --remove-orphans api-v1 api-v2
 
       - name: Prune dangling images
         if: always()

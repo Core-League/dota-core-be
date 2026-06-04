@@ -11,7 +11,9 @@
 #   - api-v1/v2   -> Dockerfile          (prod-only deps + dist; lean)
 #
 # Boot order: `migrate` runs v1 + v2 migrations to completion, then the apps
-# start.
+# start. CI runs them as two explicit steps (`run --rm migrate`, then `up
+# --no-deps api-v1 api-v2`); a plain local `docker compose up` relies on the
+# apps' `depends_on: migrate (service_completed_successfully)` instead.
 #
 # Config: NO .env file. Each name under `environment:` is value-less, so Compose
 # forwards it from the *shell that runs `docker compose`*. CI sets every value
@@ -70,7 +72,6 @@ services:
       context: .
       dockerfile: Dockerfile.migrate
     image: ${IMAGE_NAME:-dota-core-be}-migrate:${IMAGE_TAG:-latest}
-    container_name: ${COMPOSE_PROJECT_NAME:-dota-core-be}-migrate
     restart: 'no'
 
   api-v1:
