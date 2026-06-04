@@ -81,7 +81,22 @@ Each process bootstraps its own root module, so only its own entities/pipes load
 
 ## Deployment
 
-Push to `dev` branch triggers GitHub Actions: SSH into Ubuntu server → `npm ci` → `npm run build` (one build emits both entry points) → `pm2 restart ecosystem.config.js`. PM2 runs both processes with `NODE_ENV=staging`: `core-backend` (v1, `dist/entry-points/http/api-v1/main.js`) and `core-backend-v2` (v2, `dist/entry-points/http/api-v2/main.js`, port 3002). A reverse proxy routes the v2 subdomain to the v2 process.
+**Docker Compose on a self-hosted runner.** One workflow `.github/workflows/deploy.yml` triggers on push to `main` (→ Environment `production`) and `dev` (→ Environment `staging`); the branch selects the Environment, project name, and image name via expressions. The job runs on `runs-on: self-hosted`, checks out the repo, sets all GitHub secrets + vars inline, then `docker compose up -d --build`.
+
+Two Dockerfiles back three services in `docker-compose.yml`, all on `network_mode: host`:
+- `migrate` — `Dockerfile.migrate` (dev deps + src, no build); one-shot, runs `migration:run` + `migration:run:v2` via ts-node, then exits.
+- `api-v1` — `Dockerfile` (prod-only deps + `dist`, no dev deps/src); binds `${API_V1_PORT}` directly on the host.
+- `api-v2` — `Dockerfile`; binds `${API_V2_PORT}` directly on the host.
+
+`api-v1`/`api-v2` `depends_on` `migrate` with `service_completed_successfully`, so migrations always finish before the apps start. Staging uses `COMPOSE_PROJECT_NAME=dota-core-be-staging` for an isolated stack on the same host. Under host networking there is no port mapping — the listen port *is* the host port — so staging and prod must use different `API_V1_PORT`/`API_V2_PORT` (e.g. prod 3000/3010, staging 3001/3011).
+
+**Config (no `.env` file):** each service's `environment:` lists value-less names; Compose forwards them from the shell that runs `docker compose`. The deploy step sets each value inline before the command (`NAME="${{ vars.NAME }}"` / `NAME="${{ secrets.NAME }}"` … `docker compose --env-file /dev/null up`), so GitHub is the only config source (the committed root `.env` is ignored). Each app's `PORT` is set via `command` from `${API_V1_PORT}`/`${API_V2_PORT}`; `IMAGE_TAG` and project/image names come from job `env`. Adding a new app env var means three edits: the GitHub Environment, the inline list in the workflow, and the `environment:` names in `docker-compose.yml`.
+
+**DB is external (not containerized).** With `network_mode: host` the containers share the host's network namespace, so `DB_HOST=127.0.0.1` reaches a host-local Postgres with no Postgres/firewall changes. A remote `DB_HOST` IP works as-is.
+
+Required GitHub Environment config (production + staging): every app secret/var (`DB_*`, `JWT_SECRET`, `DISCORD_*`, etc.) as Environment **secrets/vars** referenced inline in the workflow, plus `API_V1_PORT` / `API_V2_PORT` vars. Runner needs Docker. `ecosystem.config.js` (PM2) is superseded by this flow.
+
+Local equivalent (load an env file into the shell yourself, no auto-forward): `set -a; . ./.env.staging; set +a; API_V1_PORT=3000 API_V2_PORT=3010 docker compose up -d --build`.
 
 **Test coverage**:
 - DO NOT WRITE OR RUN TESTS
