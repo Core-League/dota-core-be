@@ -45,6 +45,7 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+./uploads
 
 # local DB snapshot — run `npm run db:dump` to regenerate
 scripts/initdb/seed.sql
