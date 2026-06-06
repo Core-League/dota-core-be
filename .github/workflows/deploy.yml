@@ -73,16 +73,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Runs v1 + v2 migrations to completion and exits. Non-zero exit fails the
-      # job here, before any app container is touched. --env-file /dev/null
-      # ignores the committed root .env (GitHub is the only config source).
-      - name: Run DB migrations (v1 + v2)
-        run: docker compose --env-file /dev/null run --rm --build migrate
+      # Build the single shared image ONCE. migrate + api-v1 + api-v2 all use
+      # ${IMAGE_NAME}:${IMAGE_TAG}, so building one service produces the tag the
+      # others reuse. A build failure stops the job here — nothing live changes.
+      - name: Build app image
+        run: docker compose --env-file /dev/null build api-v1
 
-      # Migrations already ran above, so --no-deps skips re-triggering `migrate`
-      # via the apps' depends_on.
+      # Run v1 + v2 migrations from the freshly built image (compiled .js).
+      # `run` reuses the existing image by default (it has no --no-build flag and
+      # only builds when the image is missing), so this won't rebuild. Non-zero
+      # exit fails the job here, BEFORE any app container is touched. --env-file
+      # /dev/null ignores the committed root .env (GitHub is the only config source).
+      - name: Run DB migrations (v1 + v2)
+        run: docker compose --env-file /dev/null run --rm migrate
+
+      # Migrations already ran above and passed (fail-fast guarantees the live
+      # apps were untouched on failure). Reuse the built image (--no-build) and
+      # skip re-triggering `migrate` via depends_on (--no-deps).
       - name: Start apps (api-v1 + api-v2)
-        run: docker compose --env-file /dev/null up -d --build --no-deps --remove-orphans api-v1 api-v2
+        run: docker compose --env-file /dev/null up -d --no-build --no-deps --remove-orphans api-v1 api-v2
 
       - name: Prune dangling images
         if: always()

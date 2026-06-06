@@ -26,6 +26,12 @@ x-common:
   # Share the host network: DB on 127.0.0.1 is reachable, no port mapping.
   &common
   network_mode: host
+  # Persist user uploads across container rebuilds (deploy does `up --build`).
+  # Named volume → auto-scoped per COMPOSE_PROJECT_NAME, so staging and prod
+  # get separate storage. api-v1 + api-v2 share it (same /uploads URL space);
+  # migrate mounts it too but never writes there.
+  volumes:
+    - uploads:/app/uploads
   # Value-less names → forwarded from the shell that runs `docker compose`
   # (host networking does NOT pass env vars; this list is what injects config).
   environment:
@@ -66,13 +72,16 @@ x-common:
     - MONOBANK_HTTP_TIMEOUT
 
 services:
+  # Same image as the apps (one build, shared tag). One-shot: runs v1 + v2
+  # migrations from the compiled dist (.js) via the prod `typeorm` bin, then
+  # exits. No dev deps / src / ts-node — the lean app image is all it needs.
   migrate:
     <<: *common
     build:
       context: .
-      dockerfile: Dockerfile.migrate
-    image: ${IMAGE_NAME:-dota-core-be}-migrate:${IMAGE_TAG:-latest}
+    image: ${IMAGE_NAME:-dota-core-be}:${IMAGE_TAG:-latest}
     restart: 'no'
+    command: sh -c "npm run migration:run:prod && npm run migration:run:v2:prod"
 
   api-v1:
     <<: *common
@@ -97,4 +106,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    command: sh -c "export PORT=${API_V2_PORT:-3002}; exec node dist/entry-points/http/api-v2/main"
+    command: sh -c "export PORT=${API_V2_PORT:-3010}; exec node dist/entry-points/http/api-v2/main"
+
+volumes:
+  uploads:

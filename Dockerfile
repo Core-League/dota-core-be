@@ -9,7 +9,11 @@ FROM node:24-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --include=dev
-COPY . .
+# Copy only what `nest build` reads, so editing docs/compose/etc. doesn't bust
+# this layer and force a recompile. Add a COPY line if a new build input appears
+# at the repo root (e.g. another tsconfig.*).
+COPY tsconfig*.json nest-cli.json ./
+COPY src ./src
 RUN npm run build
 
 # ---- runtime ----
