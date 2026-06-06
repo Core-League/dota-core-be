@@ -1,38 +1,98 @@
-name: Deploy to Production
+name: Deploy
 
+# main -> production environment, dev -> staging environment. Everything else is
+# shared. `vars.*` / `secrets.*` below resolve against whichever Environment the
+# branch selects (set on the job via `environment:`).
 on:
   push:
     branches:
       - main
+      - dev
+
+concurrency:
+  # Separate group per branch so prod and staging deploys don't block each other.
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  deploy-production:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
+  deploy:
+    runs-on: self-hosted
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+    # Job-level env is inherited by every step, so both compose commands below
+    # (migrate, then up) share one definition. Compose forwards the names listed
+    # under `environment:` in docker-compose.yml into the containers.
     env:
-      APP_DIR: /home/ubuntu/apps/dota-core-be
-      BRANCH: main
-      NODE_ENV: production
-      DB_HOST: 127.0.0.1
+      # --- Compose interpolation only (NOT forwarded into containers) ---
+      # Distinct project/image names -> isolated stacks on the same host.
+      COMPOSE_PROJECT_NAME: ${{ github.ref == 'refs/heads/main' && 'dota-core-be' || 'dota-core-be-staging' }}
+      IMAGE_NAME: ${{ github.ref == 'refs/heads/main' && 'dota-core-be' || 'dota-core-be-staging' }}
+      IMAGE_TAG: ${{ github.sha }}
+      # host networking: ports the apps bind directly on the host. prod and
+      # staging must differ (e.g. prod 3000/3010, staging 3001/3011).
+      API_V1_PORT: ${{ vars.API_V1_PORT }}
+      API_V2_PORT: ${{ vars.API_V2_PORT }}
+      # --- App config, forwarded into containers ---
+      # Non-secret config -> vars.*, credentials/tokens -> secrets.*. Flip any
+      # entry whose GitHub kind differs from yours (wrong kind => empty value).
+      NODE_ENV: ${{ vars.NODE_ENV }}
+      API_BASE_URL: ${{ vars.API_BASE_URL }}
+      CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+      CORS_CREDENTIALS: ${{ vars.CORS_CREDENTIALS }}
+      DB_HOST: ${{ vars.DB_HOST }}
+      DB_PORT: ${{ vars.DB_PORT }}
+      DB_USER: ${{ vars.DB_USER }}
+      DB_NAME: ${{ vars.DB_NAME }}
+      BYPASS_TEAM_VERIFICATION: ${{ vars.BYPASS_TEAM_VERIFICATION }}
+      JWT_EXPIRES_SEC: ${{ vars.JWT_EXPIRES_SEC }}
+      DISCORD_CLIENT_ID: ${{ vars.DISCORD_CLIENT_ID }}
+      DISCORD_PUBLIC_KEY: ${{ vars.DISCORD_PUBLIC_KEY }}
+      DISCORD_SYNC_GUILD_ID: ${{ vars.DISCORD_SYNC_GUILD_ID }}
+      DISCORD_REDIRECT_URI: ${{ vars.DISCORD_REDIRECT_URI }}
+      DISCORD_SCOPES: ${{ vars.DISCORD_SCOPES }}
+      DISCORD_VERIFIED_ROLE_ID: ${{ vars.DISCORD_VERIFIED_ROLE_ID }}
+      STEAM_CALLBACK_URI: ${{ vars.STEAM_CALLBACK_URI }}
+      STEAM_FRONTEND_REDIRECT: ${{ vars.STEAM_FRONTEND_REDIRECT }}
+      DOTA_LEAGUE_ID: ${{ vars.DOTA_LEAGUE_ID }}
+      CHALLONGE_BASE_URL: ${{ vars.CHALLONGE_BASE_URL }}
+      MONOBANK_ACCOUNT_ID: ${{ vars.MONOBANK_ACCOUNT_ID }}
+      MONOBANK_API_URL: ${{ vars.MONOBANK_API_URL }}
+      MONOBANK_HTTP_TIMEOUT: ${{ vars.MONOBANK_HTTP_TIMEOUT }}
+      DB_PASS: ${{ secrets.DB_PASS }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+      DOTA_SESSION_ID: ${{ secrets.DOTA_SESSION_ID }}
+      DOTA_OAUTH_TOKEN: ${{ secrets.DOTA_OAUTH_TOKEN }}
+      DOTA_OAUTH_INFO: ${{ secrets.DOTA_OAUTH_INFO }}
+      CHALLONGE_API_KEY: ${{ secrets.CHALLONGE_API_KEY }}
+      DUELO_API_KEY: ${{ secrets.DUELO_API_KEY }}
+      STARTZ_API_KEY: ${{ secrets.STARTZ_API_KEY }}
+      MONOBANK_TOKEN: ${{ secrets.MONOBANK_TOKEN }}
     steps:
-      - name: Deploy to production
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script_stop: true
-          envs: APP_DIR,BRANCH,NODE_ENV,DB_HOST
-          script: |
-            cd "$APP_DIR"
-            git fetch origin
-            git checkout "$BRANCH"
-            git reset --hard "origin/$BRANCH"
-            npm ci --include=dev
-            npm run build
-            npm run migration:run
-            npm run migration:run:v2
-            pm2 startOrRestart ecosystem.config.js --only core-backend --update-env
-            pm2 startOrRestart ecosystem.config.js --only core-backend-v2 --update-env
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Build the single shared image ONCE. migrate + api-v1 + api-v2 all use
+      # ${IMAGE_NAME}:${IMAGE_TAG}, so building one service produces the tag the
+      # others reuse. A build failure stops the job here — nothing live changes.
+      - name: Build app image
+        run: docker compose --env-file /dev/null build api-v1
+
+      # Run v1 + v2 migrations from the freshly built image (compiled .js).
+      # `run` reuses the existing image by default (it has no --no-build flag and
+      # only builds when the image is missing), so this won't rebuild. Non-zero
+      # exit fails the job here, BEFORE any app container is touched. --env-file
+      # /dev/null ignores the committed root .env (GitHub is the only config source).
+      - name: Run DB migrations (v1 + v2)
+        run: docker compose --env-file /dev/null run --rm migrate
+
+      # Migrations already ran above and passed (fail-fast guarantees the live
+      # apps were untouched on failure). Reuse the built image (--no-build) and
+      # skip re-triggering `migrate` via depends_on (--no-deps).
+      - name: Start apps (api-v1 + api-v2)
+        run: docker compose --env-file /dev/null up -d --no-build --no-deps --remove-orphans api-v1 api-v2
+
+      - name: Prune dangling images
+        if: always()
+        run: docker image prune -f

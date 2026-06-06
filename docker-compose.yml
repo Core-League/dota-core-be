@@ -1,0 +1,113 @@
+# All app services, one DB (external — NOT containerized).
+#
+# network_mode: host — containers share the host's network namespace, so
+# DB_HOST=127.0.0.1 reaches a Postgres listening on the host's loopback with no
+# Postgres reconfiguration. Consequence: there is no port mapping; each app
+# binds its PORT directly on the host, so prod and staging MUST use different
+# ports (driven by API_V1_PORT / API_V2_PORT below).
+#
+# One image (Dockerfile, prod-only deps + dist, lean) backs all three services:
+#   - migrate     -> runs v1 + v2 migrations from the compiled dist (.js) via the
+#                    prod `typeorm` bin, then exits. No dev deps / src / ts-node.
+#   - api-v1/v2   -> the long-running apps.
+#
+# Boot order: `migrate` runs v1 + v2 migrations to completion, then the apps
+# start. CI runs them as two explicit steps (`run --rm migrate`, then `up
+# --no-deps api-v1 api-v2`); a plain local `docker compose up` relies on the
+# apps' `depends_on: migrate (service_completed_successfully)` instead.
+#
+# Config: NO .env file. Each name under `environment:` is value-less, so Compose
+# forwards it from the *shell that runs `docker compose`*. CI sets every value
+# inline before the command; locally do the same, e.g.
+#   set -a; . ./.env.staging; set +a; docker compose up -d --build
+
+name: ${COMPOSE_PROJECT_NAME:-dota-core-be}
+
+x-common:
+  # Share the host network: DB on 127.0.0.1 is reachable, no port mapping.
+  &common
+  network_mode: host
+  # Persist user uploads across container rebuilds (deploy does `up --build`).
+  # Named volume → auto-scoped per COMPOSE_PROJECT_NAME, so staging and prod
+  # get separate storage. api-v1 + api-v2 share it (same /uploads URL space);
+  # migrate mounts it too but never writes there.
+  volumes:
+    - uploads:/app/uploads
+  # Value-less names → forwarded from the shell that runs `docker compose`
+  # (host networking does NOT pass env vars; this list is what injects config).
+  environment:
+    - NODE_ENV
+    - API_BASE_URL
+    - CORS_ORIGINS
+    - CORS_CREDENTIALS
+    - DB_HOST
+    - DB_PORT
+    - DB_USER
+    - DB_PASS
+    - DB_NAME
+    - BYPASS_TEAM_VERIFICATION
+    - JWT_SECRET
+    - JWT_EXPIRES_SEC
+    - DISCORD_CLIENT_ID
+    - DISCORD_CLIENT_SECRET
+    - DISCORD_PUBLIC_KEY
+    - DISCORD_BOT_TOKEN
+    - DISCORD_SYNC_GUILD_ID
+    - DISCORD_REDIRECT_URI
+    - DISCORD_SCOPES
+    - DISCORD_VERIFIED_ROLE_ID
+    - STEAM_API_KEY
+    - STEAM_CALLBACK_URI
+    - STEAM_FRONTEND_REDIRECT
+    - DOTA_LEAGUE_ID
+    - DOTA_SESSION_ID
+    - DOTA_OAUTH_TOKEN
+    - DOTA_OAUTH_INFO
+    - CHALLONGE_API_KEY
+    - CHALLONGE_BASE_URL
+    - DUELO_API_KEY
+    - STARTZ_API_KEY
+    - MONOBANK_TOKEN
+    - MONOBANK_ACCOUNT_ID
+    - MONOBANK_API_URL
+    - MONOBANK_HTTP_TIMEOUT
+
+services:
+  # Same image as the apps (one build, shared tag). One-shot: runs v1 + v2
+  # migrations from the compiled dist (.js) via the prod `typeorm` bin, then
+  # exits. No dev deps / src / ts-node — the lean app image is all it needs.
+  migrate:
+    <<: *common
+    build:
+      context: .
+    image: ${IMAGE_NAME:-dota-core-be}:${IMAGE_TAG:-latest}
+    restart: 'no'
+    command: sh -c "npm run migration:run:prod && npm run migration:run:v2:prod"
+
+  api-v1:
+    <<: *common
+    build:
+      context: .
+    image: ${IMAGE_NAME:-dota-core-be}:${IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-dota-core-be}-api-v1
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Binds this port directly on the host (no mapping under host networking).
+    command: sh -c "export PORT=${API_V1_PORT:-3000}; exec node dist/entry-points/http/api-v1/main"
+
+  api-v2:
+    <<: *common
+    build:
+      context: .
+    image: ${IMAGE_NAME:-dota-core-be}:${IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-dota-core-be}-api-v2
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: sh -c "export PORT=${API_V2_PORT:-3010}; exec node dist/entry-points/http/api-v2/main"
+
+volumes:
+  uploads:

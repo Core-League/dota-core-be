@@ -3,9 +3,17 @@
 # Stop:  docker compose -f docker-compose.dev.yml down
 # Data persists in volume dota-core-be_pgdata until you docker compose down -v
 #
+# Own project name (`dota-core-be-dev`) so it is NOT part of the app stack's
+# project (`dota-core-be`). Without this, running the app compose with
+# `--remove-orphans` would treat this postgres as an orphan and delete it.
+# The pgdata volume is pinned to its original name so the project rename does
+# not orphan existing dev data.
+#
 # Auto-restore: if scripts/initdb/seed.sql exists, Postgres loads it automatically
 # on the first start of a fresh volume (i.e. after docker compose down -v).
 # Run `npm run db:dump` to snapshot the current DB into that file.
+
+name: dota-core-be-dev
 
 services:
   postgres:
@@ -21,10 +29,12 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U dota -d dota_dev']
+      test: [ 'CMD-SHELL', 'pg_isready -U dota -d dota_dev' ]
       interval: 3s
       timeout: 5s
       retries: 5
 
 volumes:
   pgdata:
+    # Pinned so the project rename keeps using the existing data volume.
+    name: dota-core-be_pgdata

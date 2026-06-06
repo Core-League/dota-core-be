@@ -1,0 +1,20 @@
+node_modules
+dist
+build
+coverage
+.git
+.github
+.claude
+.cursor
+.vscode
+logs
+*.log
+test
+uploads
+ticket
+docs
+
+# Never bake env into the image — it is injected at runtime via env_file/environment.
+.env
+.env.*
+!.env.example

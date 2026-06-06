@@ -34,7 +34,9 @@
     "migration:create": "typeorm-ts-node-commonjs migration:create",
     "migration:generate:v2": "typeorm-ts-node-commonjs migration:generate -d src/db/data-source.ts",
     "migration:run:v2": "typeorm-ts-node-commonjs migration:run -d src/db/data-source.ts",
-    "migration:revert:v2": "typeorm-ts-node-commonjs migration:revert -d src/db/data-source.ts"
+    "migration:revert:v2": "typeorm-ts-node-commonjs migration:revert -d src/db/data-source.ts",
+    "migration:run:prod": "typeorm migration:run -d dist/data-source.js",
+    "migration:run:v2:prod": "typeorm migration:run -d dist/db/data-source.js"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
