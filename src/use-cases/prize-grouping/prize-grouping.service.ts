@@ -3,6 +3,7 @@ import { OperationGroupRepository } from '../../repos/operation-group.repository
 import { OperationRepository } from '../../repos/operation.repository';
 import type { Operation } from '../../types/entities/finance/operation';
 import type { OperationGroup } from '../../types/entities/finance/operation-group';
+import type { Team } from '../../types/entities/finance/team';
 import { OperationGroupKind } from '../../types/enums/finance/OperationGroupKind';
 import { OperationType } from '../../types/enums/finance/OperationType';
 import { AssetService } from '../asset/asset.service';
@@ -32,17 +33,26 @@ export class PrizeGroupingService {
     // Dropping the old groups also clears members' groupId (FK ON DELETE SET NULL).
     await this.groupRepo.deleteAllPrizeGroups();
 
-    const byKey = new Map<string, Operation[]>();
+    // Group by the resolved team (its name) so prize operations for the same
+    // team collapse into one group even when their comments differ. Operations
+    // whose comment resolves to no team fall back to the normalized comment, so
+    // each unresolved comment stays its own group rather than merging blindly.
+    const byKey = new Map<
+      string,
+      { members: Operation[]; team: Team | null }
+    >();
     for (const op of prizeOps) {
-      const key = normalizeComment(op.comment ?? op.title);
-      const bucket = byKey.get(key) ?? [];
-      bucket.push(op);
+      const team = await this.teamService.resolveByComment(op.comment);
+      const key = team
+        ? `team:${normalizeComment(team.name)}`
+        : normalizeComment(op.comment ?? op.title);
+      const bucket = byKey.get(key) ?? { members: [], team };
+      bucket.members.push(op);
       byKey.set(key, bucket);
     }
 
     const groups: OperationGroup[] = [];
-    for (const [key, members] of byKey) {
-      const team = await this.teamService.resolveByComment(members[0].comment);
+    for (const [key, { members, team }] of byKey) {
       const iconAssetId =
         team?.avatarRef != null
           ? (
