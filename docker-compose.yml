@@ -6,9 +6,10 @@
 # binds its PORT directly on the host, so prod and staging MUST use different
 # ports (driven by API_V1_PORT / API_V2_PORT below).
 #
-# Two images:
-#   - migrate     -> Dockerfile.migrate (dev deps + src; runs ts-node migrations)
-#   - api-v1/v2   -> Dockerfile          (prod-only deps + dist; lean)
+# One image (Dockerfile, prod-only deps + dist, lean) backs all three services:
+#   - migrate     -> runs v1 + v2 migrations from the compiled dist (.js) via the
+#                    prod `typeorm` bin, then exits. No dev deps / src / ts-node.
+#   - api-v1/v2   -> the long-running apps.
 #
 # Boot order: `migrate` runs v1 + v2 migrations to completion, then the apps
 # start. CI runs them as two explicit steps (`run --rm migrate`, then `up
