@@ -5,14 +5,9 @@ import { MonobankService } from './monobank.service';
 const DEFAULT_BASE_URL = 'https://api.monobank.ua';
 
 /**
- * Provides {@link MonobankService}. Wires the shared HTTP client with the
- * Monobank base URL (from `MONOBANK_API_URL`, defaulting to the public host).
- * The `X-Token` header is applied per-request in the service, so the shared
- * http-client connector stays untouched. Register in a consuming module:
- *
- * ```ts
- * imports: [MonobankModule.register()],
- * ```
+ * Provides {@link MonobankService}, wiring the shared HTTP client with the Monobank
+ * base URL (`MONOBANK_API_URL`, default the public host). The `X-Token` header is
+ * applied per-request in the service. Register via `MonobankModule.register()`.
  */
 @Module({})
 export class MonobankModule {

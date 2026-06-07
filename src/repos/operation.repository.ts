@@ -6,6 +6,7 @@ import { OperationModel } from '../db/models/operation.model';
 import type {
   Operation,
   OperationDraft,
+  OperationUpsert,
 } from '../types/entities/finance/operation';
 import type {
   IOperationRepository,
@@ -15,10 +16,9 @@ import type {
 export type { OperationListFilter };
 
 /**
- * Persistence for classified operations. `upsertByTransactionId` makes
- * classification idempotent: re-classifying a transaction overwrites its single
- * derived operation rather than appending a new one. Manual operations
- * (`transactionId === null`) are always inserted.
+ * Persistence for classified operations. The classification use-case owns the
+ * idempotency/preserve rules; this repository only offers the primitives it needs
+ * — load the existing rows for a set of transactions, then write a batch.
  */
 @Injectable()
 export class OperationRepository implements IOperationRepository {
@@ -27,57 +27,24 @@ export class OperationRepository implements IOperationRepository {
     private readonly repo: Repository<OperationModel>,
   ) {}
 
-  /**
-   * Insert or replace the operation derived from a given transaction. Keeps the
-   * existing row's `id` so references survive a re-classification.
-   *
-   * Group assignment rules:
-   * - `draft.groupId` takes precedence when non-null (classification assigned a
-   *   PRIZE group). When null, the existing `groupId` is preserved so manual
-   *   CUSTOM group assignments survive a reclassify.
-   *
-   * Category assignment rules:
-   * - When the existing row has `categoryManual: true`, the manually-assigned
-   *   `categoryId` is preserved and not overwritten by the auto-matched value.
-   *
-   * Manual operations (`transactionId === null`) are always inserted.
-   */
-  async upsertByTransactionId(draft: OperationDraft): Promise<Operation> {
-    let existingId: string | undefined;
-    let resolvedGroupId: string | null = draft.groupId;
-    let resolvedCategoryId: string | null = draft.categoryId;
-    let resolvedCategoryManual = false;
-    if (draft.transactionId !== null) {
-      const existing = await this.repo.findOne({
-        where: { transactionId: draft.transactionId },
-      });
-      if (existing) {
-        existingId = existing.id;
-        // Draft groupId wins when set (PRIZE assignment); fall back to existing
-        // so CUSTOM group assignments survive reclassification.
-        resolvedGroupId = draft.groupId ?? existing.groupId;
-        if (existing.categoryManual) {
-          resolvedCategoryId = existing.categoryId;
-          resolvedCategoryManual = true;
-        }
-      }
-    }
-    const model = this.repo.create({
-      ...(existingId ? { id: existingId } : {}),
-      transactionId: draft.transactionId,
-      type: draft.type,
-      amount: draft.amount,
-      time: draft.time,
-      title: draft.title,
-      iconAssetId: draft.iconAssetId,
-      groupId: resolvedGroupId,
-      comment: draft.comment,
-      categoryId: resolvedCategoryId,
-      categoryManual: resolvedCategoryManual,
-      raw: draft.raw,
+  /** Load the operations derived from the given transactions in one query. */
+  async findByTransactionIds(txIds: string[]): Promise<Operation[]> {
+    if (txIds.length === 0) return [];
+    const models = await this.repo.find({
+      where: { transactionId: In(txIds) },
     });
-    const saved = await this.repo.save(model);
-    return toOperation(saved);
+    return models.map(toOperation);
+  }
+
+  /**
+   * Persist a batch of operations: rows with an `id` are updated in place, rows
+   * without one are inserted. Written in a single chunked `save`.
+   */
+  async saveMany(rows: OperationUpsert[]): Promise<Operation[]> {
+    if (rows.length === 0) return [];
+    const models = rows.map((row) => this.repo.create(row));
+    const saved = await this.repo.save(models, { chunk: 200 });
+    return saved.map(toOperation);
   }
 
   /** Insert a manual operation (no originating transaction). */
@@ -101,6 +68,7 @@ export class OperationRepository implements IOperationRepository {
     const qb = this.repo.createQueryBuilder('op').orderBy('op.time', 'DESC');
     if (filter.from) qb.andWhere('op.time >= :from', { from: filter.from });
     if (filter.to) qb.andWhere('op.time <= :to', { to: filter.to });
+    if (!filter.showHidden) qb.andWhere('op.isHidden = false');
     const models = await qb.getMany();
     return models.map(toOperation);
   }
@@ -111,21 +79,19 @@ export class OperationRepository implements IOperationRepository {
 
   async update(
     operationId: string,
-    patch: Partial<Pick<Operation, 'title' | 'iconAssetId'>>,
+    patch: Partial<
+      Pick<
+        Operation,
+        | 'title'
+        | 'iconAssetId'
+        | 'categoryId'
+        | 'categoryManual'
+        | 'comment'
+        | 'isHidden'
+      >
+    >,
   ): Promise<void> {
     await this.repo.update({ id: operationId }, patch);
-  }
-
-  /** Assign (or clear) the category; set `manual` to lock against auto-match. */
-  async setCategory(
-    operationId: string,
-    categoryId: string | null,
-    manual: boolean,
-  ): Promise<void> {
-    await this.repo.update(
-      { id: operationId },
-      { categoryId, categoryManual: manual },
-    );
   }
 
   async deleteByTransactionId(transactionId: string): Promise<void> {

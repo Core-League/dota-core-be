@@ -2,10 +2,10 @@ import { z } from 'zod';
 import { EnvTypes } from '../enums/common/EnvTypes';
 
 /**
- * Single source of truth for process.env. Parsed once at boot (see
- * createConfigNamespace) so the app fails fast on a misconfigured environment.
- * Values stay as strings to preserve the existing `Number(...)` / `?? default`
- * call-site logic; only NODE_ENV and JWT_SECRET carry real constraints.
+ * Single source of truth for process.env, parsed once at boot (see
+ * createConfigNamespace) so the app fails fast on misconfiguration. Values stay
+ * strings for the existing call-site `Number(...)` / `?? default` logic; only
+ * NODE_ENV and JWT_SECRET carry real constraints.
  */
 export const EnvSchema = z.object({
   NODE_ENV: z.enum(EnvTypes),

@@ -1,11 +1,9 @@
 import { z } from 'zod';
 
 /**
- * Zod data models for the Bank Personal API (https://api.monobank.ua).
- *
- * The client is transport-only: every monetary field stays in **kopecks**
- * (minor units, signed: + income / − expense). Converting to UAH (`/100`) and
- * classifying operations belong to the consuming business layer, not here.
+ * Zod models for the Bank Personal API (https://api.monobank.ua). Monetary fields
+ * stay in **kopecks** (signed: + income / − expense); UAH conversion and
+ * classification belong to the business layer.
  */
 
 /** A single account from `client-info` (`Account`). */

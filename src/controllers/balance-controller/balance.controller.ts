@@ -1,9 +1,15 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { AdminGuard } from '../../connectors/auth/guards/admin.guard';
 import { JwtAuthGuard } from '../../connectors/auth/guards/jwt-auth.guard';
 import type { Balance } from '../../types/entities/finance/balance';
 import { BalanceService } from '../../use-cases/balance/balance.service';
+import { BalanceDto } from './balance.dto';
 
 @ApiTags('balance')
 @Controller('balance')
@@ -14,6 +20,7 @@ export class BalanceController {
   @Get()
   @ApiOperation({ summary: 'Account balance (optionally with forecast)' })
   @ApiQuery({ name: 'includeForecast', required: false, type: Boolean })
+  @ApiOkResponse({ type: BalanceDto })
   getBalance(
     @Query('includeForecast') includeForecast?: string,
   ): Promise<Balance> {

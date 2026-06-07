@@ -6,13 +6,9 @@ import { HttpError } from '../../errors/http.error';
 import type { IHttpClientConnectorService } from '../../types/interfaced/connectors/http-client.connector.interface';
 
 /**
- * Thin Promise-based wrapper over `@nestjs/axios`' `HttpService`. v2 use-cases
- * depend on this connector instead of `HttpService` directly so they never deal
- * with RxJS `Observable`s, and every failure surfaces as a single normalized
- * {@link HttpError}.
- *
- * The `*` methods return the response **body** (the common case); use
- * {@link HttpClientConnectorService.request} when you need status/headers.
+ * Promise-based wrapper over `@nestjs/axios` `HttpService`: no RxJS `Observable`s
+ * for callers, and every failure normalized to {@link HttpError}. The verb methods
+ * return the response **body**; use {@link request} when you need status/headers.
  */
 @Injectable()
 export class HttpClientConnectorService implements IHttpClientConnectorService {

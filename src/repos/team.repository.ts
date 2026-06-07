@@ -11,13 +11,10 @@ interface TeamRow {
 }
 
 /**
- * Read-only access to the v1-owned `team` table.
- *
- * TODO: replace this raw query with a proper TypeORM model + repository once the
- * `teams` domain migrates into v2 and v2 owns the table. Until then v1 owns
- * `team`, and registering v1's `Team` entity here would drag its whole relation
- * graph (Player/Tournament/Match/…) into v2's connection — so we read the three
- * columns we need directly instead.
+ * Read-only raw access to the v1-owned `team` table. Registering v1's `Team` entity
+ * would drag its whole relation graph (Player/Tournament/Match/…) into v2's
+ * connection, so we read the columns we need directly.
+ * TODO: replace with a TypeORM model once the `teams` domain migrates to v2.
  */
 @Injectable()
 export class TeamRepository implements ITeamRepository {
@@ -33,6 +30,18 @@ export class TeamRepository implements ITeamRepository {
       [name],
     );
     const row = rows[0];
-    return row ? { id: row.id, name: row.name, avatarRef: row.logoUrl } : null;
+    return row ? toTeam(row) : null;
   }
+
+  /** Whole team catalog, for matching many comments in memory in one pass. */
+  async findAll(): Promise<Team[]> {
+    const rows = await this.dataSource.query<TeamRow[]>(
+      `SELECT "id", "name", "logoUrl" FROM "team"`,
+    );
+    return rows.map(toTeam);
+  }
+}
+
+function toTeam(row: TeamRow): Team {
+  return { id: row.id, name: row.name, avatarRef: row.logoUrl };
 }

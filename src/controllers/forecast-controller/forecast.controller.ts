@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from '../../connectors/auth/guards/admin.guard';
 import { JwtAuthGuard } from '../../connectors/auth/guards/jwt-auth.guard';
 import type {
@@ -7,7 +7,7 @@ import type {
   ForecastResult,
 } from '../../types/entities/finance/forecast';
 import { ForecastCalculatorService } from '../../use-cases/forecast/forecast-calculator.service';
-import { ForecastConfigDto } from './forecast.dto';
+import { ForecastConfigDto, ForecastViewDto } from './forecast.dto';
 
 @ApiTags('forecast')
 @Controller('forecast')
@@ -17,6 +17,7 @@ export class ForecastController {
 
   @Get()
   @ApiOperation({ summary: 'Active forecast config + computed result' })
+  @ApiOkResponse({ type: ForecastViewDto })
   getActive(): Promise<{
     config: ForecastConfig;
     result: ForecastResult;
@@ -26,6 +27,7 @@ export class ForecastController {
 
   @Put()
   @ApiOperation({ summary: 'Set the active forecast config' })
+  @ApiOkResponse({ type: ForecastViewDto })
   setActive(
     @Body() body: ForecastConfigDto,
   ): Promise<{ config: ForecastConfig; result: ForecastResult }> {

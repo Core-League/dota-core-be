@@ -3,17 +3,11 @@ import { join } from 'node:path';
 import { DataSource } from 'typeorm';
 
 /**
- * v2's own TypeORM data source. Unlike v1 (`src/data-source.ts`, which globs
- * all `*.entity.{ts,js}`), this one scopes to v2's finance models (`*.model.*`)
- * and migrations (`src/db/migrations/`). v1's data source never sees these
- * files, so the two apps own disjoint sets of tables on the shared database.
- *
- * Globs are `__dirname`-relative with a `{ts,js}` suffix so this works both
- * under ts-node (dev, `__dirname=src/db` → `*.ts`) and compiled (prod,
- * `__dirname=dist/db` → `*.js`).
- *
- * Used only by the TypeORM CLI (migration:*:v2 scripts); the running app
- * configures its own connection in `db.module.ts`.
+ * v2's TypeORM data source, used only by the CLI (migration:*:v2); the app
+ * connects via `db.module.ts`. Scoped to v2's finance models (`*.model.*`) +
+ * migrations, disjoint from v1's tables on the shared DB. Globs are
+ * `__dirname`-relative with `{ts,js}` so they work under ts-node (dev) and
+ * compiled (prod).
  */
 export const V2DataSource = new DataSource({
   type: 'postgres',

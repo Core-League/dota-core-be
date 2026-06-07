@@ -9,7 +9,15 @@ export interface IOperationGroupRepository {
   upsertByGroupKey(
     data: Omit<OperationGroup, 'id' | 'operationIds'>,
   ): Promise<OperationGroup>;
+  upsertManyByGroupKey(
+    specs: Omit<OperationGroup, 'id' | 'operationIds'>[],
+  ): Promise<OperationGroup[]>;
   create(
     data: Omit<OperationGroup, 'id' | 'operationIds'>,
   ): Promise<OperationGroupWithAttachment>;
+  update(
+    id: string,
+    patch: Partial<Pick<OperationGroup, 'title' | 'iconAssetId'>>,
+  ): Promise<OperationGroupWithAttachment>;
+  delete(id: string): Promise<void>;
 }

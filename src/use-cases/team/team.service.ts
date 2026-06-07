@@ -22,4 +22,21 @@ export class TeamService {
     if (!name) return null;
     return this.teamRepo.findByName(name);
   }
+
+  /** The whole team catalog, for matching many comments in memory. */
+  catalog(): Promise<Team[]> {
+    return this.teamRepo.findAll();
+  }
+
+  /**
+   * In-memory {@link resolveByComment} against a preloaded list, so a bulk caller
+   * fetches the catalog once. Matches the parsed name trimmed + case-insensitively,
+   * same rule as `teamRepo.findByName`.
+   */
+  matchIn(comment: string | null | undefined, teams: Team[]): Team | null {
+    const name = parsePrizeName(comment);
+    if (!name) return null;
+    const key = name.trim().toLowerCase();
+    return teams.find((t) => t.name.trim().toLowerCase() === key) ?? null;
+  }
 }

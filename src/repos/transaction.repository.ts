@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   toStoredTransaction,
   toTransactionModel,
@@ -25,6 +25,16 @@ export class TransactionRepository implements ITransactionRepository {
     const model = toTransactionModel(tx);
     await this.repo.upsert(model, ['id']);
     return tx;
+  }
+
+  /** Of the given bank ids, return those already stored — so sync can insert only the new ones. */
+  async findExistingIds(ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.repo.find({
+      where: { id: In(ids) },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
   }
 
   async findById(id: string): Promise<StoredTransaction | null> {
