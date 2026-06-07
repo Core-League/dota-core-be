@@ -19,6 +19,10 @@ export const OperationSchema = z.object({
   iconAssetId: z.string().nullable(),
   groupId: z.string().nullable(),
   comment: z.string().nullable(),
+  /** FK to the assigned category (single per operation), or null. */
+  categoryId: z.string().nullable(),
+  /** True once a user assigned the category by hand; locks it against auto-match. */
+  categoryManual: z.boolean().default(false),
   /** Snapshot of the originating raw fields, kept for audit. */
   raw: z.record(z.string(), z.unknown()).nullable(),
 });

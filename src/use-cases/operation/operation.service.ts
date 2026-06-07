@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { CustomCategoryRepository } from '../../repos/custom-category.repository';
 import { OperationGroupRepository } from '../../repos/operation-group.repository';
 import {
   OperationRepository,
@@ -7,31 +8,53 @@ import {
 import type { Operation } from '../../types/entities/finance/operation';
 import type { OperationGroup } from '../../types/entities/finance/operation-group';
 import {
+  FeedGroupKind,
   FeedItemKind,
   FeedItemSign,
+  type FeedCategoryRef,
   type FeedItem,
   type FeedView,
 } from '../../types/entities/finance/feed';
+import { OperationGroupKind } from '../../types/enums/finance/OperationGroupKind';
 import { AssetService } from '../asset/asset.service';
 import { ForecastCalculatorService } from '../forecast/forecast-calculator.service';
-import { PrizeGroupingService } from '../prize-grouping/prize-grouping.service';
+import { OTHER_GIFTS_GROUP_KEY } from '../shared/group-keys';
 
 const sign = (amount: number): FeedItemSign =>
   amount < 0 ? FeedItemSign.Negative : FeedItemSign.Positive;
 
+/** Map a persisted group's kind/key to the feed's discriminating groupKind. */
+const feedGroupKind = (group: OperationGroup): FeedGroupKind => {
+  switch (group.kind) {
+    case OperationGroupKind.Sponsor:
+      return FeedGroupKind.Sponsor;
+    case OperationGroupKind.Custom:
+      return FeedGroupKind.Manual;
+    case OperationGroupKind.Prize:
+      return group.groupKey === OTHER_GIFTS_GROUP_KEY
+        ? FeedGroupKind.OtherGifts
+        : FeedGroupKind.TeamGift;
+  }
+};
+
 /**
- * The main feed. Returns operations signed, colored, and collapsed into their
- * groups; with `includeForecast`, prepends two **virtual** rows (projected
- * expenses `−`, projected profit `+`) taken from the active forecast — these are
- * never persisted. Prize groups are rebuilt first so the feed always reflects
- * current sponsors/teams (deterministic).
+ * The main feed, built for the requested range. Operations are signed, carry
+ * their assigned category, and collapse into group rows when their `groupId`
+ * points to a persisted `operation_group` (PRIZE / SPONSOR / CUSTOM). All groups
+ * render the same shape (title + resolved icon + nested member operations); the
+ * row's `groupKind` (TEAM_GIFT / OTHER_GIFTS / SPONSOR / MANUAL) and `groupKey`
+ * let the client tell them apart. Group amounts are summed live from the
+ * members present in the range.
+ *
+ * With `includeForecast`, prepends two **virtual** rows (projected expenses `−`,
+ * projected profit `+`) from the active forecast; these are never persisted.
  */
 @Injectable()
 export class OperationService {
   constructor(
     private readonly operationRepo: OperationRepository,
     private readonly groupRepo: OperationGroupRepository,
-    private readonly prizeGroupingService: PrizeGroupingService,
+    private readonly categoryRepo: CustomCategoryRepository,
     private readonly forecast: ForecastCalculatorService,
     private readonly assetService: AssetService,
   ) {}
@@ -40,27 +63,40 @@ export class OperationService {
     filter: OperationListFilter = {},
     includeForecast = false,
   ): Promise<FeedView> {
-    await this.prizeGroupingService.rebuild();
-
     const operations = await this.operationRepo.list(filter);
-    const groups = await this.groupRepo.findAll();
-    const groupById = new Map(groups.map((g) => [g.id, g]));
     const iconUrlById = await this.assetService.resolveUrlMap();
+    const categoryRefById = await this.buildCategoryRefs(iconUrlById);
 
-    const items: FeedItem[] = [];
-    const seenGroups = new Set<string>();
+    // All persisted groups (PRIZE and CUSTOM) are loaded; ops without a groupId
+    // or whose groupId is unknown become standalone items.
+    const allGroups = await this.groupRepo.findAll();
+    const groupById = new Map(allGroups.map((g) => [g.id, g]));
+
+    const groupBuckets = new Map<string, Operation[]>();
+    const standalone: Operation[] = [];
+
     for (const op of operations) {
-      if (op.groupId) {
-        if (seenGroups.has(op.groupId)) continue;
-        const group = groupById.get(op.groupId);
-        if (group) {
-          seenGroups.add(op.groupId);
-          items.push(this.groupToItem(group, op.time, iconUrlById));
-          continue;
-        }
+      if (op.groupId && groupById.has(op.groupId)) {
+        const bucket = groupBuckets.get(op.groupId) ?? [];
+        bucket.push(op);
+        groupBuckets.set(op.groupId, bucket);
+      } else {
+        standalone.push(op);
       }
-      items.push(this.operationToItem(op, iconUrlById));
     }
+
+    const toLeaf = (op: Operation): FeedItem =>
+      this.operationToItem(op, iconUrlById, categoryRefById);
+
+    const items: FeedItem[] = [
+      ...standalone.map(toLeaf),
+      ...[...groupBuckets].map(([groupId, members]) =>
+        this.groupToItem(groupById.get(groupId)!, members, iconUrlById, toLeaf),
+      ),
+    ];
+
+    // Newest first; group rows sort by their most recent member.
+    items.sort((a, b) => (b.time?.getTime() ?? 0) - (a.time?.getTime() ?? 0));
 
     const includesForecast = includeForecast
       ? await this.prependForecast(items)
@@ -69,9 +105,27 @@ export class OperationService {
     return { items, includesForecast };
   }
 
+  /** Map every category id to its display ref (label + resolved icon URL). */
+  private async buildCategoryRefs(
+    iconUrlById: Map<string, string>,
+  ): Promise<Map<string, FeedCategoryRef>> {
+    const categories = await this.categoryRepo.findAll();
+    return new Map(
+      categories.map((c) => [
+        c.id,
+        {
+          id: c.id,
+          label: c.label,
+          iconUrl: this.resolveIcon(c.iconAssetId, iconUrlById),
+        },
+      ]),
+    );
+  }
+
   private operationToItem(
     op: Operation,
     iconUrlById: Map<string, string>,
+    categoryRefById: Map<string, FeedCategoryRef>,
   ): FeedItem {
     return {
       kind: FeedItemKind.Operation,
@@ -82,29 +136,44 @@ export class OperationService {
       title: op.title,
       iconUrl: this.resolveIcon(op.iconAssetId, iconUrlById),
       operationIds: [],
+      groupKind: null,
+      groupKey: null,
+      count: 0,
+      category: op.categoryId
+        ? (categoryRefById.get(op.categoryId) ?? null)
+        : null,
       virtual: false,
+      children: [],
     };
   }
 
+  /** A persisted group row (PRIZE or CUSTOM), aggregated over the range. */
   private groupToItem(
     group: OperationGroup,
-    time: Date,
+    members: Operation[],
     iconUrlById: Map<string, string>,
+    toLeaf: (op: Operation) => FeedItem,
   ): FeedItem {
+    const amount = sumAmount(members);
     return {
       kind: FeedItemKind.Group,
       id: group.id,
-      amount: group.aggregatedAmount,
-      sign: sign(group.aggregatedAmount),
-      time,
+      amount,
+      sign: sign(amount),
+      time: latestTime(members),
       title: group.title,
       iconUrl: this.resolveIcon(group.iconAssetId, iconUrlById),
-      operationIds: group.operationIds,
+      operationIds: members.map((op) => op.id),
+      groupKind: feedGroupKind(group),
+      groupKey: group.groupKey,
+      count: members.length,
+      category: null,
       virtual: false,
+      children: members.map(toLeaf),
     };
   }
 
-  /** Resolve the icon asset to its URL (every icon is now a managed asset). */
+  /** Resolve the icon asset to its URL (every icon is a managed asset). */
   private resolveIcon(
     iconAssetId: string | null,
     iconUrlById: Map<string, string>,
@@ -119,30 +188,48 @@ export class OperationService {
     if (!active) return false;
     const { projectedExpenses, projectedProfit } = active.result;
     const forecastRows: FeedItem[] = [
-      {
-        kind: FeedItemKind.Forecast,
-        id: 'forecast-expenses',
-        amount: -projectedExpenses,
-        sign: FeedItemSign.Negative,
-        time: null,
-        title: 'Прогнозовані витрати',
-        iconUrl: null,
-        operationIds: [],
-        virtual: true,
-      },
-      {
-        kind: FeedItemKind.Forecast,
-        id: 'forecast-profit',
-        amount: projectedProfit,
-        sign: FeedItemSign.Positive,
-        time: null,
-        title: 'Прогнозований прибуток',
-        iconUrl: null,
-        operationIds: [],
-        virtual: true,
-      },
+      this.forecastRow(
+        'forecast-expenses',
+        -projectedExpenses,
+        'Прогнозовані витрати',
+      ),
+      this.forecastRow(
+        'forecast-profit',
+        projectedProfit,
+        'Прогнозований прибуток',
+      ),
     ];
     items.unshift(...forecastRows);
     return true;
   }
+
+  private forecastRow(id: string, amount: number, title: string): FeedItem {
+    return {
+      kind: FeedItemKind.Forecast,
+      id,
+      amount,
+      sign: sign(amount),
+      time: null,
+      title,
+      iconUrl: null,
+      operationIds: [],
+      groupKind: null,
+      groupKey: null,
+      count: 0,
+      category: null,
+      virtual: true,
+      children: [],
+    };
+  }
+}
+
+function sumAmount(members: Operation[]): number {
+  return members.reduce((sum, op) => sum + op.amount, 0);
+}
+
+function latestTime(members: Operation[]): Date | null {
+  return members.reduce<Date | null>(
+    (latest, op) => (!latest || op.time > latest ? op.time : latest),
+    null,
+  );
 }

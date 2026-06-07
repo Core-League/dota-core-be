@@ -12,6 +12,8 @@ export function toCustomCategory(model: CustomCategoryModel): CustomCategory {
     id: model.id,
     label: model.label,
     iconAssetId: model.iconAssetId,
+    sign: model.sign,
+    matchers: model.matchers,
   };
 }
 
@@ -32,6 +34,8 @@ export function toCustomCategoryView(
   return {
     id: category.id,
     label: category.label,
+    sign: category.sign,
+    matchers: category.matchers,
     icon: category.iconAsset ? toAssetView(category.iconAsset, baseUrl) : null,
   };
 }

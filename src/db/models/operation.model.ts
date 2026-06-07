@@ -9,6 +9,7 @@ import {
 import { OperationType } from '../../types/enums/finance/OperationType';
 import { AssetModel } from './asset.model';
 import { bigintTransformer } from './bigint.transformer';
+import { CustomCategoryModel } from './custom-category.model';
 import { OperationGroupModel } from './operation-group.model';
 
 /**
@@ -59,6 +60,22 @@ export class OperationModel {
 
   @Column({ type: 'varchar', nullable: true })
   comment: string | null;
+
+  /** FK to the assigned category (single per operation), or null. */
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  categoryId: string | null;
+
+  @ManyToOne(() => CustomCategoryModel, {
+    onDelete: 'SET NULL',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'categoryId' })
+  category: CustomCategoryModel | null;
+
+  /** True once a user assigned the category by hand; locks it against auto-match. */
+  @Column({ type: 'boolean', default: false })
+  categoryManual: boolean;
 
   @Column({ type: 'jsonb', nullable: true })
   raw: Record<string, unknown> | null;

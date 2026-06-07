@@ -10,7 +10,7 @@ import { IngestionService } from '../../use-cases/ingestion/ingestion.service';
 @ApiTags('webhook')
 @Controller('webhook')
 export class WebhookController {
-  constructor(private readonly ingestionService: IngestionService) { }
+  constructor(private readonly ingestionService: IngestionService) {}
 
   @Get('monobank')
   @ApiOperation({ summary: 'Monobank webhook activation probe' })

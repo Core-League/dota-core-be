@@ -5,7 +5,10 @@ import { toOperationGroupView } from '../../db/mappers/operation-group.mapper';
 import { CustomCategoryRepository } from '../../repos/custom-category.repository';
 import { OperationGroupRepository } from '../../repos/operation-group.repository';
 import { OperationRepository } from '../../repos/operation.repository';
-import type { CustomCategoryView } from '../../types/entities/finance/custom-category';
+import type {
+  CustomCategory,
+  CustomCategoryView,
+} from '../../types/entities/finance/custom-category';
 import type { OperationGroupView } from '../../types/entities/finance/operation-group';
 import { OperationGroupKind } from '../../types/enums/finance/OperationGroupKind';
 import { AssetService } from '../asset/asset.service';
@@ -47,12 +50,10 @@ export class CustomOperationService {
       throw new NotFoundException('One or more operations were not found');
     }
     if (iconAssetId) await this.requireAsset(iconAssetId);
-    const aggregatedAmount = operations.reduce((sum, op) => sum + op.amount, 0);
     const group = await this.groupRepo.create({
       kind: OperationGroupKind.Custom,
       title,
       iconAssetId: iconAssetId ?? null,
-      aggregatedAmount,
       groupKey: `custom:${Date.now()}`,
     });
     for (const op of operations) {
@@ -63,19 +64,57 @@ export class CustomOperationService {
     return toOperationGroupView(fullGroup, this.baseUrl());
   }
 
+  async listCategories(): Promise<CustomCategoryView[]> {
+    const baseUrl = this.baseUrl();
+    const categories = await this.categoryRepo.findAllWithAttachment();
+    return categories.map((c) => toCustomCategoryView(c, baseUrl));
+  }
+
   async createCategory(
-    label: string,
-    iconAssetId: string | null,
+    data: Omit<CustomCategory, 'id'>,
   ): Promise<CustomCategoryView> {
-    if (iconAssetId) await this.requireAsset(iconAssetId);
-    const category = await this.categoryRepo.create({ label, iconAssetId });
+    if (data.iconAssetId) await this.requireAsset(data.iconAssetId);
+    const category = await this.categoryRepo.create(data);
     return toCustomCategoryView(category, this.baseUrl());
+  }
+
+  async updateCategory(
+    id: string,
+    patch: Partial<Omit<CustomCategory, 'id'>>,
+  ): Promise<CustomCategoryView> {
+    await this.requireCategory(id);
+    if (patch.iconAssetId) await this.requireAsset(patch.iconAssetId);
+    const category = await this.categoryRepo.update(id, patch);
+    return toCustomCategoryView(category, this.baseUrl());
+  }
+
+  /** Delete a category; assigned operations keep `categoryId` → null (FK SET NULL). */
+  async deleteCategory(id: string): Promise<void> {
+    await this.requireCategory(id);
+    await this.categoryRepo.delete(id);
+  }
+
+  /** Assign (or clear with `null`) the operation's single category — a manual, sticky choice. */
+  async assignCategory(
+    operationId: string,
+    categoryId: string | null,
+  ): Promise<void> {
+    await this.requireOperation(operationId);
+    if (categoryId) await this.requireCategory(categoryId);
+    await this.operationRepo.setCategory(operationId, categoryId, true);
   }
 
   private async requireOperation(operationId: string): Promise<void> {
     const operation = await this.operationRepo.findById(operationId);
     if (!operation) {
       throw new NotFoundException(`Operation ${operationId} not found`);
+    }
+  }
+
+  private async requireCategory(categoryId: string): Promise<void> {
+    const category = await this.categoryRepo.findById(categoryId);
+    if (!category) {
+      throw new NotFoundException(`Category ${categoryId} not found`);
     }
   }
 

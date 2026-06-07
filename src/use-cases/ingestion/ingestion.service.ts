@@ -17,7 +17,7 @@ export class IngestionService {
     private readonly bank: MonobankService,
     private readonly transactionRepo: TransactionRepository,
     private readonly classificationService: ClassificationService,
-  ) { }
+  ) {}
 
   async handleWebhook(rawBody: unknown): Promise<void> {
     try {

@@ -9,14 +9,13 @@ import {
 } from 'typeorm';
 import { OperationGroupKind } from '../../types/enums/finance/OperationGroupKind';
 import { AssetModel } from './asset.model';
-import { bigintTransformer } from './bigint.transformer';
 import { OperationModel } from './operation.model';
 
 /**
  * A collapsed set of operations shown as one feed row (`operation_group`).
- * Single mechanism for automatic `PRIZE` groups (`groupKey` = normalized comment)
- * and manual `CUSTOM` groups. `aggregatedAmount` is the signed kopeck sum of its
- * members.
+ * Single mechanism for automatic `PRIZE` groups (`groupKey = team:<id>`) and
+ * manual `CUSTOM` groups (`groupKey = custom:<timestamp>`). The aggregated
+ * amount is calculated on the fly from member operations; it is not persisted.
  */
 @Entity({ name: 'operation_group' })
 export class OperationGroupModel {
@@ -36,9 +35,6 @@ export class OperationGroupModel {
   @ManyToOne(() => AssetModel, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'iconAssetId' })
   iconAsset: AssetModel | null;
-
-  @Column({ type: 'bigint', transformer: bigintTransformer })
-  aggregatedAmount: number;
 
   @Index()
   @Column({ type: 'varchar' })
