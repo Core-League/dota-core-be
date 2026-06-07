@@ -29,7 +29,7 @@ export class CustomOperationService {
     private readonly categoryRepo: CustomCategoryRepository,
     private readonly assetService: AssetService,
     private readonly config: ConfigConnectorService,
-  ) {}
+  ) { }
 
   /**
    * Full update of an operation's editable fields. Setting the category by hand
@@ -194,6 +194,6 @@ export class CustomOperationService {
   }
 
   private baseUrl(): string {
-    return (this.config.getEnvConfig().API_BASE_URL ?? '').replace(/\/+$/, '');
+    return this.config.getEnvConfig().API_BASE_URL.replace(/\/+$/, '');
   }
 }
