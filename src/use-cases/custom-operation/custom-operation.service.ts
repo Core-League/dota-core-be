@@ -9,7 +9,10 @@ import type {
   CustomCategory,
   CustomCategoryView,
 } from '../../types/entities/finance/custom-category';
-import type { OperationGroupView } from '../../types/entities/finance/operation-group';
+import type {
+  OperationGroup,
+  OperationGroupView,
+} from '../../types/entities/finance/operation-group';
 import { OperationGroupKind } from '../../types/enums/finance/OperationGroupKind';
 import { AssetService } from '../asset/asset.service';
 
@@ -26,17 +29,40 @@ export class CustomOperationService {
     private readonly categoryRepo: CustomCategoryRepository,
     private readonly assetService: AssetService,
     private readonly config: ConfigConnectorService,
-  ) {}
+  ) { }
 
-  async rename(operationId: string, label: string): Promise<void> {
+  /**
+   * Full update of an operation's editable fields. Setting the category by hand
+   * locks it against auto-match (`categoryManual`), including when cleared to null.
+   */
+  async updateOperation(
+    operationId: string,
+    patch: {
+      title: string;
+      iconAssetId: string | null;
+      categoryId: string | null;
+      comment: string | null;
+      isHidden: boolean;
+    },
+  ): Promise<void> {
     await this.requireOperation(operationId);
-    await this.operationRepo.update(operationId, { title: label });
+    if (patch.iconAssetId) await this.requireAsset(patch.iconAssetId);
+    if (patch.categoryId) await this.requireCategory(patch.categoryId);
+    await this.operationRepo.update(operationId, {
+      title: patch.title,
+      iconAssetId: patch.iconAssetId,
+      categoryId: patch.categoryId,
+      categoryManual: true,
+      comment: patch.comment,
+      isHidden: patch.isHidden,
+    });
   }
 
-  async setIcon(operationId: string, iconAssetId: string): Promise<void> {
-    await this.requireOperation(operationId);
-    await this.requireAsset(iconAssetId);
-    await this.operationRepo.update(operationId, { iconAssetId });
+  /** List every operation group (PRIZE / SPONSOR / CUSTOM) as a view. */
+  async listGroups(): Promise<OperationGroupView[]> {
+    const baseUrl = this.baseUrl();
+    const groups = await this.groupRepo.findAllWithAttachment();
+    return groups.map((g) => toOperationGroupView(g, baseUrl));
   }
 
   /** Manually collapse the given operations into one CUSTOM group. */
@@ -62,6 +88,50 @@ export class CustomOperationService {
     // Patch operationIds — the repo creates without the operations relation loaded
     const fullGroup = { ...group, operationIds: operations.map((op) => op.id) };
     return toOperationGroupView(fullGroup, this.baseUrl());
+  }
+
+  /**
+   * Full update of a custom group: title, icon, and its membership. Operations
+   * dropped from the set are ungrouped; the given operations become its members.
+   */
+  async updateGroup(
+    groupId: string,
+    patch: {
+      title: string;
+      iconAssetId: string | null;
+      operationIds: string[];
+    },
+  ): Promise<OperationGroupView> {
+    const group = await this.requireGroup(groupId);
+    if (patch.iconAssetId) await this.requireAsset(patch.iconAssetId);
+
+    const operations = await this.operationRepo.findManyByIds(
+      patch.operationIds,
+    );
+    if (operations.length !== patch.operationIds.length) {
+      throw new NotFoundException('One or more operations were not found');
+    }
+
+    // Reconcile membership: detach operations no longer listed, attach the rest.
+    const nextIds = new Set(patch.operationIds);
+    for (const oldId of group.operationIds) {
+      if (!nextIds.has(oldId)) await this.operationRepo.setGroup(oldId, null);
+    }
+    for (const op of operations) {
+      await this.operationRepo.setGroup(op.id, groupId);
+    }
+
+    const updated = await this.groupRepo.update(groupId, {
+      title: patch.title,
+      iconAssetId: patch.iconAssetId,
+    });
+    return toOperationGroupView(updated, this.baseUrl());
+  }
+
+  /** Delete a group; its member operations are ungrouped (FK SET NULL). */
+  async deleteGroup(groupId: string): Promise<void> {
+    await this.requireGroup(groupId);
+    await this.groupRepo.delete(groupId);
   }
 
   async listCategories(): Promise<CustomCategoryView[]> {
@@ -94,21 +164,19 @@ export class CustomOperationService {
     await this.categoryRepo.delete(id);
   }
 
-  /** Assign (or clear with `null`) the operation's single category — a manual, sticky choice. */
-  async assignCategory(
-    operationId: string,
-    categoryId: string | null,
-  ): Promise<void> {
-    await this.requireOperation(operationId);
-    if (categoryId) await this.requireCategory(categoryId);
-    await this.operationRepo.setCategory(operationId, categoryId, true);
-  }
-
   private async requireOperation(operationId: string): Promise<void> {
     const operation = await this.operationRepo.findById(operationId);
     if (!operation) {
       throw new NotFoundException(`Operation ${operationId} not found`);
     }
+  }
+
+  private async requireGroup(groupId: string): Promise<OperationGroup> {
+    const group = await this.groupRepo.findById(groupId);
+    if (!group) {
+      throw new NotFoundException(`Group ${groupId} not found`);
+    }
+    return group;
   }
 
   private async requireCategory(categoryId: string): Promise<void> {
@@ -126,6 +194,6 @@ export class CustomOperationService {
   }
 
   private baseUrl(): string {
-    return (this.config.getEnvConfig().API_BASE_URL ?? '').replace(/\/+$/, '');
+    return this.config.getEnvConfig().API_BASE_URL.replace(/\/+$/, '');
   }
 }

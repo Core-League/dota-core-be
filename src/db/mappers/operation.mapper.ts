@@ -15,6 +15,7 @@ export function toOperation(model: OperationModel): Operation {
     comment: model.comment,
     categoryId: model.categoryId,
     categoryManual: model.categoryManual,
+    isHidden: model.isHidden,
     raw: model.raw,
   };
 }
@@ -32,6 +33,7 @@ export function toOperationModel(entity: Operation): OperationModel {
   model.comment = entity.comment;
   model.categoryId = entity.categoryId;
   model.categoryManual = entity.categoryManual;
+  model.isHidden = entity.isHidden;
   model.raw = entity.raw;
   return model;
 }

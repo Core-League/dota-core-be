@@ -1,14 +1,10 @@
 import { z } from 'zod';
 
 /**
- * Forecast calculator input. All money is in **kopecks**.
- *
- * - `divisions` — exactly three divisions, each with its team count and the
- *   project's own contribution to that division's prize pool.
- * - `fees` — per-player entry fee by placement bracket (defaults 100/150/200 UAH
- *   → kopecks; a team is 5 players).
- * - `prizePoolPercent` — share of everything collected that goes to prizes
- *   (default 60); the remainder is projected profit.
+ * Forecast calculator input (kopecks). `divisions`: exactly three, each a team
+ * count + the project's own contribution to that division's pool. `fees`:
+ * per-player entry fee by placement bracket (5 players/team). `prizePoolPercent`:
+ * share of everything collected that goes to prizes; the rest is projected profit.
  */
 export const ForecastDivisionSchema = z.object({
   teamCount: z.number().int().nonnegative(),
@@ -35,12 +31,7 @@ export type ForecastDivision = z.infer<typeof ForecastDivisionSchema>;
 export type ForecastFees = z.infer<typeof ForecastFeesSchema>;
 export type ForecastConfig = z.infer<typeof ForecastConfigSchema>;
 
-/**
- * Forecast calculator output. Per-division `collected` is fees gathered;
- * `prizePool` is the project contribution plus this division's share of the
- * total pool, floored **down to hundreds** (of UAH). Totals are summed across
- * divisions. `projectedProfit = totalCollected * (100 − prizePoolPercent)%`.
- */
+/** Forecast calculator output (kopecks); see {@link ForecastCalculatorService} for the formula. */
 export const ForecastDivisionResultSchema = z.object({
   collected: z.number().int(),
   prizePool: z.number().int(),

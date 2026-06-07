@@ -13,10 +13,9 @@ import { CustomCategoryModel } from './custom-category.model';
 import { OperationGroupModel } from './operation-group.model';
 
 /**
- * Classified operation for display (`operation`). Derived from a
- * {@link TransactionModel} (or manual — `transactionId` null). `amount` is
- * signed kopecks; color is derived from its sign and never stored. `groupId`
- * links to an {@link OperationGroupModel} when the op is collapsed into a group.
+ * Classified operation for display (`operation`), derived from a
+ * {@link TransactionModel} (or manual — `transactionId` null). `amount` is signed
+ * kopecks; `groupId` links to an {@link OperationGroupModel} when collapsed.
  */
 @Entity({ name: 'operation' })
 export class OperationModel {
@@ -76,6 +75,10 @@ export class OperationModel {
   /** True once a user assigned the category by hand; locks it against auto-match. */
   @Column({ type: 'boolean', default: false })
   categoryManual: boolean;
+
+  /** Hidden from the feed unless explicitly requested (`showHidden`). */
+  @Column({ type: 'boolean', default: false })
+  isHidden: boolean;
 
   @Column({ type: 'jsonb', nullable: true })
   raw: Record<string, unknown> | null;

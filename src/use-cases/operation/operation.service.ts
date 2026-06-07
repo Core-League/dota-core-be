@@ -38,16 +38,12 @@ const feedGroupKind = (group: OperationGroup): FeedGroupKind => {
 };
 
 /**
- * The main feed, built for the requested range. Operations are signed, carry
- * their assigned category, and collapse into group rows when their `groupId`
- * points to a persisted `operation_group` (PRIZE / SPONSOR / CUSTOM). All groups
- * render the same shape (title + resolved icon + nested member operations); the
- * row's `groupKind` (TEAM_GIFT / OTHER_GIFTS / SPONSOR / MANUAL) and `groupKey`
- * let the client tell them apart. Group amounts are summed live from the
- * members present in the range.
- *
- * With `includeForecast`, prepends two **virtual** rows (projected expenses `−`,
- * projected profit `+`) from the active forecast; these are never persisted.
+ * Builds the main feed for a range. Operations are signed, carry their category,
+ * and collapse into group rows when their `groupId` points to a persisted
+ * `operation_group`; all groups render the same shape, with `groupKind` /
+ * `groupKey` distinguishing them and amounts summed live over the in-range
+ * members. With `includeForecast`, prepends two virtual (never persisted) rows:
+ * projected expenses (`−`) and profit (`+`) from the active forecast.
  */
 @Injectable()
 export class OperationService {
@@ -67,8 +63,7 @@ export class OperationService {
     const iconUrlById = await this.assetService.resolveUrlMap();
     const categoryRefById = await this.buildCategoryRefs(iconUrlById);
 
-    // All persisted groups (PRIZE and CUSTOM) are loaded; ops without a groupId
-    // or whose groupId is unknown become standalone items.
+    // Ops without a (known) groupId become standalone items.
     const allGroups = await this.groupRepo.findAll();
     const groupById = new Map(allGroups.map((g) => [g.id, g]));
 
@@ -96,7 +91,8 @@ export class OperationService {
     ];
 
     // Newest first; group rows sort by their most recent member.
-    items.sort((a, b) => (b.time?.getTime() ?? 0) - (a.time?.getTime() ?? 0));
+    const ms = (t: string | null): number => (t ? new Date(t).getTime() : 0);
+    items.sort((a, b) => ms(b.time) - ms(a.time));
 
     const includesForecast = includeForecast
       ? await this.prependForecast(items)
@@ -132,7 +128,7 @@ export class OperationService {
       id: op.id,
       amount: op.amount,
       sign: sign(op.amount),
-      time: op.time,
+      time: op.time.toISOString(),
       title: op.title,
       iconUrl: this.resolveIcon(op.iconAssetId, iconUrlById),
       operationIds: [],
@@ -143,6 +139,7 @@ export class OperationService {
         ? (categoryRefById.get(op.categoryId) ?? null)
         : null,
       virtual: false,
+      isHidden: op.isHidden,
       children: [],
     };
   }
@@ -160,7 +157,7 @@ export class OperationService {
       id: group.id,
       amount,
       sign: sign(amount),
-      time: latestTime(members),
+      time: latestTime(members)?.toISOString() ?? null,
       title: group.title,
       iconUrl: this.resolveIcon(group.iconAssetId, iconUrlById),
       operationIds: members.map((op) => op.id),
@@ -169,6 +166,7 @@ export class OperationService {
       count: members.length,
       category: null,
       virtual: false,
+      isHidden: false,
       children: members.map(toLeaf),
     };
   }
@@ -218,6 +216,7 @@ export class OperationService {
       count: 0,
       category: null,
       virtual: true,
+      isHidden: false,
       children: [],
     };
   }

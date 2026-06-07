@@ -1,15 +1,9 @@
 import { z } from 'zod';
 
 /**
- * A row in the operations feed. The feed flattens several sources into one shape:
- * a standalone operation, a collapsed group (a persisted `operation_group` row of
- * either `PRIZE` or `CUSTOM` kind), and (when forecast is on) two virtual forecast
- * rows. `sign` is derived from the amount and drives color in presentation
- * (`POSITIVE` = green, `NEGATIVE` = red); nothing about color is persisted.
- *
- * Group rows (`kind === GROUP`) carry their member operations nested under
- * `children`, the member `count`, and the discriminating `groupKind`. Every row
- * (top-level and child) carries its assigned `category` or null.
+ * Kind of a feed row. The feed flattens several sources into one shape: a
+ * standalone operation, a collapsed GROUP (persisted `operation_group`, PRIZE or
+ * CUSTOM) carrying its members under `children`, and two virtual FORECAST rows.
  */
 export enum FeedItemKind {
   Operation = 'OPERATION',
@@ -49,7 +43,8 @@ const FeedItemBaseSchema = z.object({
   id: z.string(),
   amount: z.number().int(),
   sign: z.enum(FeedItemSign),
-  time: z.date().nullable(),
+  /** ISO-8601 date-time string (`null` for forecast rows). */
+  time: z.iso.datetime({ offset: true }).nullable(),
   title: z.string(),
   /** Resolved icon URL (operation icon, team logo, or group icon), or null. */
   iconUrl: z.string().nullable(),
@@ -69,6 +64,8 @@ const FeedItemBaseSchema = z.object({
   category: FeedCategoryRefSchema.nullable().default(null),
   /** Whether this row is a non-persisted forecast projection. */
   virtual: z.boolean().default(false),
+  /** Whether this operation is hidden from the default feed; false for group/forecast rows. */
+  isHidden: z.boolean().default(false),
 });
 
 export type FeedItem = z.infer<typeof FeedItemBaseSchema> & {

@@ -3,10 +3,8 @@ import { OperationType } from '../../enums/finance/OperationType';
 
 /**
  * A classified operation for display, derived from a {@link StoredTransaction}
- * (or created manually — `transactionId` is then null). Amount is in **kopecks**,
- * signed; color is derived from `sign(amount)` and never stored. `iconAssetId`
- * is a FK to the icon asset (sponsor logo / team avatar / chosen icon); `groupId`
- * is set when the operation belongs to an {@link OperationGroup}.
+ * (or manual — then `transactionId` is null). Amount is signed **kopecks**;
+ * `groupId` links it to an {@link OperationGroup}.
  */
 export const OperationSchema = z.object({
   id: z.string(),
@@ -23,6 +21,8 @@ export const OperationSchema = z.object({
   categoryId: z.string().nullable(),
   /** True once a user assigned the category by hand; locks it against auto-match. */
   categoryManual: z.boolean().default(false),
+  /** Hidden from the feed unless explicitly requested (`showHidden`). */
+  isHidden: z.boolean().default(false),
   /** Snapshot of the originating raw fields, kept for audit. */
   raw: z.record(z.string(), z.unknown()).nullable(),
 });
@@ -31,3 +31,6 @@ export type Operation = z.infer<typeof OperationSchema>;
 
 /** An operation not yet persisted (no generated `id`). */
 export type OperationDraft = Omit<Operation, 'id'>;
+
+/** A row to persist: insert when `id` is absent, update in place when present. */
+export type OperationUpsert = OperationDraft & { id?: string };

@@ -22,15 +22,11 @@ const MAX_STATEMENT_WINDOW_SEC = 2_682_000;
 const RATE_LIMIT_BACKOFF_SEC = 60;
 
 /**
- * Thin client over the Monobank Personal API (https://api.monobank.ua). It is
- * transport-only — it talks to the bank and returns typed data. Classifying
- * operations and the forecast calculator live in a separate business layer.
- *
- * All amounts stay in **kopecks**; converting to UAH is the consumer's job.
- *
- * Reliability: both `client-info` and `statement` are limited to one call per
- * 60s. A `429` surfaces as {@link BankRateLimitError} and is retried once
- * after a 60s backoff; a `403` surfaces as {@link BankAuthError}.
+ * Transport-only client over the Monobank Personal API (https://api.monobank.ua):
+ * talks to the bank and returns typed data, amounts in **kopecks**. Both
+ * `client-info` and `statement` are rate-limited to one call/60s; a `429` becomes
+ * {@link BankRateLimitError} (retried once after a 60s backoff) and a `403`
+ * becomes {@link BankAuthError}.
  */
 @Injectable()
 export class MonobankService implements IMonobankService {
@@ -42,13 +38,9 @@ export class MonobankService implements IMonobankService {
   ) {}
 
   /**
-   * Register the URL Monobank pushes new transactions to.
-   * `POST /personal/webhook` with `{ webHookUrl }`.
-   *
-   * After registration Monobank performs a test `GET` on this URL and only
-   * activates the webhook if the receiver replies `200 OK`. That receiver is
-   * out of this client's scope — see {@link parseWebhookPayload} for the body
-   * it will get on each push.
+   * `POST /personal/webhook` — register the URL Monobank pushes transactions to.
+   * Monobank test-`GET`s the URL and only activates it on a `200 OK` (that receiver
+   * is out of scope; see {@link parseWebhookPayload} for the push body).
    */
   async setWebhook(url: string): Promise<void> {
     await this.call(() =>
@@ -61,8 +53,8 @@ export class MonobankService implements IMonobankService {
   }
 
   /**
-   * `GET /personal/client-info` — source of accounts, card masks, balances and
-   * the current `webHookUrl`. Needed to resolve an `accountId` for statements.
+   * `GET /personal/client-info` — accounts, card masks, balances and `webHookUrl`.
+   * Resolve an `accountId` here for {@link getStatement}.
    */
   async getClientInfo(): Promise<ClientInfo> {
     return this.callWithRetry(async () => {
@@ -75,13 +67,9 @@ export class MonobankService implements IMonobankService {
   }
 
   /**
-   * `GET /personal/statement/{account}/{from}/{to}` (Unix seconds). Ranges
-   * longer than {@link MAX_STATEMENT_WINDOW_SEC} are split into sequential
-   * windows; results are concatenated and de-duped by `Transaction.id`.
-   *
-   * @param accountId account to read (resolve via {@link getClientInfo})
-   * @param from inclusive start
-   * @param to inclusive end; defaults to now when omitted
+   * `GET /personal/statement/{account}/{from}/{to}` (Unix seconds). Ranges longer
+   * than {@link MAX_STATEMENT_WINDOW_SEC} are split into sequential windows, then
+   * concatenated and de-duped by `Transaction.id`. `to` defaults to now.
    */
   async getStatement(
     accountId: string,
@@ -113,9 +101,8 @@ export class MonobankService implements IMonobankService {
   }
 
   /**
-   * Validate a webhook push body (`{ type: "StatementItem", data: {...} }`).
-   * Throws if `type` is not `"StatementItem"` or the shape is invalid, so a
-   * future receiver can reuse this instead of duplicating the check.
+   * Validate a webhook push body (`{ type: "StatementItem", data: {...} }`),
+   * throwing on a wrong `type` or invalid shape.
    */
   parseWebhookPayload(raw: unknown): WebhookPayload {
     return WebhookPayloadSchema.parse(raw);

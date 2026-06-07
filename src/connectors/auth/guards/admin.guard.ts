@@ -10,7 +10,7 @@ import type { IAdminGuard } from '../../../types/interfaced/connectors/auth.conn
 
 @Injectable()
 export class AdminGuard implements CanActivate, IAdminGuard {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context

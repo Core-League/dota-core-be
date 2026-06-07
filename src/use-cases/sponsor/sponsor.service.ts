@@ -5,6 +5,7 @@ import { SponsorRepository } from '../../repos/sponsor.repository';
 import type {
   Sponsor,
   SponsorView,
+  SponsorWithAttachment,
 } from '../../types/entities/finance/sponsor';
 import type { StoredTransaction } from '../../types/entities/finance/transaction';
 
@@ -37,12 +38,24 @@ export class SponsorService {
     return toSponsorView(updated, this.baseUrl());
   }
 
+  /** The raw sponsor catalog used for matching (logo attachment included). */
+  catalog(): Promise<SponsorWithAttachment[]> {
+    return this.sponsorRepo.findAll();
+  }
+
   /** First sponsor whose matchers hit this transaction, or `null`. */
   async match(tx: StoredTransaction): Promise<Sponsor | null> {
+    return this.matchIn(tx, await this.catalog());
+  }
+
+  /**
+   * In-memory {@link match} against a preloaded list, so a bulk caller fetches the
+   * catalog once instead of per transaction.
+   */
+  matchIn(tx: StoredTransaction, sponsors: Sponsor[]): Sponsor | null {
     const haystack = [tx.description, tx.counterIban ?? '']
       .join(' ')
       .toLowerCase();
-    const sponsors = await this.sponsorRepo.findAll();
     return (
       sponsors.find((sponsor) =>
         sponsor.matchers.some(

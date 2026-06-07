@@ -10,10 +10,7 @@ import {
 /** Five players make up a team; entry fees are charged per player. */
 const PLAYERS_PER_TEAM = 5;
 
-/**
- * Round a kopeck amount **down to whole hundreds of UAH** (1 UAH = 100 kopecks,
- * so 100 UAH = 10 000 kopecks), per the "заокруглення вниз до сотень" rule.
- */
+/** Round a kopeck amount down to whole hundreds of UAH (100 UAH = 10 000 kopecks). */
 const HUNDREDS_UAH_IN_KOPECKS = 100 * 100;
 function floorToHundredsUah(kopecks: number): number {
   return (
@@ -22,21 +19,16 @@ function floorToHundredsUah(kopecks: number): number {
 }
 
 /**
- * Pure prize-pool forecast over a {@link ForecastConfig}, plus a thin
- * persistence wrapper so the feed and balance can read the single active config.
+ * Pure prize-pool forecast over a {@link ForecastConfig} + a thin persistence
+ * wrapper for the single active config. Formula (kopecks throughout): each
+ * division d is charged its fee tier (0→top1_4, 1→top5_8, 2→top8plus), so
+ * `collected[d] = teamCount[d] · PLAYERS_PER_TEAM · feeTier[d]`. The global pool
+ * `totalCollected · prizePoolPercent%` is split per division pro-rata to
+ * `collected`, then `prizePool[d] = floorToHundredsUah(projectContribution[d] +
+ * share[d])`. `projectedProfit = totalCollected · (100 − prizePoolPercent)%`.
  *
- * Formula (kopecks throughout). The three divisions are charged the three fee
- * tiers in order (division 0 → `top1_4`, 1 → `top5_8`, 2 → `top8plus`):
- * - `collected[d] = teamCount[d] · PLAYERS_PER_TEAM · feeTier[d]`
- * - `totalCollected = Σ collected[d]`
- * - global prize pool = `totalCollected · prizePoolPercent%`, split across
- *   divisions in proportion to their `collected`
- * - `prizePool[d] = floorToHundredsUah(projectContribution[d] + share[d])`
- * - `projectedExpenses = totalPrizePool`,
- *   `projectedProfit = totalCollected · (100 − prizePoolPercent)%`
- *
- * NOTE: the fee-tier↔division mapping and the "hundreds" unit are an explicit
- * interpretation of the spec — adjust here if the business formula differs.
+ * NOTE: the fee-tier↔division mapping and "hundreds" unit interpret the spec —
+ * adjust here if the business formula differs.
  */
 @Injectable()
 export class ForecastCalculatorService {

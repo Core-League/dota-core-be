@@ -24,7 +24,7 @@ export function resolveAssetUrl(asset: Asset, baseUrl: string): string {
       return asset.path;
     case StorageType.Local:
     default:
-      return `${baseUrl}/uploads/${asset.path}`;
+      return baseUrl + asset.path;
   }
 }
 

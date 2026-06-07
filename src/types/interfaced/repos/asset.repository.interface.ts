@@ -10,4 +10,5 @@ export interface IAssetRepository {
     path: string;
     name: string;
   }): Promise<Asset>;
+  upsertManyByLocation(inputs: Omit<Asset, 'id'>[]): Promise<Asset[]>;
 }

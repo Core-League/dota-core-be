@@ -5,12 +5,9 @@ import { ClassificationService } from '../classification/classification.service'
 import { toStoredTransaction } from '../shared/bank-transaction.mapper';
 
 /**
- * Backfill / reconciliation. Pulls a statement window from Bank (the client
- * already splits ≤31-day windows and de-dupes), upserts each transaction, then
- * runs a full reclassification pass over all stored transactions. The full pass
- * ensures every existing operation (not just the newly synced ones) has an
- * up-to-date PRIZE group assignment and `groupId`.
- * Returns the number of transactions pulled from the bank.
+ * Backfill / reconciliation. Pulls a statement window from Bank, then inserts and
+ * classifies only the not-yet-stored transactions; existing ones (and their
+ * operations + manual edits) are left untouched, so a re-sync never overrides them.
  */
 @Injectable()
 export class SyncService {
@@ -20,17 +17,36 @@ export class SyncService {
     private readonly bank: MonobankService,
     private readonly transactionRepo: TransactionRepository,
     private readonly classificationService: ClassificationService,
-  ) { }
+  ) {}
 
   async syncPeriod(accountId: string, from: Date, to?: Date): Promise<number> {
-    const transactions = await this.bank.getStatement(accountId, from, to);
-    for (const tx of transactions) {
-      await this.transactionRepo.upsert(toStoredTransaction(accountId, tx));
-    }
-    await this.classificationService.reclassifyAll();
-    this.logger.log(
-      `Synced ${transactions.length} transactions for account ${accountId}`,
+    const fetched = (await this.bank.getStatement(accountId, from, to)).map(
+      (tx) => toStoredTransaction(accountId, tx),
     );
-    return transactions.length;
+    const existingIds = new Set(
+      await this.transactionRepo.findExistingIds(fetched.map((t) => t.id)),
+    );
+    const newTransactions = fetched.filter((t) => !existingIds.has(t.id));
+
+    for (const tx of newTransactions) {
+      await this.transactionRepo.upsert(tx);
+    }
+    await this.classificationService.classifyNew(newTransactions);
+
+    this.logger.log(
+      `Synced ${newTransactions.length} new transactions for account ${accountId} (${fetched.length} fetched)`,
+    );
+    return newTransactions.length;
+  }
+
+  /**
+   * Re-run classification over every stored transaction to refresh group/category
+   * assignments after sponsors or teams change. Preserves manual overrides
+   * (see {@link ClassificationService.reclassifyAll}).
+   */
+  async reclassifyAll(): Promise<number> {
+    const count = await this.classificationService.reclassifyAll();
+    this.logger.log(`Reclassified ${count} operations`);
+    return count;
   }
 }
