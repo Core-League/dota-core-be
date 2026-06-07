@@ -10,21 +10,17 @@ import { AdminGuard } from '../../connectors/auth/guards/admin.guard';
 import { JwtAuthGuard } from '../../connectors/auth/guards/jwt-auth.guard';
 import { ConfigConnectorService } from '../../connectors/config/config-connector.service';
 import { SyncService } from '../../use-cases/sync/sync.service';
-import {
-  ReclassifyResultDto,
-  SyncRequestDto,
-  SyncResultDto,
-} from './sync.dto';
+import { ReclassifyResultDto, SyncRequestDto, SyncResultDto } from './sync.dto';
 
 /** Manual statement backfill / reconciliation over a date range. */
 @ApiTags('bank')
 @Controller('bank/sync')
-// @UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(JwtAuthGuard, AdminGuard)
 export class SyncController {
   constructor(
     private readonly syncService: SyncService,
     private readonly config: ConfigConnectorService,
-  ) {}
+  ) { }
 
   @Post()
   @ApiOperation({ summary: 'Backfill transactions for a period' })

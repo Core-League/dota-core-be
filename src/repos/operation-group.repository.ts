@@ -25,6 +25,13 @@ export class OperationGroupRepository implements IOperationGroupRepository {
     return models.map(toOperationGroup);
   }
 
+  async findAllWithAttachment(): Promise<OperationGroupWithAttachment[]> {
+    const models = await this.repo.find({
+      relations: { iconAsset: true, operations: true },
+    });
+    return models.map(toOperationGroupWithAttachment);
+  }
+
   async findById(id: string): Promise<OperationGroup | null> {
     const model = await this.repo.findOne({
       where: { id },

@@ -38,8 +38,7 @@ import {
 /** The operations feed plus manual custom-operation edits. */
 @ApiTags('operations')
 @Controller()
-// TODO
-// @UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(JwtAuthGuard, AdminGuard)
 export class OperationsController {
   constructor(
     private readonly operationService: OperationService,
@@ -80,6 +79,13 @@ export class OperationsController {
   ): Promise<{ status: string }> {
     await this.customOperationService.updateOperation(id, body);
     return { status: 'ok' };
+  }
+
+  @Get('operations/groups')
+  @ApiOperation({ summary: 'List all operation groups' })
+  @ApiOkResponse({ type: [OperationGroupViewDto] })
+  listGroups(): Promise<OperationGroupView[]> {
+    return this.customOperationService.listGroups();
   }
 
   @Post('operations/group')

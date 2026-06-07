@@ -5,6 +5,7 @@ import type {
 
 export interface IOperationGroupRepository {
   findAll(): Promise<OperationGroup[]>;
+  findAllWithAttachment(): Promise<OperationGroupWithAttachment[]>;
   findById(id: string): Promise<OperationGroup | null>;
   upsertByGroupKey(
     data: Omit<OperationGroup, 'id' | 'operationIds'>,

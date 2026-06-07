@@ -58,6 +58,13 @@ export class CustomOperationService {
     });
   }
 
+  /** List every operation group (PRIZE / SPONSOR / CUSTOM) as a view. */
+  async listGroups(): Promise<OperationGroupView[]> {
+    const baseUrl = this.baseUrl();
+    const groups = await this.groupRepo.findAllWithAttachment();
+    return groups.map((g) => toOperationGroupView(g, baseUrl));
+  }
+
   /** Manually collapse the given operations into one CUSTOM group. */
   async groupOperations(
     operationIds: string[],
