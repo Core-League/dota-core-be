@@ -9,7 +9,7 @@ import { parsePrizeName } from '../shared/normalize-comment';
  */
 @Injectable()
 export class TeamService {
-  constructor(private readonly teamRepo: TeamRepository) { }
+  constructor(private readonly teamRepo: TeamRepository) {}
 
   /**
    * Parse `"Подарок <name>"` and resolve the team by name. Returns `null` when

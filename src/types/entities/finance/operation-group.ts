@@ -4,9 +4,9 @@ import { AssetSchema, AssetViewSchema } from './asset';
 
 /**
  * A collapsed set of operations shown as one feed row. The single mechanism for
- * both automatic prize groups (`groupKey` = normalized comment) and manual custom
- * groups (`groupKey` set by hand). `aggregatedAmount` is the signed sum in
- * **kopecks**; `operationIds` are its members.
+ * both automatic prize groups (`groupKey = team:<id>`) and manual custom groups
+ * (`groupKey = custom:<timestamp>`). `operationIds` are its members; the
+ * aggregated amount is calculated on the fly in the feed, not persisted.
  */
 export const OperationGroupSchema = z.object({
   id: z.string(),
@@ -15,7 +15,6 @@ export const OperationGroupSchema = z.object({
   /** FK to the icon asset (team avatar for PRIZE, user-chosen for CUSTOM). */
   iconAssetId: z.string().nullable(),
   operationIds: z.array(z.string()).default([]),
-  aggregatedAmount: z.number().int(),
   groupKey: z.string(),
 });
 

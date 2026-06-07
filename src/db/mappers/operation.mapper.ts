@@ -13,6 +13,8 @@ export function toOperation(model: OperationModel): Operation {
     iconAssetId: model.iconAssetId,
     groupId: model.groupId,
     comment: model.comment,
+    categoryId: model.categoryId,
+    categoryManual: model.categoryManual,
     raw: model.raw,
   };
 }
@@ -28,6 +30,8 @@ export function toOperationModel(entity: Operation): OperationModel {
   model.iconAssetId = entity.iconAssetId;
   model.groupId = entity.groupId;
   model.comment = entity.comment;
+  model.categoryId = entity.categoryId;
+  model.categoryManual = entity.categoryManual;
   model.raw = entity.raw;
   return model;
 }

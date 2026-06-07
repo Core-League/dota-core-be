@@ -29,19 +29,37 @@ export class OperationRepository implements IOperationRepository {
 
   /**
    * Insert or replace the operation derived from a given transaction. Keeps the
-   * existing row's `id` (and `groupId`) so references survive a re-classification.
+   * existing row's `id` so references survive a re-classification.
+   *
+   * Group assignment rules:
+   * - `draft.groupId` takes precedence when non-null (classification assigned a
+   *   PRIZE group). When null, the existing `groupId` is preserved so manual
+   *   CUSTOM group assignments survive a reclassify.
+   *
+   * Category assignment rules:
+   * - When the existing row has `categoryManual: true`, the manually-assigned
+   *   `categoryId` is preserved and not overwritten by the auto-matched value.
+   *
    * Manual operations (`transactionId === null`) are always inserted.
    */
   async upsertByTransactionId(draft: OperationDraft): Promise<Operation> {
     let existingId: string | undefined;
-    let existingGroupId: string | null = draft.groupId;
+    let resolvedGroupId: string | null = draft.groupId;
+    let resolvedCategoryId: string | null = draft.categoryId;
+    let resolvedCategoryManual = false;
     if (draft.transactionId !== null) {
       const existing = await this.repo.findOne({
         where: { transactionId: draft.transactionId },
       });
       if (existing) {
         existingId = existing.id;
-        existingGroupId = existing.groupId;
+        // Draft groupId wins when set (PRIZE assignment); fall back to existing
+        // so CUSTOM group assignments survive reclassification.
+        resolvedGroupId = draft.groupId ?? existing.groupId;
+        if (existing.categoryManual) {
+          resolvedCategoryId = existing.categoryId;
+          resolvedCategoryManual = true;
+        }
       }
     }
     const model = this.repo.create({
@@ -52,8 +70,10 @@ export class OperationRepository implements IOperationRepository {
       time: draft.time,
       title: draft.title,
       iconAssetId: draft.iconAssetId,
-      groupId: existingGroupId,
+      groupId: resolvedGroupId,
       comment: draft.comment,
+      categoryId: resolvedCategoryId,
+      categoryManual: resolvedCategoryManual,
       raw: draft.raw,
     });
     const saved = await this.repo.save(model);
@@ -94,6 +114,18 @@ export class OperationRepository implements IOperationRepository {
     patch: Partial<Pick<Operation, 'title' | 'iconAssetId'>>,
   ): Promise<void> {
     await this.repo.update({ id: operationId }, patch);
+  }
+
+  /** Assign (or clear) the category; set `manual` to lock against auto-match. */
+  async setCategory(
+    operationId: string,
+    categoryId: string | null,
+    manual: boolean,
+  ): Promise<void> {
+    await this.repo.update(
+      { id: operationId },
+      { categoryId, categoryManual: manual },
+    );
   }
 
   async deleteByTransactionId(transactionId: string): Promise<void> {

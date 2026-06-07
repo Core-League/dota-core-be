@@ -17,7 +17,6 @@ export function toOperationGroup(model: OperationGroupModel): OperationGroup {
     title: model.title,
     iconAssetId: model.iconAssetId,
     operationIds: (model.operations ?? []).map((op) => op.id),
-    aggregatedAmount: model.aggregatedAmount,
     groupKey: model.groupKey,
   };
 }
@@ -42,7 +41,6 @@ export function toOperationGroupView(
     title: group.title,
     icon: group.iconAsset ? toAssetView(group.iconAsset, baseUrl) : null,
     operationIds: group.operationIds,
-    aggregatedAmount: group.aggregatedAmount,
     groupKey: group.groupKey,
   };
 }

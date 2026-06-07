@@ -28,6 +28,7 @@
     "db:logs": "docker compose -f docker-compose.dev.yml logs -f postgres",
     "db:dump": "mkdir -p scripts/initdb && docker exec dota-core-be-postgres pg_dump -U dota --no-owner --no-acl --clean --if-exists dota_dev > scripts/initdb/seed.sql && echo 'Snapshot saved to scripts/initdb/seed.sql'",
     "db:restore": "docker exec -i dota-core-be-postgres psql -U dota -d dota_dev < scripts/initdb/seed.sql && echo 'Restore complete'",
+    "db:seed": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/seed.ts",
     "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/data-source.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/data-source.ts",

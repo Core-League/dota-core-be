@@ -13,7 +13,6 @@ export class AdminGuard implements CanActivate, IAdminGuard {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    return true;
     const req = context
       .switchToHttp()
       .getRequest<{ user?: { playerId: string } }>();

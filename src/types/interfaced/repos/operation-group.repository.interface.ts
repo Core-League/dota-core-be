@@ -12,6 +12,4 @@ export interface IOperationGroupRepository {
   create(
     data: Omit<OperationGroup, 'id' | 'operationIds'>,
   ): Promise<OperationGroupWithAttachment>;
-  setAggregatedAmount(id: string, amount: number): Promise<void>;
-  deleteAllPrizeGroups(): Promise<void>;
 }

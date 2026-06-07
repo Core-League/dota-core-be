@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { CustomCategoryRepository } from '../../repos/custom-category.repository';
+import { OperationGroupRepository } from '../../repos/operation-group.repository';
 import { OperationRepository } from '../../repos/operation.repository';
 import { TransactionRepository } from '../../repos/transaction.repository';
 import type {
@@ -6,6 +8,7 @@ import type {
   OperationDraft,
 } from '../../types/entities/finance/operation';
 import type { StoredTransaction } from '../../types/entities/finance/transaction';
+import { OperationGroupKind } from '../../types/enums/finance/OperationGroupKind';
 import { OperationType } from '../../types/enums/finance/OperationType';
 import { SponsorKind } from '../../types/enums/finance/SponsorKind';
 import { AssetService } from '../asset/asset.service';
@@ -13,6 +16,11 @@ import { SponsorService } from '../sponsor/sponsor.service';
 import type { Team } from '../../types/entities/finance/team';
 import { TeamService } from '../team/team.service';
 import { parsePrizeName } from '../shared/normalize-comment';
+import {
+  OTHER_GIFTS_GROUP_KEY,
+  sponsorGroupKey,
+  teamGroupKey,
+} from '../shared/group-keys';
 
 /**
  * Turns a raw {@link StoredTransaction} into a typed {@link Operation}. Rules are
@@ -22,8 +30,14 @@ import { parsePrizeName } from '../shared/normalize-comment';
  *
  * 1. `DUELO_GG` — matched sponsor of kind Duelo GG
  * 2. `BETKING`  — matched sponsor of kind betking
- * 3. `PRIZE`    — comment is `"Подарок <team>"`
+ * 3. `PRIZE`    — comment is `"Подарунок для <team>"`. A persistent
+ *    `operation_group` row is upserted and the operation's `groupId` set to it:
+ *    `groupKey = team:<team.id>` when the team resolves, otherwise the single
+ *    `gift:other` "Other gifts" catch-all group.
  * 4. `CUSTOM`   — everything else
+ *
+ * Independently, a category is auto-assigned from `matchers` when none is set
+ * manually (see {@link matchCategoryId}).
  *
  * The derived operation is upserted by `transactionId`, so re-classifying
  * overwrites rather than duplicates.
@@ -36,7 +50,9 @@ export class ClassificationService {
     private readonly assetService: AssetService,
     private readonly operationRepo: OperationRepository,
     private readonly transactionRepo: TransactionRepository,
-  ) { }
+    private readonly categoryRepo: CustomCategoryRepository,
+    private readonly groupRepo: OperationGroupRepository,
+  ) {}
 
   async classify(tx: StoredTransaction): Promise<Operation> {
     const operation = await this.buildOperation(tx);
@@ -56,15 +72,25 @@ export class ClassificationService {
       transactionId: tx.id,
       amount: tx.amount,
       time: tx.time,
-      groupId: null,
+      groupId: null as string | null,
       comment: tx.comment ?? null,
+      // Auto-assigned here; a manual assignment is preserved by the repo upsert.
+      categoryId: await this.matchCategoryId(tx),
+      categoryManual: false,
       raw: tx as unknown as Record<string, unknown>,
     };
 
     const sponsor = await this.sponsorService.match(tx);
     if (sponsor) {
+      const group = await this.groupRepo.upsertByGroupKey({
+        kind: OperationGroupKind.Sponsor,
+        title: sponsor.name,
+        iconAssetId: sponsor.logoAssetId,
+        groupKey: sponsorGroupKey(sponsor.id),
+      });
       return {
         ...base,
+        groupId: group.id,
         type:
           sponsor.kind === SponsorKind.DueloGg
             ? OperationType.DueloGg
@@ -75,13 +101,41 @@ export class ClassificationService {
     }
 
     const prizeName = parsePrizeName(tx.comment);
+
     if (prizeName) {
       const team = await this.teamService.resolveByComment(tx.comment);
+
+      if (team) {
+        // Persist (or refresh) the PRIZE group for this team and link the op.
+        const iconAssetId = await this.teamAvatarAssetId(team);
+        const group = await this.groupRepo.upsertByGroupKey({
+          kind: OperationGroupKind.Prize,
+          title: team.name,
+          iconAssetId,
+          groupKey: teamGroupKey(team.id),
+        });
+        return {
+          ...base,
+          groupId: group.id,
+          type: OperationType.Prize,
+          title: team.name,
+          iconAssetId,
+        };
+      }
+
+      // Team could not be resolved — collapse into the single "Other gifts" group.
+      const group = await this.groupRepo.upsertByGroupKey({
+        kind: OperationGroupKind.Prize,
+        title: 'Other gifts',
+        iconAssetId: null,
+        groupKey: OTHER_GIFTS_GROUP_KEY,
+      });
       return {
         ...base,
+        groupId: group.id,
         type: OperationType.Prize,
-        title: team?.name ?? prizeName,
-        iconAssetId: await this.teamAvatarAssetId(team),
+        title: prizeName,
+        iconAssetId: null,
       };
     }
 
@@ -91,6 +145,22 @@ export class ClassificationService {
       title: tx.comment?.trim() || tx.description,
       iconAssetId: null,
     };
+  }
+
+  /**
+   * First category whose `matchers` substring-hit the transaction's
+   * comment/description (case-insensitive), or null. Mirrors
+   * {@link SponsorService.match}; only fills the initial (auto) assignment.
+   */
+  private async matchCategoryId(tx: StoredTransaction): Promise<string | null> {
+    const haystack = [tx.comment ?? '', tx.description].join(' ').toLowerCase();
+    const categories = await this.categoryRepo.findAll();
+    const hit = categories.find((c) =>
+      c.matchers.some(
+        (m) => m.length > 0 && haystack.includes(m.toLowerCase()),
+      ),
+    );
+    return hit?.id ?? null;
   }
 
   /** Wrap a team's external avatar URL in an asset and return its id. */

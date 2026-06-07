@@ -16,7 +16,7 @@ export function parsePrizeName(
   comment: string | null | undefined,
 ): string | null {
   if (!comment) return null;
-  const match = comment.trim().match(/^подарок\s+(.+)$/i);
+  const match = comment.trim().match(/^подарунок\s+.*?(\S+)$/i);
   return match ? match[1].trim() : null;
 }
 

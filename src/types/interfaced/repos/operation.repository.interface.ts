@@ -15,6 +15,11 @@ export interface IOperationRepository {
   findManyByIds(ids: string[]): Promise<Operation[]>;
   list(filter?: OperationListFilter): Promise<Operation[]>;
   setGroup(operationId: string, groupId: string | null): Promise<void>;
+  setCategory(
+    operationId: string,
+    categoryId: string | null,
+    manual: boolean,
+  ): Promise<void>;
   update(
     operationId: string,
     patch: Partial<Pick<Operation, 'title' | 'iconAssetId'>>,

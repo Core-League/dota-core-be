@@ -10,10 +10,9 @@ import type {
   OperationGroup,
   OperationGroupWithAttachment,
 } from '../types/entities/finance/operation-group';
-import { OperationGroupKind } from '../types/enums/finance/OperationGroupKind';
 import type { IOperationGroupRepository } from '../types/interfaced/repos/operation-group.repository.interface';
 
-/** Persistence for operation groups (prize + custom). */
+/** Persistence for operation groups (prize / sponsor / custom). */
 @Injectable()
 export class OperationGroupRepository implements IOperationGroupRepository {
   constructor(
@@ -34,7 +33,7 @@ export class OperationGroupRepository implements IOperationGroupRepository {
     return model ? toOperationGroup(model) : null;
   }
 
-  /** Upsert a PRIZE group by its `groupKey` (one group per normalized comment). */
+  /** Upsert an automatic group (PRIZE / SPONSOR) by its (kind, `groupKey`). */
   async upsertByGroupKey(
     data: Omit<OperationGroup, 'id' | 'operationIds'>,
   ): Promise<OperationGroup> {
@@ -46,7 +45,6 @@ export class OperationGroupRepository implements IOperationGroupRepository {
       kind: data.kind,
       title: data.title,
       iconAssetId: data.iconAssetId,
-      aggregatedAmount: data.aggregatedAmount,
       groupKey: data.groupKey,
     });
     const saved = await this.repo.save(model);
@@ -57,20 +55,18 @@ export class OperationGroupRepository implements IOperationGroupRepository {
   async create(
     data: Omit<OperationGroup, 'id' | 'operationIds'>,
   ): Promise<OperationGroupWithAttachment> {
-    const saved = await this.repo.save(this.repo.create(data));
+    const saved = await this.repo.save(
+      this.repo.create({
+        kind: data.kind,
+        title: data.title,
+        iconAssetId: data.iconAssetId,
+        groupKey: data.groupKey,
+      }),
+    );
     const model = await this.repo.findOneOrFail({
       where: { id: saved.id },
       relations: { iconAsset: true },
     });
     return toOperationGroupWithAttachment(model);
-  }
-
-  async setAggregatedAmount(id: string, amount: number): Promise<void> {
-    await this.repo.update({ id }, { aggregatedAmount: amount });
-  }
-
-  /** Remove all auto-built PRIZE groups (used before a full rebuild). */
-  async deleteAllPrizeGroups(): Promise<void> {
-    await this.repo.delete({ kind: OperationGroupKind.Prize });
   }
 }

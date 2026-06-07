@@ -6,8 +6,11 @@ import { toStoredTransaction } from '../shared/bank-transaction.mapper';
 
 /**
  * Backfill / reconciliation. Pulls a statement window from Bank (the client
- * already splits ≤31-day windows and de-dupes), upserts each transaction, and
- * classifies it. Returns the number of transactions processed.
+ * already splits ≤31-day windows and de-dupes), upserts each transaction, then
+ * runs a full reclassification pass over all stored transactions. The full pass
+ * ensures every existing operation (not just the newly synced ones) has an
+ * up-to-date PRIZE group assignment and `groupId`.
+ * Returns the number of transactions pulled from the bank.
  */
 @Injectable()
 export class SyncService {
@@ -17,17 +20,14 @@ export class SyncService {
     private readonly bank: MonobankService,
     private readonly transactionRepo: TransactionRepository,
     private readonly classificationService: ClassificationService,
-  ) {}
+  ) { }
 
   async syncPeriod(accountId: string, from: Date, to?: Date): Promise<number> {
     const transactions = await this.bank.getStatement(accountId, from, to);
     for (const tx of transactions) {
-      console.log(tx);
-
-      const stored = toStoredTransaction(accountId, tx);
-      await this.transactionRepo.upsert(stored);
-      await this.classificationService.classify(stored);
+      await this.transactionRepo.upsert(toStoredTransaction(accountId, tx));
     }
+    await this.classificationService.reclassifyAll();
     this.logger.log(
       `Synced ${transactions.length} transactions for account ${accountId}`,
     );

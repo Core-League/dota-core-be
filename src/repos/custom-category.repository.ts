@@ -12,7 +12,7 @@ import type {
 } from '../types/entities/finance/custom-category';
 import type { ICustomCategoryRepository } from '../types/interfaced/repos/custom-category.repository.interface';
 
-/** Persistence for custom-operation templates. */
+/** Persistence for reusable categories. */
 @Injectable()
 export class CustomCategoryRepository implements ICustomCategoryRepository {
   constructor(
@@ -25,6 +25,16 @@ export class CustomCategoryRepository implements ICustomCategoryRepository {
     return models.map(toCustomCategory);
   }
 
+  async findAllWithAttachment(): Promise<CustomCategoryWithAttachment[]> {
+    const models = await this.repo.find({ relations: { iconAsset: true } });
+    return models.map(toCustomCategoryWithAttachment);
+  }
+
+  async findById(id: string): Promise<CustomCategory | null> {
+    const model = await this.repo.findOne({ where: { id } });
+    return model ? toCustomCategory(model) : null;
+  }
+
   async create(
     data: Omit<CustomCategory, 'id'>,
   ): Promise<CustomCategoryWithAttachment> {
@@ -32,10 +42,30 @@ export class CustomCategoryRepository implements ICustomCategoryRepository {
       this.repo.create({
         label: data.label,
         iconAssetId: data.iconAssetId,
+        sign: data.sign,
+        matchers: data.matchers,
       }),
     );
+    return this.withAttachment(saved.id);
+  }
+
+  async update(
+    id: string,
+    patch: Partial<Omit<CustomCategory, 'id'>>,
+  ): Promise<CustomCategoryWithAttachment> {
+    await this.repo.update({ id }, patch);
+    return this.withAttachment(id);
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.repo.delete({ id });
+  }
+
+  private async withAttachment(
+    id: string,
+  ): Promise<CustomCategoryWithAttachment> {
     const model = await this.repo.findOneOrFail({
-      where: { id: saved.id },
+      where: { id },
       relations: { iconAsset: true },
     });
     return toCustomCategoryWithAttachment(model);
