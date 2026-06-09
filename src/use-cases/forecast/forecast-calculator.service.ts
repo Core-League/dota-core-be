@@ -20,15 +20,17 @@ function floorToHundredsUah(kopecks: number): number {
 
 /**
  * Pure prize-pool forecast over a {@link ForecastConfig} + a thin persistence
- * wrapper for the single active config. Formula (kopecks throughout): each
- * division d is charged its fee tier (0→top1_4, 1→top5_8, 2→top8plus), so
- * `collected[d] = teamCount[d] · PLAYERS_PER_TEAM · feeTier[d]`. The global pool
- * `totalCollected · prizePoolPercent%` is split per division pro-rata to
- * `collected`, then `prizePool[d] = floorToHundredsUah(projectContribution[d] +
- * share[d])`. `projectedProfit = totalCollected − totalPrizePool`.
+ * wrapper for the single active config. Formula (kopecks throughout): within
+ * each division the fee depends on a team's placement bracket — teams 1–4 pay
+ * `fees.top1_4`, teams 5–8 pay `fees.top5_8`, teams 9+ pay `fees.top8plus` —
+ * so `collected[d] = PLAYERS_PER_TEAM · Σ bracketTeams · bracketFee`. The
+ * global pool `totalCollected · prizePoolPercent%` is split per division
+ * pro-rata to `collected`, then `prizePool[d] =
+ * floorToHundredsUah(projectContribution[d] + share[d])`.
+ * `projectedProfit = totalCollected − totalPrizePool`.
  *
- * NOTE: the fee-tier↔division mapping and "hundreds" unit interpret the spec —
- * adjust here if the business formula differs.
+ * NOTE: the "hundreds" rounding unit interprets the spec — adjust here if the
+ * business formula differs.
  */
 @Injectable()
 export class ForecastCalculatorService {
@@ -36,16 +38,22 @@ export class ForecastCalculatorService {
 
   calculate(config: ForecastConfig): ForecastResult {
     const parsed = ForecastConfigSchema.parse(config);
-    const feeTiers = [
-      parsed.fees.top1_4,
-      parsed.fees.top5_8,
-      parsed.fees.top8plus,
-    ];
 
-    const collected = parsed.divisions.map(
-      (division, i) => division.teamCount * PLAYERS_PER_TEAM * feeTiers[i],
-    );
+    const collected = parsed.divisions.map((division) => {
+      const top1to4Teams = Math.min(division.teamCount, 4);
+      const top5to8Teams = Math.min(Math.max(division.teamCount - 4, 0), 4);
+      const top9PlusTeams = Math.max(division.teamCount - 8, 0);
+
+      return (
+        PLAYERS_PER_TEAM *
+        (top1to4Teams * parsed.fees.top1_4 +
+          top5to8Teams * parsed.fees.top5_8 +
+          top9PlusTeams * parsed.fees.top8plus)
+      );
+    });
+
     const totalCollected = collected.reduce((sum, c) => sum + c, 0);
+
     const globalPrizePool = Math.floor(
       (totalCollected * parsed.prizePoolPercent) / 100,
     );
@@ -56,6 +64,7 @@ export class ForecastCalculatorService {
           totalCollected > 0
             ? Math.floor((globalPrizePool * collected[i]) / totalCollected)
             : 0;
+
         return {
           collected: collected[i],
           prizePool: floorToHundredsUah(division.projectContribution + share),
