@@ -25,14 +25,14 @@ function floorToHundredsUah(kopecks: number): number {
  * `collected[d] = teamCount[d] · PLAYERS_PER_TEAM · feeTier[d]`. The global pool
  * `totalCollected · prizePoolPercent%` is split per division pro-rata to
  * `collected`, then `prizePool[d] = floorToHundredsUah(projectContribution[d] +
- * share[d])`. `projectedProfit = totalCollected · (100 − prizePoolPercent)%`.
+ * share[d])`. `projectedProfit = totalCollected − totalPrizePool`.
  *
  * NOTE: the fee-tier↔division mapping and "hundreds" unit interpret the spec —
  * adjust here if the business formula differs.
  */
 @Injectable()
 export class ForecastCalculatorService {
-  constructor(private readonly configRepo: ForecastConfigRepository) {}
+  constructor(private readonly configRepo: ForecastConfigRepository) { }
 
   calculate(config: ForecastConfig): ForecastResult {
     const parsed = ForecastConfigSchema.parse(config);
@@ -62,15 +62,13 @@ export class ForecastCalculatorService {
         };
       },
     ) as [
-      ForecastDivisionResult,
-      ForecastDivisionResult,
-      ForecastDivisionResult,
-    ];
+        ForecastDivisionResult,
+        ForecastDivisionResult,
+        ForecastDivisionResult,
+      ];
 
     const totalPrizePool = divisions.reduce((sum, d) => sum + d.prizePool, 0);
-    const projectedProfit = Math.floor(
-      (totalCollected * (100 - parsed.prizePoolPercent)) / 100,
-    );
+    const projectedProfit = totalCollected - totalPrizePool;
 
     return {
       divisions,
