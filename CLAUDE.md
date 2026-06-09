@@ -101,4 +101,4 @@ Required GitHub Environment config (production + staging): every app secret/var 
 Local equivalent (load an env file into the shell yourself, no auto-forward): `set -a; . ./.env.staging; set +a; API_V1_PORT=3000 API_V2_PORT=3010 docker compose up -d --build`.
 
 **Test coverage**:
-- DO NOT WRITE OR RUN TESTS
+- run or write test only upon request user 
