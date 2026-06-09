@@ -15,7 +15,7 @@ import { BalanceDto } from './balance.dto';
 @Controller('balance')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class BalanceController {
-  constructor(private readonly balanceService: BalanceService) {}
+  constructor(private readonly balanceService: BalanceService) { }
 
   @Get()
   @ApiOperation({ summary: 'Account balance (optionally with forecast)' })

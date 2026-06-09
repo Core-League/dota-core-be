@@ -53,7 +53,7 @@ export class OperationService {
     private readonly categoryRepo: CustomCategoryRepository,
     private readonly forecast: ForecastCalculatorService,
     private readonly assetService: AssetService,
-  ) {}
+  ) { }
 
   async listFeed(
     filter: OperationListFilter = {},
@@ -187,14 +187,14 @@ export class OperationService {
     const { projectedExpenses, projectedProfit } = active.result;
     const forecastRows: FeedItem[] = [
       this.forecastRow(
-        'forecast-expenses',
-        -projectedExpenses,
-        'Прогнозовані витрати',
-      ),
-      this.forecastRow(
         'forecast-profit',
         projectedProfit,
         'Прогнозований прибуток',
+      ),
+      this.forecastRow(
+        'forecast-expenses',
+        -projectedExpenses,
+        'Прогнозовані витрати',
       ),
     ];
     items.unshift(...forecastRows);
