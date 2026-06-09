@@ -77,13 +77,18 @@ export class ForecastCalculatorService {
       ];
 
     const totalPrizePool = divisions.reduce((sum, d) => sum + d.prizePool, 0);
-    const projectedProfit = totalCollected - totalPrizePool;
+    const projectedProfit =
+      totalCollected * (1 - parsed.prizePoolPercent / 100);
+    const projectedExpenses = parsed.divisions.reduce(
+      (division, c) => division + c.projectContribution,
+      0,
+    );
 
     return {
       divisions,
       totalCollected,
       totalPrizePool,
-      projectedExpenses: totalPrizePool,
+      projectedExpenses,
       projectedProfit,
     };
   }
