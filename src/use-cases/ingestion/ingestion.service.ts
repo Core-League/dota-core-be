@@ -3,6 +3,7 @@ import { MonobankService } from '../../connectors/monobank/monobank.service';
 import { TransactionRepository } from '../../repos/transaction.repository';
 import { ClassificationService } from '../classification/classification.service';
 import { toStoredTransaction } from '../shared/bank-transaction.mapper';
+import { ConfigConnectorService } from 'src/connectors/config/config-connector.service';
 
 /**
  * Webhook entry point. Validates the push, persists the raw transaction
@@ -17,12 +18,19 @@ export class IngestionService {
     private readonly bank: MonobankService,
     private readonly transactionRepo: TransactionRepository,
     private readonly classificationService: ClassificationService,
-  ) {}
+    private readonly configConnector: ConfigConnectorService,
+  ) { }
 
   async handleWebhook(rawBody: unknown): Promise<void> {
     try {
       const payload = this.bank.parseWebhookPayload(rawBody);
+      const envConfig = this.configConnector.getEnvConfig();
       const { account, statementItem } = payload.data;
+
+      if (account !== envConfig.MONOBANK_ACCOUNT_ID) {
+        return;
+      }
+
       const stored = toStoredTransaction(account, statementItem);
       await this.transactionRepo.upsert(stored);
       await this.classificationService.classify(stored);
