@@ -5,6 +5,15 @@ export class Verification1781049861942 implements MigrationInterface {
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
+      `CREATE TYPE "public"."verification_slot_status_enum" AS ENUM('free', 'booked', 'cancelled')`,
+    );
+    await queryRunner.query(
+      `CREATE TYPE "public"."verification_request_type_enum" AS ENUM('FIRST', 'MMR_UPDATE')`,
+    );
+    await queryRunner.query(
+      `CREATE TYPE "public"."verification_request_status_enum" AS ENUM('pending', 'processing', 'completed', 'cancelled')`,
+    );
+    await queryRunner.query(
       `CREATE TABLE "verification_slot" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "startsAt" TIMESTAMP WITH TIME ZONE NOT NULL, "endsAt" TIMESTAMP WITH TIME ZONE NOT NULL, "status" "public"."verification_slot_status_enum" NOT NULL DEFAULT 'free', CONSTRAINT "PK_73c426ab152865aa74fdfa528cb" PRIMARY KEY ("id"))`,
     );
     await queryRunner.query(
@@ -49,5 +58,14 @@ export class Verification1781049861942 implements MigrationInterface {
       `DROP INDEX "public"."IDX_90f9199e965ca2300d71290a28"`,
     );
     await queryRunner.query(`DROP TABLE "verification_slot"`);
+    await queryRunner.query(
+      `DROP TYPE "public"."verification_request_status_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE "public"."verification_request_type_enum"`,
+    );
+    await queryRunner.query(
+      `DROP TYPE "public"."verification_slot_status_enum"`,
+    );
   }
 }
