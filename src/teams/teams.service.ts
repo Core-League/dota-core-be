@@ -84,19 +84,7 @@ export class TeamsService {
     const team = await this.teamsRepo.save(entity);
     await this.syncPlayerTeamLinks(team.id);
 
-    const rolesRepo = this.dataSource.getRepository(UserRoles);
-    const existing = await rolesRepo.findOne({
-      where: { player: { id: captainId }, name: Role.CAPTAIN },
-    });
-    if (!existing) {
-      await rolesRepo.save(
-        rolesRepo.create({
-          name: Role.CAPTAIN,
-          isAdminRole: false,
-          player: { id: captainId } as Player,
-        }),
-      );
-    }
+    await this.grantCaptainRole(captainId);
 
     await this.syncDiscordGuildRolesForPlayer(captainId);
 
@@ -212,13 +200,7 @@ export class TeamsService {
     });
 
     if (captainId) {
-      const rolesRepo = this.dataSource.getRepository(UserRoles);
-      const captainRole = await rolesRepo.findOne({
-        where: { player: { id: captainId }, name: Role.CAPTAIN },
-      });
-      if (captainRole) {
-        await rolesRepo.remove(captainRole);
-      }
+      await this.revokeCaptainRoleIfNoLongerCaptain(captainId);
       await this.syncDiscordGuildRolesForPlayer(captainId);
     }
 
@@ -294,6 +276,11 @@ export class TeamsService {
     team.captain = newCaptain;
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(teamId);
+
+    await this.grantCaptainRole(newCaptain.id);
+    if (oldCaptain?.id) {
+      await this.revokeCaptainRoleIfNoLongerCaptain(oldCaptain.id);
+    }
 
     if (oldCaptainDiscordId) {
       await this.discord.removeCaptainRole(oldCaptainDiscordId);
@@ -414,9 +401,13 @@ export class TeamsService {
     if (wasCaptain) {
       const nextCaptain = team.mainPlayers[0];
       if (!nextCaptain) {
-        throw new BadRequestException(
-          'Неможливо видалити капітана: у команди немає інших основних гравців для підвищення',
-        );
+        // The last captain is leaving and there is no main player to promote.
+        // Disband the team: this detaches all players (player.teamId = null)
+        // and revokes the captain's Капітан role.
+        await this.remove(teamId);
+        const disbanded = await this.teamsRepo.findOneById(teamId);
+        if (!disbanded) throw new NotFoundException('Team not found');
+        return this.mapTeamResponse(disbanded);
       }
       team.captain = nextCaptain;
     }
@@ -428,6 +419,10 @@ export class TeamsService {
       await this.discord.removeMemberRole(removedDiscordId, team.discordRoleId);
     }
     if (wasCaptain) {
+      if (saved.captain?.id) {
+        await this.grantCaptainRole(saved.captain.id);
+      }
+      await this.revokeCaptainRoleIfNoLongerCaptain(playerId);
       if (removedDiscordId) {
         await this.discord.removeCaptainRole(removedDiscordId);
       }
@@ -470,6 +465,46 @@ export class TeamsService {
     });
     if (player) {
       await this.authService.syncPlayerGuildRoles(player);
+    }
+  }
+
+  /**
+   * Grants the application-level Captain (Капітан) user-role to a player.
+   * Idempotent — does nothing if the player already holds it.
+   */
+  private async grantCaptainRole(playerId: string): Promise<void> {
+    const rolesRepo = this.dataSource.getRepository(UserRoles);
+    const existing = await rolesRepo.findOne({
+      where: { player: { id: playerId }, name: Role.CAPTAIN },
+    });
+    if (!existing) {
+      await rolesRepo.save(
+        rolesRepo.create({
+          name: Role.CAPTAIN,
+          isAdminRole: false,
+          player: { id: playerId } as Player,
+        }),
+      );
+    }
+  }
+
+  /**
+   * Revokes the Captain (Капітан) user-role from a player, but only when they
+   * are no longer captain of any active (non-disbanded) team. Guards against
+   * stripping the role from someone who still captains another team.
+   */
+  private async revokeCaptainRoleIfNoLongerCaptain(
+    playerId: string,
+  ): Promise<void> {
+    const stillCaptain = await this.teamsRepo.findByCaptainId(playerId);
+    if (stillCaptain.length > 0) return;
+
+    const rolesRepo = this.dataSource.getRepository(UserRoles);
+    const captainRole = await rolesRepo.findOne({
+      where: { player: { id: playerId }, name: Role.CAPTAIN },
+    });
+    if (captainRole) {
+      await rolesRepo.remove(captainRole);
     }
   }
 
