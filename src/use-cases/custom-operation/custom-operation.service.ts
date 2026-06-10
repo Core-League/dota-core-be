@@ -29,7 +29,7 @@ export class CustomOperationService {
     private readonly categoryRepo: CustomCategoryRepository,
     private readonly assetService: AssetService,
     private readonly config: ConfigConnectorService,
-  ) { }
+  ) {}
 
   /**
    * Full update of an operation's editable fields. Setting the category by hand

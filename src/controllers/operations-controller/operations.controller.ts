@@ -43,7 +43,7 @@ export class OperationsController {
   constructor(
     private readonly operationService: OperationService,
     private readonly customOperationService: CustomOperationService,
-  ) { }
+  ) {}
 
   @Get('operations')
   @ApiOperation({ summary: 'Operations feed (optionally with forecast rows)' })
