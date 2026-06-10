@@ -1,5 +1,7 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
+import { VerificationRequestViewSchema } from '../../types/entities/verification/request';
+import { VerificationSlotViewSchema } from '../../types/entities/verification/slot';
 
 /** Working-hours range for auto-generating a day's 30-min slots (UTC). */
 const CreateSlotsSchema = z
@@ -35,3 +37,13 @@ const CompleteRequestSchema = z.object({
 });
 
 export class CompleteRequestDto extends createZodDto(CompleteRequestSchema) {}
+
+/** Wire shape of a verification slot. */
+export class VerificationSlotViewDto extends createZodDto(
+  VerificationSlotViewSchema,
+) {}
+
+/** Wire shape of a verification request. */
+export class VerificationRequestViewDto extends createZodDto(
+  VerificationRequestViewSchema,
+) {}
