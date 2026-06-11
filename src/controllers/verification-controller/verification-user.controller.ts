@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiCreatedResponse,
   ApiOkResponse,
@@ -6,7 +14,6 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { CurrentPlayerId } from '../../connectors/auth/current-player.decorator';
 import { JwtAuthGuard } from '../../connectors/auth/guards/jwt-auth.guard';
 import type { VerificationRequestView } from '../../types/entities/verification/request';
 import type { VerificationSlotView } from '../../types/entities/verification/slot';
@@ -17,6 +24,7 @@ import {
   VerificationRequestViewDto,
   VerificationSlotViewDto,
 } from './verification.dto';
+import type { RequestWithJwtActor } from 'src/auth/guards/own-player-or-admin.guard';
 
 @ApiTags('verification')
 @Controller('verification')
@@ -25,7 +33,7 @@ export class VerificationUserController {
   constructor(
     private readonly slotService: VerificationSlotService,
     private readonly requestService: VerificationRequestService,
-  ) {}
+  ) { }
 
   @Get('slots')
   @ApiOperation({
@@ -41,9 +49,9 @@ export class VerificationUserController {
   @ApiOperation({ summary: 'Captain books a free slot to verify players' })
   @ApiCreatedResponse({ type: VerificationRequestViewDto })
   createRequest(
-    @CurrentPlayerId() captainPlayerId: string,
+    @Req() req: RequestWithJwtActor,
     @Body() body: CreateRequestDto,
   ): Promise<VerificationRequestView> {
-    return this.requestService.createRequest(captainPlayerId, body);
+    return this.requestService.createRequest(req.user!.playerId, body);
   }
 }

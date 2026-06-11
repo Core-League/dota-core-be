@@ -64,7 +64,7 @@ export class RequestRepository implements IRequestRepository {
         ),
       );
 
-      return this.loadById(saved.id);
+      return this.loadById(saved.id, m);
     });
   }
 
@@ -127,8 +127,11 @@ export class RequestRepository implements IRequestRepository {
     return this.dataSource.transaction(work);
   }
 
-  private async loadById(id: string): Promise<VerificationRequest> {
-    const model = await this.dataSource
+  private async loadById(
+    id: string,
+    manager?: EntityManager,
+  ): Promise<VerificationRequest> {
+    const model = await (manager ?? this.dataSource.manager)
       .getRepository(VerificationRequestModel)
       .findOneOrFail({ where: { id }, relations: { players: true } });
     return toVerificationRequest(model);
