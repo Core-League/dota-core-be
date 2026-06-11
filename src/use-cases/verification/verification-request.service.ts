@@ -157,7 +157,7 @@ export class VerificationRequestService {
       throw new ConflictException(`Request is already ${request.status}`);
     }
 
-    const expected = new Set(request.players.map((p) => p.playerId));
+    const expected = new Set(request.players.map((p) => p.player.id));
     const given = new Set(input.results.map((r) => r.playerId));
     if (given.size !== input.results.length) {
       throw new BadRequestException('Duplicate player in results');

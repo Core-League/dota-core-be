@@ -20,8 +20,17 @@ export function toVerificationRequest(
     createdAt: model.createdAt,
     players: (model.players ?? []).map((p) => ({
       id: p.id,
-      playerId: p.playerId,
       resultMmr: p.resultMmr,
+      player: {
+        id: p.player.id,
+        steamId: p.player.steamId,
+        avatarUrl: p.player.avatarUrl,
+        discordName: p.player.discordName,
+        discordUsername: p.player.discordUsername,
+        rating: p.player.rating,
+        positions: p.player.positions,
+        verifiedAt: p.player.verifiedAt,
+      },
     })),
   };
 }
@@ -43,6 +52,15 @@ export function toVerificationRequestView(
     createdByPlayerId: request.createdByPlayerId,
     createdAt: request.createdAt.toISOString(),
     slot: opts.slot ? toVerificationSlotView(opts.slot) : null,
-    players: request.players,
+    players: request.players.map((p) => ({
+      id: p.id,
+      resultMmr: p.resultMmr,
+      player: {
+        ...p.player,
+        verifiedAt: p.player.verifiedAt
+          ? p.player.verifiedAt.toISOString()
+          : null,
+      },
+    })),
   };
 }
