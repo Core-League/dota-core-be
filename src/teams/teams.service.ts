@@ -58,7 +58,7 @@ export class TeamsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authService: AuthService,
     private readonly dota2: Dota2Service,
-  ) {}
+  ) { }
 
   /** Для інших модулів (напр. турніри) — той самий DTO, що й у REST. */
   toTeamResponse(team: Team): TeamResponseDto {
@@ -81,14 +81,14 @@ export class TeamsService {
       mainPlayers: [{ id: captainId } as Player],
       ...(coachId ? { coach: { id: coachId } as Player } : {}),
     });
-    const team = await this.teamsRepo.save(entity);
-    await this.syncPlayerTeamLinks(team.id);
+    const createdTeamId = await this.teamsRepo.insert(entity);
+    await this.syncPlayerTeamLinks(createdTeamId);
 
     await this.grantCaptainRole(captainId);
 
     await this.syncDiscordGuildRolesForPlayer(captainId);
 
-    const full = await this.teamsRepo.findOneById(team.id);
+    const full = await this.teamsRepo.findOneById(createdTeamId);
     if (!full) {
       throw new InternalServerErrorException('Не вдалося завантажити команду');
     }
@@ -267,9 +267,9 @@ export class TeamsService {
       ];
       team.reservedPlayers = oldCaptain
         ? [
-            ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
-            oldCaptain,
-          ]
+          ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
+          oldCaptain,
+        ]
         : reservedPlayers.filter((p) => p.id !== newCaptainPlayerId);
     }
 
