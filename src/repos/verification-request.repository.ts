@@ -71,14 +71,14 @@ export class RequestRepository implements IRequestRepository {
   async findById(id: string): Promise<VerificationRequest | null> {
     const model = await this.dataSource
       .getRepository(VerificationRequestModel)
-      .findOne({ where: { id }, relations: { players: true } });
+      .findOne({ where: { id }, relations: { players: { player: true } } });
     return model ? toVerificationRequest(model) : null;
   }
 
   async findBySlotId(slotId: string): Promise<VerificationRequest | null> {
     const model = await this.dataSource
       .getRepository(VerificationRequestModel)
-      .findOne({ where: { slotId }, relations: { players: true } });
+      .findOne({ where: { slotId }, relations: { players: { player: true } } });
     return model ? toVerificationRequest(model) : null;
   }
 
@@ -88,7 +88,7 @@ export class RequestRepository implements IRequestRepository {
       .getRepository(VerificationRequestModel)
       .find({
         where: { slot: { startsAt: And(MoreThanOrEqual(from), LessThan(to)) } },
-        relations: { players: true, slot: true },
+        relations: { players: { player: true }, slot: true },
         order: { slot: { startsAt: 'ASC' } },
       });
     return models.map(toVerificationRequest);
@@ -133,7 +133,10 @@ export class RequestRepository implements IRequestRepository {
   ): Promise<VerificationRequest> {
     const model = await (manager ?? this.dataSource.manager)
       .getRepository(VerificationRequestModel)
-      .findOneOrFail({ where: { id }, relations: { players: true } });
+      .findOneOrFail({
+        where: { id },
+        relations: { players: { player: true } },
+      });
     return toVerificationRequest(model);
   }
 }

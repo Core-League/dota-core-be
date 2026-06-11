@@ -3,10 +3,24 @@ import { VerificationRequestStatus } from '../../enums/verification/Verification
 import { VerificationType } from '../../enums/verification/VerificationType';
 import { VerificationSlotViewSchema } from './slot';
 
+/** Real (v1-owned) player loaded for a verification request, timestamps as Date. */
+export const VerificationPlayerSchema = z.object({
+  id: z.string(),
+  steamId: z.string().nullable(),
+  avatarUrl: z.string().nullable(),
+  discordName: z.string().nullable(),
+  discordUsername: z.string().nullable(),
+  rating: z.number(),
+  positions: z.array(z.number()).nullable(),
+  verifiedAt: z.date().nullable(),
+});
+
+export type VerificationPlayer = z.infer<typeof VerificationPlayerSchema>;
+
 export const VerificationRequestPlayerSchema = z.object({
   id: z.string(),
-  playerId: z.string(),
   resultMmr: z.number().nullable(),
+  player: VerificationPlayerSchema,
 });
 
 export type VerificationRequestPlayer = z.infer<
@@ -27,6 +41,21 @@ export const VerificationRequestSchema = z.object({
 
 export type VerificationRequest = z.infer<typeof VerificationRequestSchema>;
 
+/** Wire shape of the embedded player — `verifiedAt` as an ISO string. */
+export const VerificationPlayerViewSchema = VerificationPlayerSchema.extend({
+  verifiedAt: z.string().nullable(),
+});
+
+export type VerificationPlayerView = z.infer<
+  typeof VerificationPlayerViewSchema
+>;
+
+export const VerificationRequestPlayerViewSchema = z.object({
+  id: z.string(),
+  resultMmr: z.number().nullable(),
+  player: VerificationPlayerViewSchema,
+});
+
 /** Wire shape — adds resolved team name + slot, timestamps as ISO strings. */
 export const VerificationRequestViewSchema = z.object({
   id: z.string(),
@@ -37,7 +66,7 @@ export const VerificationRequestViewSchema = z.object({
   createdByPlayerId: z.string(),
   createdAt: z.string(),
   slot: VerificationSlotViewSchema.nullable(),
-  players: z.array(VerificationRequestPlayerSchema),
+  players: z.array(VerificationRequestPlayerViewSchema),
 });
 
 export type VerificationRequestView = z.infer<
