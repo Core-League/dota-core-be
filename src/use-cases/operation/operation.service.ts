@@ -53,7 +53,7 @@ export class OperationService {
     private readonly categoryRepo: CustomCategoryRepository,
     private readonly forecast: ForecastCalculatorService,
     private readonly assetService: AssetService,
-  ) { }
+  ) {}
 
   async listFeed(
     filter: OperationListFilter = {},

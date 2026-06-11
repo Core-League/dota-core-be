@@ -43,7 +43,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly dueloService: DueloService,
-  ) {}
+  ) { }
 
   @Post('matches/:matchId/result')
   @ApiOperation({

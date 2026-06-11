@@ -20,7 +20,7 @@ export class SyncController {
   constructor(
     private readonly syncService: SyncService,
     private readonly config: ConfigConnectorService,
-  ) { }
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Backfill transactions for a period' })

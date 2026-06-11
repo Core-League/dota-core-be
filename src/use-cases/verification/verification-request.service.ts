@@ -1,0 +1,237 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { toVerificationRequestView } from '../../db/mappers/verification-request.mapper';
+import { PlayerRepository } from '../../repos/player.repository';
+import { TeamRepository } from '../../repos/team.repository';
+import { RequestRepository } from '../../repos/verification-request.repository';
+import { SlotRepository } from '../../repos/verification-slot.repository';
+import type {
+  VerificationRequest,
+  VerificationRequestView,
+} from '../../types/entities/verification/request';
+import { VerificationRequestStatus } from '../../types/enums/verification/VerificationRequestStatus';
+import { VerificationSlotStatus } from '../../types/enums/verification/VerificationSlotStatus';
+import { VerificationType } from '../../types/enums/verification/VerificationType';
+import {
+  ESTABLISHED_TEAM_VERIFIED_COUNT,
+  utcDayRange,
+} from './verification.constants';
+
+export interface CreateRequestInput {
+  slotId: string;
+  playerIds: string[];
+}
+
+export interface CompleteRequestInput {
+  results: { playerId: string; mmr: number }[];
+}
+
+/**
+ * Captain-facing booking flow: a captain books a free slot to verify players.
+ * Enforces the two-tier player-count rule and derives the request type, then
+ * atomically books the slot. Also owns slot deletion (since deleting a booked
+ * slot cancels its request).
+ */
+@Injectable()
+export class VerificationRequestService {
+  constructor(
+    private readonly requestRepo: RequestRepository,
+    private readonly slotRepo: SlotRepository,
+    private readonly teamRepo: TeamRepository,
+    private readonly playerRepo: PlayerRepository,
+  ) {}
+
+  async createRequest(
+    captainPlayerId: string,
+    input: CreateRequestInput,
+  ): Promise<VerificationRequestView> {
+    const playerIds = [...new Set(input.playerIds)];
+    if (playerIds.length === 0) {
+      throw new BadRequestException('At least one player is required');
+    }
+
+    const team = await this.teamRepo.findCaptainedTeam(captainPlayerId);
+    if (!team) {
+      throw new ForbiddenException(
+        'Only a team captain can request verification',
+      );
+    }
+
+    const slot = await this.slotRepo.findById(input.slotId);
+    if (!slot) throw new NotFoundException('Slot not found');
+    if (slot.status !== VerificationSlotStatus.Free) {
+      throw new ConflictException('Slot is not free');
+    }
+
+    const players = await this.playerRepo.findByIds(playerIds);
+    if (players.length !== playerIds.length) {
+      throw new BadRequestException('One or more players do not exist');
+    }
+
+    // Two-tier rule: a team with <3 verified members must bring at least 3
+    // players for its (first) verification; an established team may bring 1.
+    const verifiedCount = await this.teamRepo.countVerifiedMainPlayers(team.id);
+    const established = verifiedCount >= ESTABLISHED_TEAM_VERIFIED_COUNT;
+    if (!established && playerIds.length < ESTABLISHED_TEAM_VERIFIED_COUNT) {
+      throw new BadRequestException(
+        `First verification requires at least ${ESTABLISHED_TEAM_VERIFIED_COUNT} players`,
+      );
+    }
+
+    // Already-verified players get the MMR-update flow; anyone unverified makes
+    // it a FIRST verification.
+    const allVerified = players.every((p) => p.verifiedAt != null);
+    const type = allVerified
+      ? VerificationType.MmrUpdate
+      : VerificationType.First;
+
+    const request = await this.requestRepo.createBooking({
+      slotId: input.slotId,
+      teamId: team.id,
+      type,
+      createdByPlayerId: captainPlayerId,
+      playerIds,
+    });
+
+    // TODO: notify the captain + players that the booking was created
+    return this.toView(request);
+  }
+
+  /** Admin daily list: every request whose slot falls on a UTC day (default today). */
+  async listForDay(date?: string): Promise<VerificationRequestView[]> {
+    const { start, end } = utcDayRange(date);
+    const requests = await this.requestRepo.findInRange(start, end);
+    if (requests.length === 0) return [];
+
+    const teamNames = await this.teamRepo.findNamesByIds(
+      requests.map((r) => r.teamId),
+    );
+    const slots = await this.slotRepo.findInRange(start, end);
+    const slotById = new Map(slots.map((s) => [s.id, s]));
+
+    return requests.map((request) =>
+      toVerificationRequestView(request, {
+        teamName: teamNames.get(request.teamId) ?? null,
+        slot: slotById.get(request.slotId) ?? null,
+      }),
+    );
+  }
+
+  /** Admin takes a pending request into processing. */
+  async process(id: string): Promise<VerificationRequestView> {
+    const request = await this.requestRepo.findById(id);
+    if (!request) throw new NotFoundException('Request not found');
+    if (request.status !== VerificationRequestStatus.Pending) {
+      throw new ConflictException(
+        `Only pending requests can be processed (is ${request.status})`,
+      );
+    }
+    await this.requestRepo.setStatus(id, VerificationRequestStatus.Processing);
+    // TODO: notify the captain + players that the request is being processed
+    return this.toView({
+      ...request,
+      status: VerificationRequestStatus.Processing,
+    });
+  }
+
+  /**
+   * Admin completes a request: writes each player's resulting MMR (and, for a
+   * FIRST verification, stamps `verifiedAt` + marks the team verified) in one
+   * transaction across the v2 request rows and the v1-owned player/team tables.
+   */
+  async complete(
+    id: string,
+    input: CompleteRequestInput,
+  ): Promise<VerificationRequestView> {
+    const request = await this.requestRepo.findById(id);
+    if (!request) throw new NotFoundException('Request not found');
+    if (
+      request.status === VerificationRequestStatus.Completed ||
+      request.status === VerificationRequestStatus.Cancelled
+    ) {
+      throw new ConflictException(`Request is already ${request.status}`);
+    }
+
+    const expected = new Set(request.players.map((p) => p.playerId));
+    const given = new Set(input.results.map((r) => r.playerId));
+    if (given.size !== input.results.length) {
+      throw new BadRequestException('Duplicate player in results');
+    }
+    if (
+      given.size !== expected.size ||
+      ![...given].every((p) => expected.has(p))
+    ) {
+      throw new BadRequestException(
+        'Results must cover exactly the request players',
+      );
+    }
+
+    const markVerified = request.type === VerificationType.First;
+    await this.requestRepo.transaction(async (m) => {
+      await this.requestRepo.setPlayerResults(id, input.results, m);
+      await this.playerRepo.applyResults(input.results, markVerified, m);
+      if (markVerified) {
+        await this.teamRepo.markVerified(request.teamId, m);
+      }
+      await this.requestRepo.setStatus(
+        id,
+        VerificationRequestStatus.Completed,
+        m,
+      );
+    });
+
+    // TODO: notify the captain + players that verification completed
+    const updated = await this.requestRepo.findById(id);
+    return this.toView(updated ?? request);
+  }
+
+  /** Admin cancels a request; the slot is freed for rebooking. */
+  async cancel(id: string): Promise<VerificationRequestView> {
+    const request = await this.requestRepo.findById(id);
+    if (!request) throw new NotFoundException('Request not found');
+    if (request.status === VerificationRequestStatus.Completed) {
+      throw new ConflictException('Completed requests cannot be cancelled');
+    }
+    await this.requestRepo.setStatus(id, VerificationRequestStatus.Cancelled);
+    await this.slotRepo.setStatus(request.slotId, VerificationSlotStatus.Free);
+    // TODO: notify the captain + players that the request was cancelled
+    return this.toView({
+      ...request,
+      status: VerificationRequestStatus.Cancelled,
+    });
+  }
+
+  /** Free slot → removed; booked slot → its request is cancelled and freed. */
+  async deleteSlot(slotId: string): Promise<void> {
+    const slot = await this.slotRepo.findById(slotId);
+    if (!slot) throw new NotFoundException('Slot not found');
+
+    if (slot.status === VerificationSlotStatus.Free) {
+      await this.slotRepo.remove(slotId);
+      return;
+    }
+
+    const request = await this.requestRepo.findBySlotId(slotId);
+    if (request && request.status !== VerificationRequestStatus.Completed) {
+      await this.requestRepo.setStatus(
+        request.id,
+        VerificationRequestStatus.Cancelled,
+      );
+      // TODO: notify the captain + players that the slot was cancelled by an admin
+    }
+    await this.slotRepo.setStatus(slotId, VerificationSlotStatus.Cancelled);
+  }
+
+  private async toView(
+    request: VerificationRequest,
+  ): Promise<VerificationRequestView> {
+    const teamName = await this.teamRepo.findNameById(request.teamId);
+    const slot = await this.slotRepo.findById(request.slotId);
+    return toVerificationRequestView(request, { teamName, slot });
+  }
+}

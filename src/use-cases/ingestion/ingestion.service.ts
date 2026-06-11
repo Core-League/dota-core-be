@@ -19,7 +19,7 @@ export class IngestionService {
     private readonly transactionRepo: TransactionRepository,
     private readonly classificationService: ClassificationService,
     private readonly configConnector: ConfigConnectorService,
-  ) { }
+  ) {}
 
   async handleWebhook(rawBody: unknown): Promise<void> {
     try {

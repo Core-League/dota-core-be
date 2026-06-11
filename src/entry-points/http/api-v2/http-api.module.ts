@@ -11,6 +11,8 @@ import { BalanceControllerModule } from '../../../controllers/balance-controller
 import { SponsorsControllerModule } from '../../../controllers/sponsors-controller/sponsors-controller.module';
 import { AssetsControllerModule } from '../../../controllers/assets-controller/assets-controller.module';
 import { ForecastControllerModule } from '../../../controllers/forecast-controller/forecast-controller.module';
+import { VerificationControllerModule } from '../../../controllers/verification-controller/verification-controller.module';
+import { TagsControllerModule } from '../../../controllers/tags-controller/tags-controller.module';
 
 /**
  * Root module for the v2 (layered) HTTP app. Wires the foundation (config + DB
@@ -30,6 +32,8 @@ import { ForecastControllerModule } from '../../../controllers/forecast-controll
     SponsorsControllerModule,
     AssetsControllerModule,
     ForecastControllerModule,
+    VerificationControllerModule,
+    TagsControllerModule,
   ],
 })
 export class HttpApiModule {}

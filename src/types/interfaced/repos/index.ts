@@ -10,3 +10,9 @@ export type { IOperationGroupRepository } from './operation-group.repository.int
 export type { ISponsorRepository } from './sponsor.repository.interface';
 export type { ITeamRepository } from './team.repository.interface';
 export type { ITransactionRepository } from './transaction.repository.interface';
+export type { ISlotRepository } from './verification-slot.repository.interface';
+export type { ITagRepository } from './tag.repository.interface';
+export type {
+  IRequestRepository,
+  CreateBookingInput,
+} from './verification-request.repository.interface';

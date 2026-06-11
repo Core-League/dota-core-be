@@ -17,6 +17,15 @@ import { OperationRepository } from './operation.repository';
 import { SponsorRepository } from './sponsor.repository';
 import { TeamRepository } from './team.repository';
 import { TransactionRepository } from './transaction.repository';
+import { VerificationSlotModel } from '../db/models/verification-slot.model';
+import { VerificationRequestModel } from '../db/models/verification-request.model';
+import { VerificationRequestPlayerModel } from '../db/models/verification-request-player.model';
+import { SlotRepository } from './verification-slot.repository';
+import { RequestRepository } from './verification-request.repository';
+import { PlayerRepository } from './player.repository';
+import { TagModel } from '../db/models/tag.model';
+import { PlayerTagModel } from '../db/models/player-tag.model';
+import { TagRepository } from './tag.repository';
 
 /**
  * Global registry of v2 repositories. `forFeature` binds the TypeORM models so
@@ -33,6 +42,10 @@ const repos: Provider[] = [
   ForecastConfigRepository,
   TeamRepository,
   AssetRepository,
+  SlotRepository,
+  RequestRepository,
+  PlayerRepository,
+  TagRepository,
 ];
 
 @Global()
@@ -47,6 +60,11 @@ const repos: Provider[] = [
       AccountModel,
       ForecastConfigModel,
       AssetModel,
+      VerificationSlotModel,
+      VerificationRequestModel,
+      VerificationRequestPlayerModel,
+      TagModel,
+      PlayerTagModel,
     ]),
   ],
   providers: repos,
