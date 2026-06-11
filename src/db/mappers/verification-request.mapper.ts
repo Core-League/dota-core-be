@@ -1,10 +1,23 @@
 import type {
   VerificationRequest,
   VerificationRequestView,
+  VerificationTeam,
+  VerificationTeamView,
 } from '../../types/entities/verification/request';
 import type { VerificationSlot } from '../../types/entities/verification/slot';
 import { toVerificationSlotView } from './verification-slot.mapper';
 import { VerificationRequestModel } from '../models/verification-request.model';
+
+/** Domain team → wire view (timestamps as ISO strings). */
+export function toVerificationTeamView(
+  team: VerificationTeam,
+): VerificationTeamView {
+  return {
+    ...team,
+    verifiedAt: team.verifiedAt ? team.verifiedAt.toISOString() : null,
+    disbandedAt: team.disbandedAt ? team.disbandedAt.toISOString() : null,
+  };
+}
 
 /** TypeORM `VerificationRequestModel` (with `players`) → domain `VerificationRequest`. */
 export function toVerificationRequest(
@@ -36,17 +49,17 @@ export function toVerificationRequest(
 }
 
 /**
- * Domain request → wire view. `teamName` is resolved from the v1 `team` table
- * and `slot` is the request's (1:1) slot, both supplied by the caller.
+ * Domain request → wire view. `team` is the full v1 `team` row and `slot` is the
+ * request's (1:1) slot, both supplied by the caller.
  */
 export function toVerificationRequestView(
   request: VerificationRequest,
-  opts: { teamName: string | null; slot: VerificationSlot | null },
+  opts: { team: VerificationTeam | null; slot: VerificationSlot | null },
 ): VerificationRequestView {
   return {
     id: request.id,
     teamId: request.teamId,
-    teamName: opts.teamName,
+    team: opts.team ? toVerificationTeamView(opts.team) : null,
     type: request.type,
     status: request.status,
     createdByPlayerId: request.createdByPlayerId,

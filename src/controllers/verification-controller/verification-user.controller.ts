@@ -33,16 +33,20 @@ export class VerificationUserController {
   constructor(
     private readonly slotService: VerificationSlotService,
     private readonly requestService: VerificationRequestService,
-  ) { }
+  ) {}
 
   @Get('slots')
   @ApiOperation({
-    summary: 'List free slots for a day (UTC, defaults to today)',
+    summary: 'List free slots across a UTC day range (defaults to today)',
   })
-  @ApiQuery({ name: 'date', required: false, example: '2026-06-07' })
+  @ApiQuery({ name: 'from', required: false, example: '2026-06-07' })
+  @ApiQuery({ name: 'to', required: false, example: '2026-06-09' })
   @ApiOkResponse({ type: [VerificationSlotViewDto] })
-  listFreeSlots(@Query('date') date?: string): Promise<VerificationSlotView[]> {
-    return this.slotService.listFree(date);
+  listFreeSlots(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<VerificationSlotView[]> {
+    return this.slotService.listFree(from, to);
   }
 
   @Post('requests')
@@ -53,5 +57,16 @@ export class VerificationUserController {
     @Body() body: CreateRequestDto,
   ): Promise<VerificationRequestView> {
     return this.requestService.createRequest(req.user!.playerId, body);
+  }
+
+  @Get('me')
+  @ApiOperation({
+    summary: "The current player's verification requests (newest first)",
+  })
+  @ApiOkResponse({ type: [VerificationRequestViewDto] })
+  listMyRequests(
+    @Req() req: RequestWithJwtActor,
+  ): Promise<VerificationRequestView[]> {
+    return this.requestService.listForPlayer(req.user!.playerId);
   }
 }

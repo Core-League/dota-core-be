@@ -27,6 +27,32 @@ export type VerificationRequestPlayer = z.infer<
   typeof VerificationRequestPlayerSchema
 >;
 
+/** Full v1-owned `team` row attached to a request (timestamps as Date). */
+export const VerificationTeamSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  logoUrl: z.string().nullable(),
+  dotaTeamId: z.string().nullable(),
+  discordRoleId: z.string().nullable(),
+  discordChannelId: z.string().nullable(),
+  isVerified: z.boolean(),
+  isPlayingTournament: z.boolean(),
+  captainId: z.string(),
+  coachId: z.string().nullable(),
+  verifiedAt: z.date().nullable(),
+  disbandedAt: z.date().nullable(),
+});
+
+export type VerificationTeam = z.infer<typeof VerificationTeamSchema>;
+
+/** Wire shape of the embedded team — timestamps as ISO strings. */
+export const VerificationTeamViewSchema = VerificationTeamSchema.extend({
+  verifiedAt: z.string().nullable(),
+  disbandedAt: z.string().nullable(),
+});
+
+export type VerificationTeamView = z.infer<typeof VerificationTeamViewSchema>;
+
 /** Domain representation of a verification request (timestamps as Date). */
 export const VerificationRequestSchema = z.object({
   id: z.string(),
@@ -56,11 +82,11 @@ export const VerificationRequestPlayerViewSchema = z.object({
   player: VerificationPlayerViewSchema,
 });
 
-/** Wire shape — adds resolved team name + slot, timestamps as ISO strings. */
+/** Wire shape — adds the resolved team + slot, timestamps as ISO strings. */
 export const VerificationRequestViewSchema = z.object({
   id: z.string(),
   teamId: z.string(),
-  teamName: z.string().nullable(),
+  team: VerificationTeamViewSchema.nullable(),
   type: z.enum(VerificationType),
   status: z.enum(VerificationRequestStatus),
   createdByPlayerId: z.string(),
