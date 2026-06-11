@@ -15,5 +15,6 @@ export interface IRequestRepository {
   findById(id: string): Promise<VerificationRequest | null>;
   findBySlotId(slotId: string): Promise<VerificationRequest | null>;
   findInRange(from: Date, to: Date): Promise<VerificationRequest[]>;
+  findByPlayerId(playerId: string): Promise<VerificationRequest[]>;
   setStatus(id: string, status: VerificationRequestStatus): Promise<void>;
 }

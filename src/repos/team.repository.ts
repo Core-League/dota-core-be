@@ -2,12 +2,29 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type EntityManager } from 'typeorm';
 import type { Team } from '../types/entities/finance/team';
+import type { VerificationTeam } from '../types/entities/verification/request';
 import type { ITeamRepository } from '../types/interfaced/repos/team.repository.interface';
 
 interface TeamRow {
   id: string;
   name: string;
   logoUrl: string | null;
+}
+
+/** Every own column of the v1 `team` row (timestamps arrive as Date from pg). */
+interface VerificationTeamRow {
+  id: string;
+  name: string;
+  logoUrl: string | null;
+  dotaTeamId: string | null;
+  discordRoleId: string | null;
+  discordChannelId: string | null;
+  isVerified: boolean;
+  isPlayingTournament: boolean;
+  captainId: string;
+  coachId: string | null;
+  verifiedAt: Date | null;
+  disbandedAt: Date | null;
 }
 
 /** A non-disbanded team captained by a given player. */
@@ -74,22 +91,28 @@ export class TeamRepository implements ITeamRepository {
     return rows[0]?.count ?? 0;
   }
 
-  async findNameById(teamId: string): Promise<string | null> {
-    const rows = await this.dataSource.query<{ name: string }[]>(
-      `SELECT "name" FROM "team" WHERE "id" = $1 LIMIT 1`,
-      [teamId],
-    );
-    return rows[0]?.name ?? null;
+  /** Full team row for one id (embedded in a verification request view). */
+  async findFullById(teamId: string): Promise<VerificationTeam | null> {
+    const row = await this.dataSource
+      .createQueryBuilder()
+      .select('team.*')
+      .from('team', 'team')
+      .where('team.id = :teamId', { teamId })
+      .limit(1)
+      .getRawOne<VerificationTeamRow>();
+    return row ? toVerificationTeam(row) : null;
   }
 
-  /** Batch team-name lookup for the admin daily list. */
-  async findNamesByIds(ids: string[]): Promise<Map<string, string>> {
+  /** Batch full-team lookup for the admin daily list, keyed by id. */
+  async findFullByIds(ids: string[]): Promise<Map<string, VerificationTeam>> {
     if (ids.length === 0) return new Map();
-    const rows = await this.dataSource.query<{ id: string; name: string }[]>(
-      `SELECT "id", "name" FROM "team" WHERE "id" = ANY($1)`,
-      [ids],
-    );
-    return new Map(rows.map((r) => [r.id, r.name]));
+    const rows = await this.dataSource
+      .createQueryBuilder()
+      .select('team.*')
+      .from('team', 'team')
+      .where('team.id IN (:...ids)', { ids })
+      .getRawMany<VerificationTeamRow>();
+    return new Map(rows.map((r) => [r.id, toVerificationTeam(r)]));
   }
 
   /** Mark a team verified on first successful verification (v1-owned write). */
@@ -107,4 +130,21 @@ export class TeamRepository implements ITeamRepository {
 
 function toTeam(row: TeamRow): Team {
   return { id: row.id, name: row.name, avatarRef: row.logoUrl };
+}
+
+function toVerificationTeam(row: VerificationTeamRow): VerificationTeam {
+  return {
+    id: row.id,
+    name: row.name,
+    logoUrl: row.logoUrl,
+    dotaTeamId: row.dotaTeamId,
+    discordRoleId: row.discordRoleId,
+    discordChannelId: row.discordChannelId,
+    isVerified: row.isVerified,
+    isPlayingTournament: row.isPlayingTournament,
+    captainId: row.captainId,
+    coachId: row.coachId,
+    verifiedAt: row.verifiedAt,
+    disbandedAt: row.disbandedAt,
+  };
 }

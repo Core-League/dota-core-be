@@ -3,16 +3,16 @@ import { z } from 'zod';
 import { VerificationRequestViewSchema } from '../../types/entities/verification/request';
 import { VerificationSlotViewSchema } from '../../types/entities/verification/slot';
 
-/** Working-hours range for auto-generating a day's 30-min slots (UTC). */
-const CreateSlotsSchema = z
-  .object({
-    from: z.iso.datetime({ error: 'from must be an ISO 8601 UTC date-time' }),
-    to: z.iso.datetime({ error: 'to must be an ISO 8601 UTC date-time' }),
-  })
-  .refine((v) => v.from.slice(0, 10) === v.to.slice(0, 10), {
-    error: 'from and to must be on the same date',
-    path: ['to'],
-  });
+/** Explicit slot start times (UTC) to publish as 30-min free slots. */
+const CreateSlotsSchema = z.object({
+  starts: z
+    .array(
+      z.iso.datetime({
+        error: 'each start must be an ISO 8601 UTC date-time',
+      }),
+    )
+    .min(1),
+});
 
 export class CreateSlotsDto extends createZodDto(CreateSlotsSchema) {}
 

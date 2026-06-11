@@ -8,6 +8,7 @@ import {
   And,
   DataSource,
   type EntityManager,
+  In,
   LessThan,
   MoreThanOrEqual,
 } from 'typeorm';
@@ -91,6 +92,27 @@ export class RequestRepository implements IRequestRepository {
         relations: { players: { player: true }, slot: true },
         order: { slot: { startsAt: 'ASC' } },
       });
+    return models.map(toVerificationRequest);
+  }
+
+  /** Every request the given player participates in, newest slot first. */
+  async findByPlayerId(playerId: string): Promise<VerificationRequest[]> {
+    const repo = this.dataSource.getRepository(VerificationRequestModel);
+    // Resolve matching ids first so the loaded `players` relation stays complete
+    // (filtering on `players.playerId` in the main query would prune the array).
+    const ids = await repo
+      .createQueryBuilder('request')
+      .select('request.id', 'id')
+      .innerJoin('request.players', 'participant')
+      .where('participant.playerId = :playerId', { playerId })
+      .getRawMany<{ id: string }>();
+    if (ids.length === 0) return [];
+
+    const models = await repo.find({
+      where: { id: In(ids.map((row) => row.id)) },
+      relations: { players: { player: true }, slot: true },
+      order: { slot: { startsAt: 'DESC' } },
+    });
     return models.map(toVerificationRequest);
   }
 

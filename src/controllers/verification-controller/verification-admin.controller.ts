@@ -41,7 +41,7 @@ export class VerificationAdminController {
 
   @Post('slots')
   @ApiOperation({
-    summary: 'Generate free 30-min slots from a working-hours range',
+    summary: 'Publish free 30-min slots for explicit start times',
   })
   @ApiCreatedResponse({ type: [VerificationSlotViewDto] })
   createSlots(@Body() body: CreateSlotsDto): Promise<VerificationSlotView[]> {
@@ -59,13 +59,18 @@ export class VerificationAdminController {
   }
 
   @Get('requests')
-  @ApiOperation({ summary: "Admin daily list of a day's bookings (UTC)" })
-  @ApiQuery({ name: 'date', required: false, example: '2026-06-07' })
+  @ApiOperation({
+    summary:
+      'Admin list of bookings across a UTC day range (defaults to today)',
+  })
+  @ApiQuery({ name: 'from', required: false, example: '2026-06-07' })
+  @ApiQuery({ name: 'to', required: false, example: '2026-06-09' })
   @ApiOkResponse({ type: [VerificationRequestViewDto] })
   listRequests(
-    @Query('date') date?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ): Promise<VerificationRequestView[]> {
-    return this.requestService.listForDay(date);
+    return this.requestService.listInRange(from, to);
   }
 
   @Post('requests/:id/process')

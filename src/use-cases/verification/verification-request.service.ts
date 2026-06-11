@@ -19,7 +19,7 @@ import { VerificationSlotStatus } from '../../types/enums/verification/Verificat
 import { VerificationType } from '../../types/enums/verification/VerificationType';
 import {
   ESTABLISHED_TEAM_VERIFIED_COUNT,
-  utcDayRange,
+  utcDateRange,
 } from './verification.constants';
 
 export interface CreateRequestInput {
@@ -102,13 +102,22 @@ export class VerificationRequestService {
     return this.toView(request);
   }
 
-  /** Admin daily list: every request whose slot falls on a UTC day (default today). */
-  async listForDay(date?: string): Promise<VerificationRequestView[]> {
-    const { start, end } = utcDayRange(date);
+  /** Player-facing: every verification request the player takes part in, newest first. */
+  async listForPlayer(playerId: string): Promise<VerificationRequestView[]> {
+    const requests = await this.requestRepo.findByPlayerId(playerId);
+    return Promise.all(requests.map((request) => this.toView(request)));
+  }
+
+  /** Admin list: every request whose slot falls in the inclusive `from`..`to` UTC day range (default today). */
+  async listInRange(
+    from?: string,
+    to?: string,
+  ): Promise<VerificationRequestView[]> {
+    const { start, end } = utcDateRange(from, to);
     const requests = await this.requestRepo.findInRange(start, end);
     if (requests.length === 0) return [];
 
-    const teamNames = await this.teamRepo.findNamesByIds(
+    const teams = await this.teamRepo.findFullByIds(
       requests.map((r) => r.teamId),
     );
     const slots = await this.slotRepo.findInRange(start, end);
@@ -116,7 +125,7 @@ export class VerificationRequestService {
 
     return requests.map((request) =>
       toVerificationRequestView(request, {
-        teamName: teamNames.get(request.teamId) ?? null,
+        team: teams.get(request.teamId) ?? null,
         slot: slotById.get(request.slotId) ?? null,
       }),
     );
@@ -230,8 +239,8 @@ export class VerificationRequestService {
   private async toView(
     request: VerificationRequest,
   ): Promise<VerificationRequestView> {
-    const teamName = await this.teamRepo.findNameById(request.teamId);
+    const team = await this.teamRepo.findFullById(request.teamId);
     const slot = await this.slotRepo.findById(request.slotId);
-    return toVerificationRequestView(request, { teamName, slot });
+    return toVerificationRequestView(request, { team, slot });
   }
 }
