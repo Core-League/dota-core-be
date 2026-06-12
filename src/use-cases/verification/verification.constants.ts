@@ -8,6 +8,13 @@ export const ESTABLISHED_TEAM_VERIFIED_COUNT = 3;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Cooldown applied to a team when an admin cancels its in-progress (processing)
+ * verification: the team cannot book another verification until this window
+ * elapses.
+ */
+export const VERIFICATION_REBLOCK_MS = DAY_MS;
+
 /** Start-of-UTC-day for a `YYYY-MM-DD` string (throws on a bad value). */
 function startOfUtcDay(date: string): Date {
   const parsed = new Date(`${date}T00:00:00.000Z`);

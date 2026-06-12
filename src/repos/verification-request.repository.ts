@@ -127,6 +127,14 @@ export class RequestRepository implements IRequestRepository {
     await repo.update(id, { status });
   }
 
+  /** Hard-delete a request; its per-player rows cascade off the FK. */
+  async deleteById(id: string, manager?: EntityManager): Promise<void> {
+    const repo = (manager ?? this.dataSource.manager).getRepository(
+      VerificationRequestModel,
+    );
+    await repo.delete(id);
+  }
+
   /** Write each player's resulting MMR onto its request row. */
   async setPlayerResults(
     requestId: string,

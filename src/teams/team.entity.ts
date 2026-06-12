@@ -61,6 +61,11 @@ export class Team {
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;
 
+  // Re-verification cooldown: set when an admin cancels a team's in-progress
+  // verification. While in the future, the team cannot book a new verification.
+  @Column({ nullable: true, type: 'timestamptz' })
+  verificationBlockedUntil: Date | null;
+
   @Column({ nullable: true, type: 'timestamptz' })
   disbandedAt: Date | null;
 
