@@ -1,6 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { And, In, LessThan, MoreThanOrEqual, Repository } from 'typeorm';
+import {
+  And,
+  type EntityManager,
+  In,
+  LessThan,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { toVerificationSlot } from '../db/mappers/verification-slot.mapper';
 import { VerificationSlotModel } from '../db/models/verification-slot.model';
 import type { VerificationSlot } from '../types/entities/verification/slot';
@@ -51,11 +58,21 @@ export class SlotRepository implements ISlotRepository {
     return model ? toVerificationSlot(model) : null;
   }
 
-  async remove(id: string): Promise<void> {
-    await this.repo.delete(id);
+  async remove(id: string, manager?: EntityManager): Promise<void> {
+    const repo = manager
+      ? manager.getRepository(VerificationSlotModel)
+      : this.repo;
+    await repo.delete(id);
   }
 
-  async setStatus(id: string, status: VerificationSlotStatus): Promise<void> {
-    await this.repo.update(id, { status });
+  async setStatus(
+    id: string,
+    status: VerificationSlotStatus,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const repo = manager
+      ? manager.getRepository(VerificationSlotModel)
+      : this.repo;
+    await repo.update(id, { status });
   }
 }

@@ -32,6 +32,7 @@ export interface CaptainedTeam {
   id: string;
   name: string;
   isVerified: boolean;
+  verificationBlockedUntil: Date | null;
 }
 
 /**
@@ -70,7 +71,7 @@ export class TeamRepository implements ITeamRepository {
     captainPlayerId: string,
   ): Promise<CaptainedTeam | null> {
     const rows = await this.dataSource.query<CaptainedTeam[]>(
-      `SELECT "id", "name", "isVerified"
+      `SELECT "id", "name", "isVerified", "verificationBlockedUntil"
        FROM "team"
        WHERE "captainId" = $1 AND "disbandedAt" IS NULL
        LIMIT 1`,
@@ -113,6 +114,19 @@ export class TeamRepository implements ITeamRepository {
       .where('team.id IN (:...ids)', { ids })
       .getRawMany<VerificationTeamRow>();
     return new Map(rows.map((r) => [r.id, toVerificationTeam(r)]));
+  }
+
+  /** Set (or clear, with null) a team's re-verification cooldown (v1-owned write). */
+  async setVerificationBlock(
+    teamId: string,
+    until: Date | null,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const runner = manager ?? this.dataSource.manager;
+    await runner.query(
+      `UPDATE "team" SET "verificationBlockedUntil" = $2 WHERE "id" = $1`,
+      [teamId, until],
+    );
   }
 
   /** Mark a team verified on first successful verification (v1-owned write). */

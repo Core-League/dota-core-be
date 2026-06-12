@@ -19,6 +19,7 @@ import { VerificationSlotStatus } from '../../types/enums/verification/Verificat
 import { VerificationType } from '../../types/enums/verification/VerificationType';
 import {
   ESTABLISHED_TEAM_VERIFIED_COUNT,
+  VERIFICATION_REBLOCK_MS,
   utcDateRange,
 } from './verification.constants';
 
@@ -60,6 +61,14 @@ export class VerificationRequestService {
       throw new ForbiddenException(
         'Only a team captain can request verification',
       );
+    }
+
+    // Re-verification cooldown set when an admin cancelled an in-progress request.
+    if (
+      team.verificationBlockedUntil &&
+      new Date() < team.verificationBlockedUntil
+    ) {
+      throw new ForbiddenException('Повторна верифікація тимчасово заборонена');
     }
 
     const slot = await this.slotRepo.findById(input.slotId);
@@ -199,15 +208,49 @@ export class VerificationRequestService {
     return this.toView(updated ?? request);
   }
 
-  /** Admin cancels a request; the slot is freed for rebooking. */
+  /**
+   * Admin cancels a request. Behaviour depends on its current status:
+   * - pending: not yet picked up, so the request and its slot are hard-deleted.
+   * - processing: the request is cancelled, its slot freed for rebooking, and the
+   *   team put under a re-verification cooldown (blocks new bookings for a window).
+   * - completed: rejected; - cancelled: idempotent no-op.
+   */
   async cancel(id: string): Promise<VerificationRequestView> {
     const request = await this.requestRepo.findById(id);
     if (!request) throw new NotFoundException('Request not found');
     if (request.status === VerificationRequestStatus.Completed) {
       throw new ConflictException('Completed requests cannot be cancelled');
     }
-    await this.requestRepo.setStatus(id, VerificationRequestStatus.Cancelled);
-    await this.slotRepo.setStatus(request.slotId, VerificationSlotStatus.Free);
+    if (request.status === VerificationRequestStatus.Cancelled) {
+      return this.toView(request);
+    }
+
+    if (request.status === VerificationRequestStatus.Pending) {
+      // Capture the view before deletion (the slot row is about to disappear).
+      const view = await this.toView(request);
+      await this.requestRepo.transaction(async (m) => {
+        await this.requestRepo.deleteById(id, m);
+        await this.slotRepo.remove(request.slotId, m);
+      });
+      // TODO: notify the captain + players that the request was cancelled
+      return { ...view, status: VerificationRequestStatus.Cancelled };
+    }
+
+    // Processing: cancel, free the slot, and start the re-verification cooldown.
+    const blockedUntil = new Date(Date.now() + VERIFICATION_REBLOCK_MS);
+    await this.requestRepo.transaction(async (m) => {
+      await this.requestRepo.setStatus(
+        id,
+        VerificationRequestStatus.Cancelled,
+        m,
+      );
+      await this.slotRepo.setStatus(
+        request.slotId,
+        VerificationSlotStatus.Free,
+        m,
+      );
+      await this.teamRepo.setVerificationBlock(request.teamId, blockedUntil, m);
+    });
     // TODO: notify the captain + players that the request was cancelled
     return this.toView({
       ...request,
