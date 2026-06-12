@@ -4,8 +4,8 @@ import {
   Entity,
   Index,
   JoinColumn,
+  ManyToOne,
   OneToMany,
-  OneToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { VerificationRequestStatus } from '../../types/enums/verification/VerificationRequestStatus';
@@ -27,10 +27,14 @@ export class VerificationRequestModel {
   @Column({ type: 'uuid' })
   teamId: string;
 
-  @Column({ type: 'uuid', unique: true })
+  // Not unique: a slot can be booked, cancelled, then re-booked — each booking
+  // is its own request row. The "is this slot free?" check guards double-booking
+  // of a *live* request; at most one non-cancelled request exists per slot.
+  @Index('IDX_verification_request_slotId')
+  @Column({ type: 'uuid' })
   slotId: string;
 
-  @OneToOne(() => VerificationSlotModel, { onDelete: 'CASCADE' })
+  @ManyToOne(() => VerificationSlotModel, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'slotId' })
   slot: VerificationSlotModel;
 

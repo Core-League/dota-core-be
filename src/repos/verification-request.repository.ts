@@ -11,6 +11,7 @@ import {
   In,
   LessThan,
   MoreThanOrEqual,
+  Not,
 } from 'typeorm';
 import { toVerificationRequest } from '../db/mappers/verification-request.mapper';
 import { VerificationRequestPlayerModel } from '../db/models/verification-request-player.model';
@@ -76,10 +77,18 @@ export class RequestRepository implements IRequestRepository {
     return model ? toVerificationRequest(model) : null;
   }
 
+  /**
+   * The live request for a slot. A slot may carry several rows over its lifetime
+   * (book → cancel → re-book), so skip cancelled ones and take the newest.
+   */
   async findBySlotId(slotId: string): Promise<VerificationRequest | null> {
     const model = await this.dataSource
       .getRepository(VerificationRequestModel)
-      .findOne({ where: { slotId }, relations: { players: { player: true } } });
+      .findOne({
+        where: { slotId, status: Not(VerificationRequestStatus.Cancelled) },
+        relations: { players: { player: true } },
+        order: { createdAt: 'DESC' },
+      });
     return model ? toVerificationRequest(model) : null;
   }
 
