@@ -3,6 +3,8 @@ import { AccountModel } from './account.model';
 import { AssetModel } from './asset.model';
 import { CustomCategoryModel } from './custom-category.model';
 import { ForecastConfigModel } from './forecast-config.model';
+import { MmrUpdateRequestModel } from './mmr-update-request.model';
+import { MmrUpdateRequestProofModel } from './mmr-update-request-proof.model';
 import { OperationGroupModel } from './operation-group.model';
 import { OperationModel } from './operation.model';
 import { PlayerModel } from './player.model';
@@ -33,6 +35,8 @@ export const entities: MixedList<string | (new () => unknown)> = [
   ForecastConfigModel,
   AssetModel,
   PlayerModel,
+  MmrUpdateRequestModel,
+  MmrUpdateRequestProofModel,
   VerificationSlotModel,
   VerificationRequestModel,
   VerificationRequestPlayerModel,

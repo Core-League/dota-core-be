@@ -7,6 +7,7 @@ export function toAsset(model: AssetModel): Asset {
   return {
     id: model.id,
     name: model.name,
+    type: model.type,
     storageType: model.storageType,
     path: model.path,
   };

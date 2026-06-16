@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { StorageType } from '../../enums/finance/StorageType';
+import { AssetType } from '../../enums/finance/AssetType';
 
 /**
  * A managed image asset (icon / logo) stored in our DB. Custom operations,
@@ -13,6 +14,7 @@ import { StorageType } from '../../enums/finance/StorageType';
 export const AssetSchema = z.object({
   id: z.string(),
   name: z.string(),
+  type: z.enum(AssetType),
   storageType: z.enum(StorageType),
   path: z.string(),
 });
