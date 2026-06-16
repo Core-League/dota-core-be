@@ -29,6 +29,7 @@ import {
   teamGroupKey,
 } from '../shared/group-keys';
 import { StorageType } from 'src/types/enums/finance/StorageType';
+import { AssetType } from 'src/types/enums/finance/AssetType';
 
 /** Per-run catalogs (loaded once) + caches keyed by distinct dependency. */
 type ClassifyContext = {
@@ -267,6 +268,7 @@ export class ClassificationService {
     const assets = await this.assetService.ensureManyByLocation(
       teams.map((team) => ({
         storageType: StorageType.Local,
+        type: AssetType.Team,
         name: `Team ${team.name} avatar`,
         path: team.avatarRef as string,
       })),

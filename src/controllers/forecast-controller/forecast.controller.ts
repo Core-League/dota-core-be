@@ -13,7 +13,7 @@ import { ForecastConfigDto, ForecastViewDto } from './forecast.dto';
 @Controller('forecast')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class ForecastController {
-  constructor(private readonly forecast: ForecastCalculatorService) {}
+  constructor(private readonly forecast: ForecastCalculatorService) { }
 
   @Get()
   @ApiOperation({ summary: 'Active forecast config + computed result' })

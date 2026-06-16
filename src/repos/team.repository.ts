@@ -80,6 +80,19 @@ export class TeamRepository implements ITeamRepository {
     return rows[0] ?? null;
   }
 
+  /** The active (non-disbanded) team a player is a main-roster member of, if any. */
+  async findTeamByMainPlayer(playerId: string): Promise<TeamRow | null> {
+    const rows = await this.dataSource.query<TeamRow[]>(
+      `SELECT t."id", t."name", t."logoUrl"
+       FROM "team" t
+       JOIN "team_main_players" tmp ON tmp."teamId" = t."id"
+       WHERE tmp."playerId" = $1 AND t."disbandedAt" IS NULL
+       LIMIT 1`,
+      [playerId],
+    );
+    return rows[0] ?? null;
+  }
+
   /** How many of a team's main players are already verified. */
   async countVerifiedMainPlayers(teamId: string): Promise<number> {
     const rows = await this.dataSource.query<{ count: number }[]>(

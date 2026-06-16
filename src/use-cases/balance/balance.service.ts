@@ -17,7 +17,7 @@ export class BalanceService {
     private readonly transactionRepo: TransactionRepository,
     private readonly forecast: ForecastCalculatorService,
     private readonly config: ConfigConnectorService,
-  ) {}
+  ) { }
 
   async getBalance(includeForecast = false): Promise<Balance> {
     const actual = await this.resolveActualBalance();

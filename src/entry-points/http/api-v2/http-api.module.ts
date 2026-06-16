@@ -13,6 +13,7 @@ import { AssetsControllerModule } from '../../../controllers/assets-controller/a
 import { ForecastControllerModule } from '../../../controllers/forecast-controller/forecast-controller.module';
 import { VerificationControllerModule } from '../../../controllers/verification-controller/verification-controller.module';
 import { TagsControllerModule } from '../../../controllers/tags-controller/tags-controller.module';
+import { MmrControllerModule } from '../../../controllers/mmr-controller/mmr-controller.module';
 
 /**
  * Root module for the v2 (layered) HTTP app. Wires the foundation (config + DB
@@ -34,6 +35,7 @@ import { TagsControllerModule } from '../../../controllers/tags-controller/tags-
     ForecastControllerModule,
     VerificationControllerModule,
     TagsControllerModule,
+    MmrControllerModule,
   ],
 })
 export class HttpApiModule {}
