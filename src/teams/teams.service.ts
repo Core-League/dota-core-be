@@ -81,7 +81,12 @@ export class TeamsService {
       mainPlayers: [{ id: captainId } as Player],
       ...(coachId ? { coach: { id: coachId } as Player } : {}),
     });
-    const createdTeamId = await this.teamsRepo.insert(entity);
+    // Use save() (not the query-builder insert) so the captain is written into
+    // the team_main_players junction table — QueryBuilder .insert() persists the
+    // team's own columns only and silently drops ManyToMany relations, which left
+    // every captain missing from their own roster.
+    const saved = await this.teamsRepo.save(entity);
+    const createdTeamId = saved.id;
     await this.syncPlayerTeamLinks(createdTeamId);
 
     await this.grantCaptainRole(captainId);
