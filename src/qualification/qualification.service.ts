@@ -56,7 +56,7 @@ export class QualificationService {
     private readonly dota2: Dota2Service,
     private readonly duelo: DueloService,
     @InjectDataSource() private readonly dataSource: DataSource,
-  ) {}
+  ) { }
 
   async getByTournamentId(
     tournamentId: string,
@@ -175,30 +175,30 @@ export class QualificationService {
     const teamRepo = this.dataSource.getRepository(Team);
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
-          where: { id: requestedTeamId },
-          relations: [
-            'captain',
-            'mainPlayers',
-            'reservedPlayers',
-            'tournaments',
-          ],
-        })
+        where: { id: requestedTeamId },
+        relations: [
+          'captain',
+          'mainPlayers',
+          'reservedPlayers',
+          'tournaments',
+        ],
+      })
       : await teamRepo.findOne({
-          where: { captain: { id: playerId } },
-          relations: [
-            'captain',
-            'mainPlayers',
-            'reservedPlayers',
-            'tournaments',
-          ],
-        });
+        where: { captain: { id: playerId } },
+        relations: [
+          'captain',
+          'mainPlayers',
+          'reservedPlayers',
+          'tournaments',
+        ],
+      });
 
     if (!team) {
       throw useExplicitTeamId
         ? new NotFoundException('Команду не знайдено')
         : new ForbiddenException(
-            'Тільки капітан команди може приєднатися до турніру',
-          );
+          'Тільки капітан команди може приєднатися до турніру',
+        );
     }
 
     const alreadyInThisTournament = (team.tournaments ?? []).some(
@@ -214,9 +214,9 @@ export class QualificationService {
         (t) =>
           t.id !== tournament.id &&
           t.tournamentStartsAt.getTime() <
-            tournament.tournamentEndsAt.getTime() &&
+          tournament.tournamentEndsAt.getTime() &&
           t.tournamentEndsAt.getTime() >
-            tournament.tournamentStartsAt.getTime(),
+          tournament.tournamentStartsAt.getTime(),
       );
       if (hasOverlappingOtherTournament) {
         throw new ConflictException(
@@ -224,6 +224,9 @@ export class QualificationService {
         );
       }
     }
+
+    console.log('TEAM CHECK', JSON.stringify(team, null, 2));
+
     if (!bypassParticipantChecks) {
       if (!team.isVerified) {
         throw new BadRequestException('Команда не верифікована');
@@ -380,13 +383,13 @@ export class QualificationService {
     const teamRepo = this.dataSource.getRepository(Team);
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
-          where: { id: requestedTeamId },
-          relations: ['captain', 'mainPlayers', 'tournaments'],
-        })
+        where: { id: requestedTeamId },
+        relations: ['captain', 'mainPlayers', 'tournaments'],
+      })
       : await teamRepo.findOne({
-          where: { captain: { id: playerId } },
-          relations: ['captain', 'mainPlayers', 'tournaments'],
-        });
+        where: { captain: { id: playerId } },
+        relations: ['captain', 'mainPlayers', 'tournaments'],
+      });
 
     if (!team) {
       throw useExplicitTeamId
