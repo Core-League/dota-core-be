@@ -58,7 +58,7 @@ export class TeamsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authService: AuthService,
     private readonly dota2: Dota2Service,
-  ) { }
+  ) {}
 
   /** Для інших модулів (напр. турніри) — той самий DTO, що й у REST. */
   toTeamResponse(team: Team): TeamResponseDto {
@@ -272,9 +272,9 @@ export class TeamsService {
       ];
       team.reservedPlayers = oldCaptain
         ? [
-          ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
-          oldCaptain,
-        ]
+            ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
+            oldCaptain,
+          ]
         : reservedPlayers.filter((p) => p.id !== newCaptainPlayerId);
     }
 

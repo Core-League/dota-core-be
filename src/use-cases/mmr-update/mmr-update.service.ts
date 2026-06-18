@@ -48,7 +48,7 @@ export class MmrUpdateService {
     private readonly teamRepo: TeamRepository,
     private readonly imageStorage: ImageStorageConnectorService,
     private readonly assetService: AssetService,
-  ) { }
+  ) {}
 
   /** Verified player submits/overwrites their MMR-update request. */
   async submit(

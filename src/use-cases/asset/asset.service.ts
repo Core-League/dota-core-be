@@ -14,7 +14,7 @@ export class AssetService {
   constructor(
     private readonly assetRepo: AssetRepository,
     private readonly config: ConfigConnectorService,
-  ) { }
+  ) {}
 
   async list(): Promise<AssetView[]> {
     const baseUrl = this.baseUrl();

@@ -33,7 +33,7 @@ import type { RequestWithJwtActor } from 'src/auth/guards/own-player-or-admin.gu
 @Controller('mmr-requests')
 @UseGuards(JwtAuthGuard)
 export class MmrUserController {
-  constructor(private readonly mmrService: MmrUpdateService) { }
+  constructor(private readonly mmrService: MmrUpdateService) {}
 
   @Post()
   @ApiOperation({

@@ -14,7 +14,7 @@ export class TagsService {
   constructor(
     private readonly tagRepo: TagRepository,
     private readonly playerRepo: PlayerRepository,
-  ) { }
+  ) {}
 
   async listTags(): Promise<TagView[]> {
     const tags = await this.tagRepo.findAll();

@@ -34,7 +34,7 @@ function floorToHundredsUah(kopecks: number): number {
  */
 @Injectable()
 export class ForecastCalculatorService {
-  constructor(private readonly configRepo: ForecastConfigRepository) { }
+  constructor(private readonly configRepo: ForecastConfigRepository) {}
 
   calculate(config: ForecastConfig): ForecastResult {
     const parsed = ForecastConfigSchema.parse(config);
@@ -71,10 +71,10 @@ export class ForecastCalculatorService {
         };
       },
     ) as [
-        ForecastDivisionResult,
-        ForecastDivisionResult,
-        ForecastDivisionResult,
-      ];
+      ForecastDivisionResult,
+      ForecastDivisionResult,
+      ForecastDivisionResult,
+    ];
 
     const totalPrizePool = divisions.reduce((sum, d) => sum + d.prizePool, 0);
     const projectedProfit =

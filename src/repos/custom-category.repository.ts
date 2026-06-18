@@ -18,7 +18,7 @@ export class CustomCategoryRepository implements ICustomCategoryRepository {
   constructor(
     @InjectRepository(CustomCategoryModel)
     private readonly repo: Repository<CustomCategoryModel>,
-  ) { }
+  ) {}
 
   async findAll(): Promise<CustomCategory[]> {
     const models = await this.repo.find();

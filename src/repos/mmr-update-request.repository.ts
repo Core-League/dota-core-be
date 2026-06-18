@@ -21,7 +21,7 @@ const REQUEST_RELATIONS = { player: true, proofs: { asset: true } } as const;
 /** Persistence for v2-owned MMR-update requests (one row per player). */
 @Injectable()
 export class MmrUpdateRequestRepository {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async findById(id: string): Promise<MmrUpdateRequest | null> {
     const model = await this.dataSource
