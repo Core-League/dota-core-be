@@ -8,7 +8,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In } from 'typeorm';
+import { DataSource, In, IsNull } from 'typeorm';
 import { Dota2Service, OpenDotaMatch } from '../dota2/dota2.service';
 import { DueloService } from '../duelo/duelo.service';
 import { Player } from '../players/player.entity';
@@ -175,7 +175,7 @@ export class QualificationService {
     const teamRepo = this.dataSource.getRepository(Team);
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
-        where: { id: requestedTeamId },
+        where: { id: requestedTeamId, disbandedAt: IsNull() },
         relations: [
           'captain',
           'mainPlayers',
@@ -184,7 +184,7 @@ export class QualificationService {
         ],
       })
       : await teamRepo.findOne({
-        where: { captain: { id: playerId } },
+        where: { captain: { id: playerId }, disbandedAt: IsNull() },
         relations: [
           'captain',
           'mainPlayers',
@@ -383,11 +383,11 @@ export class QualificationService {
     const teamRepo = this.dataSource.getRepository(Team);
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
-        where: { id: requestedTeamId },
+        where: { id: requestedTeamId, disbandedAt: IsNull() },
         relations: ['captain', 'mainPlayers', 'tournaments'],
       })
       : await teamRepo.findOne({
-        where: { captain: { id: playerId } },
+        where: { captain: { id: playerId }, disbandedAt: IsNull() },
         relations: ['captain', 'mainPlayers', 'tournaments'],
       });
 
@@ -499,11 +499,11 @@ export class QualificationService {
 
     if (!isCaptainA && !isCaptainB) {
       const teamA = await this.dataSource.getRepository(Team).findOne({
-        where: { id: qualMatch.teamA.id },
+        where: { id: qualMatch.teamA.id, disbandedAt: IsNull() },
         relations: ['captain'],
       });
       const teamB = await this.dataSource.getRepository(Team).findOne({
-        where: { id: qualMatch.teamB.id },
+        where: { id: qualMatch.teamB.id, disbandedAt: IsNull() },
         relations: ['captain'],
       });
       if (teamA?.captain?.id !== playerId && teamB?.captain?.id !== playerId) {
