@@ -225,8 +225,6 @@ export class QualificationService {
       }
     }
 
-    console.log('TEAM CHECK', JSON.stringify(team, null, 2));
-
     if (!bypassParticipantChecks) {
       if (!team.isVerified) {
         throw new BadRequestException('Команда не верифікована');
