@@ -64,16 +64,18 @@ export class AuthController {
     return this.authService.buildSteamLinkUrl(req.user.playerId);
   }
 
-  @Delete('steam/link')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({
-    summary: 'Unlink Steam account',
-    description: 'Clears the steamId on the current player.',
-  })
-  unlinkSteam(@Req() req: AuthedRequest): Promise<void> {
-    return this.authService.unlinkSteam(req.user.playerId);
-  }
+  /** @deprecated */
+  // TODO: remove
+  // @Delete('steam/link')
+  // @UseGuards(JwtAuthGuard)
+  // @ApiBearerAuth()
+  // @ApiOperation({
+  //   summary: 'Unlink Steam account',
+  //   description: 'Clears the steamId on the current player.',
+  // })
+  // unlinkSteam(@Req() req: AuthedRequest): Promise<void> {
+  //   return this.authService.unlinkSteam(req.user.playerId);
+  // }
 
   @Post('steam/verify')
   @UseGuards(JwtAuthGuard)
