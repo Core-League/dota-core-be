@@ -450,7 +450,9 @@ export class QualificationService {
     tournamentId: string,
     dotaMatchId: string,
     playerId: string,
+    skipMatchValidation: boolean,
   ): Promise<QualificationMatch> {
+    const isAdmin = await this.playerHasAdminRole(playerId);
     const matchData = await this.dota2.getOpenDotaMatch(dotaMatchId);
 
     const radiantTeamId = String(
@@ -483,38 +485,45 @@ export class QualificationService {
       );
     }
 
-    if (
-      qualMatch.qualification.tournament.tournamentStatus !==
-      TournamentStatus.QUALIFICATIONS
-    ) {
-      throw new BadRequestException(
-        'Подача матчів доступна лише під час кваліфікаційного етапу',
-      );
-    }
-
-    const isCaptainA = qualMatch.teamA.captain?.id === playerId;
-    const isCaptainB = qualMatch.teamB.captain?.id === playerId;
-
-    if (!isCaptainA && !isCaptainB) {
-      const teamA = await this.dataSource.getRepository(Team).findOne({
-        where: { id: qualMatch.teamA.id, disbandedAt: IsNull() },
-        relations: ['captain'],
-      });
-      const teamB = await this.dataSource.getRepository(Team).findOne({
-        where: { id: qualMatch.teamB.id, disbandedAt: IsNull() },
-        relations: ['captain'],
-      });
-      if (teamA?.captain?.id !== playerId && teamB?.captain?.id !== playerId) {
-        throw new ForbiddenException(
-          'Тільки капітан однієї з команд може подати матч',
+    // Admins may submit results regardless of qualification status/window and
+    // without being captain of either team. Captains keep the original rules.
+    if (!isAdmin) {
+      if (
+        qualMatch.qualification.tournament.tournamentStatus !==
+        TournamentStatus.QUALIFICATIONS
+      ) {
+        throw new BadRequestException(
+          'Подача матчів доступна лише під час кваліфікаційного етапу',
         );
       }
-    }
 
-    if (new Date() > qualMatch.qualification.endTime) {
-      throw new BadRequestException(
-        'Кваліфікаційний етап завершено — подача матчів заборонена',
-      );
+      const isCaptainA = qualMatch.teamA.captain?.id === playerId;
+      const isCaptainB = qualMatch.teamB.captain?.id === playerId;
+
+      if (!isCaptainA && !isCaptainB) {
+        const teamA = await this.dataSource.getRepository(Team).findOne({
+          where: { id: qualMatch.teamA.id, disbandedAt: IsNull() },
+          relations: ['captain'],
+        });
+        const teamB = await this.dataSource.getRepository(Team).findOne({
+          where: { id: qualMatch.teamB.id, disbandedAt: IsNull() },
+          relations: ['captain'],
+        });
+        if (
+          teamA?.captain?.id !== playerId &&
+          teamB?.captain?.id !== playerId
+        ) {
+          throw new ForbiddenException(
+            'Тільки капітан однієї з команд може подати матч',
+          );
+        }
+      }
+
+      if (new Date() > qualMatch.qualification.endTime) {
+        throw new BadRequestException(
+          'Кваліфікаційний етап завершено — подача матчів заборонена',
+        );
+      }
     }
 
     if (!qualMatch.teamA.tournaments?.some((t) => t.id === tournamentId)) {
@@ -528,7 +537,11 @@ export class QualificationService {
       );
     }
 
-    this.validateOpenDotaMatch(matchData, qualMatch);
+    // Admins may skip OpenDota validation; the winner/points are still derived
+    // from the fetched match. The flag is a no-op for non-admins.
+    if (!(isAdmin && skipMatchValidation)) {
+      this.validateOpenDotaMatch(matchData, qualMatch);
+    }
 
     const teamAIsRadiant =
       radiantTeamId === qualMatch.teamA.dotaTeamId ||

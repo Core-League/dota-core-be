@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  Query,
   Req,
   UploadedFile,
   UseGuards,
@@ -35,6 +36,7 @@ import { ChangeCaptainDto } from './dto/change-captain.dto';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { SearchTeamsDto } from './dto/search-teams.dto';
+import { RemovePlayerQueryDto } from './dto/remove-player-query.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 import { TeamResponseDto } from './dto/team-response.dto';
 
@@ -144,8 +146,15 @@ export class TeamsController {
   removePlayer(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('playerId', new ParseUUIDPipe()) playerId: string,
+    @Query() query: RemovePlayerQueryDto,
+    @Req() req: RequestWithJwtActor,
   ) {
-    return this.teamsService.removePlayerFromTeam(id, playerId);
+    return this.teamsService.removePlayerFromTeam(
+      id,
+      playerId,
+      query.penalty,
+      req.user!.playerId,
+    );
   }
 
   @Post(':id/logo')

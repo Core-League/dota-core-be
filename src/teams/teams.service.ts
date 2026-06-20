@@ -30,6 +30,7 @@ import {
 } from './dto/team-response.dto';
 import { PlayerResponseDto } from '../players/dto/player-response.dto';
 import { Tournament } from '../tournaments/tournaments.entity';
+import { RemovePlayerPenalty } from './dto/remove-player-query.dto';
 
 function computeTeamDivision(
   players: { rating: number }[],
@@ -363,20 +364,43 @@ export class TeamsService {
   async removePlayerFromTeam(
     teamId: string,
     playerId: string,
+    penalty: RemovePlayerPenalty = RemovePlayerPenalty.SUBTRACT,
+    actorPlayerId: string,
   ): Promise<TeamResponseDto> {
+    const actor = await this.dataSource.getRepository(Player).findOne({
+      where: { id: actorPlayerId },
+      relations: ['roles'],
+    });
+    const isAdmin = (actor?.roles ?? []).some((r) => r.isAdminRole);
+
     const team = await this.teamsRepo.findOneWithRoster(teamId);
     if (!team) {
       throw new NotFoundException('Team not found');
     }
 
-    const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
-    for (const t of team.tournaments ?? []) {
-      const record = await pointsRepo.findOne({
-        where: { playerId, tournamentId: t.id },
-      });
-      if (record && record.points > 0) {
-        record.points = Math.floor(record.points * 0.3);
-        await pointsRepo.save(record);
+    const isCaptain = team.captain?.id === actorPlayerId;
+    if (!isAdmin && !isCaptain) {
+      throw new ForbiddenException(
+        'Тільки капітан або адміністратор може видаляти гравців з команди',
+      );
+    }
+
+    if (penalty === RemovePlayerPenalty.NONE && !isAdmin) {
+      throw new ForbiddenException(
+        'Тільки адміністратор може видаляти гравця без втрати поінтів',
+      );
+    }
+
+    if (penalty === RemovePlayerPenalty.SUBTRACT) {
+      const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
+      for (const t of team.tournaments ?? []) {
+        const record = await pointsRepo.findOne({
+          where: { playerId, tournamentId: t.id },
+        });
+        if (record && record.points > 0) {
+          record.points = Math.floor(record.points * 0.3);
+          await pointsRepo.save(record);
+        }
       }
     }
 
@@ -388,6 +412,13 @@ export class TeamsService {
     ].filter(Boolean) as Player[];
     const removedDiscordId =
       roster.find((p) => p.id === playerId)?.discordId ?? null;
+
+    // Snapshot the verified-team integrations before mutating the roster, so we
+    // can tear them down if removal drops the team below 5 main players.
+    const wasVerified = team.isVerified;
+    const verifiedRoleId = team.discordRoleId;
+    const verifiedChannelId = team.discordChannelId;
+    const verifiedCaptainSteamId = team.captain?.steamId ?? null;
 
     const wasCaptain = team.captain?.id === playerId;
     const oldCaptainSteamId = wasCaptain
@@ -417,6 +448,16 @@ export class TeamsService {
       team.captain = nextCaptain;
     }
 
+    // A verified team must keep at least 5 main players. If removal drops it
+    // below that, strip verification and tear down its verified integrations.
+    const shouldUnverify = wasVerified && team.mainPlayers.length < 5;
+    if (shouldUnverify) {
+      team.isVerified = false;
+      team.verifiedAt = null;
+      team.discordRoleId = null;
+      team.discordChannelId = null;
+    }
+
     const saved = await this.teamsRepo.save(team);
     await this.syncPlayerTeamLinks(teamId);
 
@@ -442,6 +483,22 @@ export class TeamsService {
           void this.dota2.addLeagueAdmin(saved.captain.steamId);
         }
       }
+    }
+
+    // Full teardown of the verified-team integrations (inverse of onTeamVerified).
+    if (shouldUnverify) {
+      if (verifiedChannelId) {
+        await this.discord.deleteChannel(verifiedChannelId);
+      }
+      if (verifiedRoleId) {
+        await this.discord.deleteRole(verifiedRoleId);
+      }
+      if (verifiedCaptainSteamId) {
+        void this.dota2.revokeLeagueAdmin(verifiedCaptainSteamId);
+      }
+      this.logger.log(
+        `Team ${teamId} dropped below 5 main players — verification stripped`,
+      );
     }
 
     const reloaded = await this.teamsRepo.findOneById(teamId);
