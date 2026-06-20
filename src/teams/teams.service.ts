@@ -58,7 +58,7 @@ export class TeamsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authService: AuthService,
     private readonly dota2: Dota2Service,
-  ) { }
+  ) {}
 
   /** Для інших модулів (напр. турніри) — той самий DTO, що й у REST. */
   toTeamResponse(team: Team): TeamResponseDto {
@@ -130,6 +130,10 @@ export class TeamsService {
 
     if (!wasVerified && saved.isVerified) {
       void this.onTeamVerified(saved);
+    } else if (wasVerified && !saved.isVerified && saved.captain?.steamId) {
+      // Inverse of onTeamVerified for a plain PATCH that flips verified→unverified
+      // (parity with AdminService.unverifyTeam): revoke the captain's league admin.
+      void this.dota2.revokeLeagueAdmin(saved.captain.steamId);
     }
 
     const reloaded = await this.teamsRepo.findOneById(id);
@@ -189,6 +193,8 @@ export class TeamsService {
     if (team.disbandedAt) throw new NotFoundException('Команду вже розпущено');
     const captainId = team.captain?.id;
     const captainDiscordId = team.captain?.discordId ?? null;
+    const captainSteamId = team.captain?.steamId ?? null;
+    const wasVerified = team.isVerified;
     const { discordRoleId, discordChannelId } = team;
 
     await this.dataSource.transaction(async (manager) => {
@@ -217,6 +223,12 @@ export class TeamsService {
     }
     if (captainDiscordId) {
       await this.discord.removeCaptainRole(captainDiscordId);
+    }
+
+    // A verified team's captain holds Dota2 league admin — revoke it on disband.
+    // Fire-and-forget: a Dota2 failure must not block the disband.
+    if (wasVerified && captainSteamId) {
+      void this.dota2.revokeLeagueAdmin(captainSteamId);
     }
   }
 
@@ -272,9 +284,9 @@ export class TeamsService {
       ];
       team.reservedPlayers = oldCaptain
         ? [
-          ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
-          oldCaptain,
-        ]
+            ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
+            oldCaptain,
+          ]
         : reservedPlayers.filter((p) => p.id !== newCaptainPlayerId);
     }
 
@@ -540,29 +552,18 @@ export class TeamsService {
     });
   }
 
-  async reassignCaptainIfPlayerIsCaptain(playerId: string): Promise<void> {
+  /**
+   * Before a player is hard-deleted, hand off any active team they captain
+   * through the same promote-or-disband path used when a captain leaves
+   * (`removePlayerFromTeam`): the next main player is promoted — revoking the
+   * old captain's Dota2 league admin and adding the new captain's when the team
+   * is verified — or the team is disbanded if no one can be promoted. Keeps the
+   * single source of truth for captain hand-off in `removePlayerFromTeam`.
+   */
+  async reassignCaptaincyBeforeDeletion(playerId: string): Promise<void> {
     const teams = await this.teamsRepo.findByCaptainId(playerId);
-
     for (const team of teams) {
-      team.mainPlayers = team.mainPlayers || [];
-      const nextCaptain = team.mainPlayers.find((p) => p.id !== playerId);
-      if (!nextCaptain) {
-        throw new BadRequestException(
-          `Неможливо видалити гравця ${playerId}: у команди ${team.id} немає інших основних гравців для підвищення`,
-        );
-      }
-      const oldCaptainSteamId = team.captain?.steamId ?? null;
-      team.captain = nextCaptain;
-      await this.teamsRepo.save(team);
-      await this.syncPlayerTeamLinks(team.id);
-      if (team.isVerified) {
-        if (oldCaptainSteamId) {
-          void this.dota2.revokeLeagueAdmin(oldCaptainSteamId);
-        }
-        if (nextCaptain.steamId && nextCaptain.verifiedAt) {
-          void this.dota2.addLeagueAdmin(nextCaptain.steamId);
-        }
-      }
+      await this.removePlayerFromTeam(team.id, playerId);
     }
   }
 

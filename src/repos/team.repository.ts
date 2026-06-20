@@ -142,6 +142,29 @@ export class TeamRepository implements ITeamRepository {
     );
   }
 
+  /**
+   * Captain's Dota2-league-admin eligibility inputs for a team. Read *after* the
+   * verification transaction commits, so a FIRST verification's freshly-stamped
+   * `team.isVerified` / captain `verifiedAt` are observed.
+   */
+  async findCaptainLeagueState(teamId: string): Promise<{
+    isVerified: boolean;
+    steamId: string | null;
+    verifiedAt: Date | null;
+  } | null> {
+    const rows = await this.dataSource.query<
+      { isVerified: boolean; steamId: string | null; verifiedAt: Date | null }[]
+    >(
+      `SELECT t."isVerified", c."steamId", c."verifiedAt"
+       FROM "team" t
+       JOIN "player" c ON c."id" = t."captainId"
+       WHERE t."id" = $1
+       LIMIT 1`,
+      [teamId],
+    );
+    return rows[0] ?? null;
+  }
+
   /** Mark a team verified on first successful verification (v1-owned write). */
   async markVerified(teamId: string, manager?: EntityManager): Promise<void> {
     const runner = manager ?? this.dataSource.manager;

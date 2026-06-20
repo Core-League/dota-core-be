@@ -175,23 +175,23 @@ export class QualificationService {
     const teamRepo = this.dataSource.getRepository(Team);
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
-        where: { id: requestedTeamId, disbandedAt: IsNull() },
-        relations: [
-          'captain',
-          'mainPlayers',
-          'reservedPlayers',
-          'tournaments',
-        ],
-      })
+          where: { id: requestedTeamId, disbandedAt: IsNull() },
+          relations: [
+            'captain',
+            'mainPlayers',
+            'reservedPlayers',
+            'tournaments',
+          ],
+        })
       : await teamRepo.findOne({
-        where: { captain: { id: playerId }, disbandedAt: IsNull() },
-        relations: [
-          'captain',
-          'mainPlayers',
-          'reservedPlayers',
-          'tournaments',
-        ],
-      });
+          where: { captain: { id: playerId }, disbandedAt: IsNull() },
+          relations: [
+            'captain',
+            'mainPlayers',
+            'reservedPlayers',
+            'tournaments',
+          ],
+        });
 
     if (!team) {
       throw useExplicitTeamId
@@ -380,13 +380,13 @@ export class QualificationService {
     const teamRepo = this.dataSource.getRepository(Team);
     const team = useExplicitTeamId
       ? await teamRepo.findOne({
-        where: { id: requestedTeamId, disbandedAt: IsNull() },
-        relations: ['captain', 'mainPlayers', 'tournaments'],
-      })
+          where: { id: requestedTeamId, disbandedAt: IsNull() },
+          relations: ['captain', 'mainPlayers', 'tournaments'],
+        })
       : await teamRepo.findOne({
-        where: { captain: { id: playerId }, disbandedAt: IsNull() },
-        relations: ['captain', 'mainPlayers', 'tournaments'],
-      });
+          where: { captain: { id: playerId }, disbandedAt: IsNull() },
+          relations: ['captain', 'mainPlayers', 'tournaments'],
+        });
 
     if (!team) {
       throw useExplicitTeamId

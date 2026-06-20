@@ -19,7 +19,7 @@ export type RequestWithJwtActor = Request & {
  */
 @Injectable()
 export class OwnPlayerOrAdminGuard implements CanActivate {
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) { }
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<RequestWithJwtActor>();

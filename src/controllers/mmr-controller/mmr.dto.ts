@@ -12,7 +12,7 @@ const CreateMmrRequestSchema = z.object({
   newMmr: z.coerce.number().int().min(0).max(20000),
 });
 
-export class CreateMmrRequestDto extends createZodDto(CreateMmrRequestSchema) { }
+export class CreateMmrRequestDto extends createZodDto(CreateMmrRequestSchema) {}
 
 /**
  * Swagger-only description of the multipart/form-data body: the `newMmr` text
@@ -35,4 +35,4 @@ export class CreateMmrRequestFormDto {
 /** Wire shape of an MMR-update request (with proof image URLs). */
 export class MmrUpdateRequestViewDto extends createZodDto(
   MmrUpdateRequestViewSchema,
-) { }
+) {}

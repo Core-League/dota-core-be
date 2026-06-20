@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { toVerificationRequestView } from '../../db/mappers/verification-request.mapper';
+import { Dota2Service } from '../../dota2/dota2.service';
 import { PlayerRepository } from '../../repos/player.repository';
 import { TeamRepository } from '../../repos/team.repository';
 import { RequestRepository } from '../../repos/verification-request.repository';
@@ -45,6 +46,7 @@ export class VerificationRequestService {
     private readonly slotRepo: SlotRepository,
     private readonly teamRepo: TeamRepository,
     private readonly playerRepo: PlayerRepository,
+    private readonly dota2: Dota2Service,
   ) {}
 
   async createRequest(
@@ -203,6 +205,19 @@ export class VerificationRequestService {
       );
     });
 
+    // A FIRST verification just marked the team verified and may have stamped the
+    // captain's `verifiedAt` in the same transaction — read the captain's state
+    // post-commit and add them to the Dota2 league admin list when eligible.
+    // Fire-and-forget: a Dota2 failure must not fail the completion response.
+    if (markVerified) {
+      const captain = await this.teamRepo.findCaptainLeagueState(
+        request.teamId,
+      );
+      if (captain?.isVerified && captain.steamId && captain.verifiedAt) {
+        void this.dota2.addLeagueAdmin(captain.steamId);
+      }
+    }
+
     // TODO: notify the captain + players that verification completed
     const updated = await this.requestRepo.findById(id);
     return this.toView(updated ?? request);
@@ -237,6 +252,10 @@ export class VerificationRequestService {
     }
 
     // Processing: cancel, free the slot, and start the re-verification cooldown.
+    // No Dota2 league-admin revoke is owed here: cancelling an in-progress request
+    // does not un-verify an already-verified team (it never touches team.isVerified),
+    // so the captain's admin status is unchanged. Revokes fire only on a real
+    // verified→unverified transition (unverifyTeam / TeamsService.update / disband).
     const blockedUntil = new Date(Date.now() + VERIFICATION_REBLOCK_MS);
     await this.requestRepo.transaction(async (m) => {
       await this.requestRepo.setStatus(

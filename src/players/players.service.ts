@@ -8,10 +8,14 @@ import { toPlayerRankDto } from './dto/player-rank.dto';
 import { PlayerResponseDto } from './dto/player-response.dto';
 import { getRoleColorByName } from '../user-roles/role.constants';
 import { PlayersRepository } from './players.repository';
+import { TeamsService } from '../teams/teams.service';
 
 @Injectable()
 export class PlayersService {
-  constructor(private readonly playersRepo: PlayersRepository) {}
+  constructor(
+    private readonly playersRepo: PlayersRepository,
+    private readonly teamsService: TeamsService,
+  ) {}
 
   private toResponse(player: Player): PlayerResponseDto {
     return {
@@ -94,6 +98,10 @@ export class PlayersService {
     if (!player) {
       throw new NotFoundException('Гравця не знайдено');
     }
+    // If this player captains any active team, hand off captaincy (promote the
+    // next main player, or disband) and revoke their Dota2 league admin before
+    // deleting — otherwise the team is left with a deleted captain.
+    await this.teamsService.reassignCaptaincyBeforeDeletion(id);
     await this.playersRepo.remove(player);
   }
 }

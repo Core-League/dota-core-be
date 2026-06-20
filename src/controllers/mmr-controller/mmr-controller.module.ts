@@ -9,4 +9,4 @@ import { MmrUserController } from './mmr-user.controller';
   // admin `:id` route (avoids `/mmr-requests/me` matching `:id`).
   controllers: [MmrUserController, MmrAdminController],
 })
-export class MmrControllerModule { }
+export class MmrControllerModule {}

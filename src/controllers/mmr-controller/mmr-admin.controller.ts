@@ -25,7 +25,7 @@ import { MmrUpdateRequestViewDto } from './mmr.dto';
 @Controller('mmr-requests')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class MmrAdminController {
-  constructor(private readonly mmrService: MmrUpdateService) { }
+  constructor(private readonly mmrService: MmrUpdateService) {}
 
   @Get()
   @ApiOperation({

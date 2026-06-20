@@ -15,7 +15,7 @@ import { AssetViewDto, CreateAssetDto } from './assets.dto';
 @Controller('assets')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class AssetsController {
-  constructor(private readonly assetService: AssetService) { }
+  constructor(private readonly assetService: AssetService) {}
 
   // TODO: pass asset type
   @Get()
