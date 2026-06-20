@@ -378,8 +378,9 @@ export class TeamsService {
       throw new NotFoundException('Team not found');
     }
 
+    const isSelf = actorPlayerId === playerId;
     const isCaptain = team.captain?.id === actorPlayerId;
-    if (!isAdmin && !isCaptain) {
+    if (!isAdmin && !isCaptain && !isSelf) {
       throw new ForbiddenException(
         'Тільки капітан або адміністратор може видаляти гравців з команди',
       );
