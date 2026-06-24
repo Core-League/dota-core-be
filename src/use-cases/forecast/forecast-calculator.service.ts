@@ -25,7 +25,7 @@ function floorToHundredsUah(kopecks: number): number {
  * `fees.top1_4`, teams 5–8 pay `fees.top5_8`, teams 9+ pay `fees.top8plus` —
  * so `collected[d] = PLAYERS_PER_TEAM · Σ bracketTeams · bracketFee`. The
  * global pool `totalCollected · prizePoolPercent%` is split per division
- * pro-rata to `collected`, then `prizePool[d] =
+ * pro-rata to `projectContribution`, then `prizePool[d] =
  * floorToHundredsUah(projectContribution[d] + share[d])`.
  * `projectedProfit = totalCollected − totalPrizePool`.
  *
@@ -58,11 +58,19 @@ export class ForecastCalculatorService {
       (totalCollected * parsed.prizePoolPercent) / 100,
     );
 
+    const totalProjectContribution = parsed.divisions.reduce(
+      (sum, d) => sum + d.projectContribution,
+      0,
+    );
+
     const divisions = parsed.divisions.map(
       (division, i): ForecastDivisionResult => {
         const share =
-          totalCollected > 0
-            ? Math.floor((globalPrizePool * collected[i]) / totalCollected)
+          totalProjectContribution > 0
+            ? Math.floor(
+                (globalPrizePool * division.projectContribution) /
+                  totalProjectContribution,
+              )
             : 0;
 
         return {
@@ -77,12 +85,8 @@ export class ForecastCalculatorService {
     ];
 
     const totalPrizePool = divisions.reduce((sum, d) => sum + d.prizePool, 0);
-    const projectedProfit =
-      totalCollected * (1 - parsed.prizePoolPercent / 100);
-    const projectedExpenses = parsed.divisions.reduce(
-      (division, c) => division + c.projectContribution,
-      0,
-    );
+    const projectedProfit = totalCollected - totalPrizePool;
+    const projectedExpenses = totalPrizePool;
 
     return {
       divisions,

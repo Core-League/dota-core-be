@@ -41,14 +41,15 @@ describe('ForecastCalculatorService.calculate', () => {
     expect(result.totalCollected).toBe(1_164_750);
   });
 
-  it('splits a floored 47 % global pool pro-rata to collections', () => {
+  it('splits a floored 47 % global pool pro-rata to project contributions', () => {
     // pool = floor(1 164 750 · 0.47) = floor(547 432.5) = 547 432
-    // shares = floor(pool · collected[i] / total) = 288 520 / 194 286 / 64 624
-    // (sum 547 430 — flooring may strand kopecks, but never over-allocates)
+    // totalProjectContribution = 123 456 + 78 901 + 250 000 = 452 357
+    // shares = floor(pool · projectContribution[i] / totalProjectContribution)
+    //        = 149 403 / 95 484 / 302 544  (sum 547 431 — flooring may strand kopecks)
     // prizePool[i] = floorToHundredsUah(contribution[i] + share[i]):
-    expect(result.divisions[0].prizePool).toBe(410_000); // 123 456 + 288 520 = 411 976
-    expect(result.divisions[1].prizePool).toBe(270_000); //  78 901 + 194 286 = 273 187
-    expect(result.divisions[2].prizePool).toBe(310_000); // 250 000 +  64 624 = 314 624
+    expect(result.divisions[0].prizePool).toBe(270_000); // 123 456 + 149 403 = 272 859
+    expect(result.divisions[1].prizePool).toBe(170_000); //  78 901 +  95 484 = 174 385
+    expect(result.divisions[2].prizePool).toBe(550_000); // 250 000 + 302 544 = 552 544
   });
 
   it('totals prize pools and mirrors them as projected expenses', () => {
