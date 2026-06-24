@@ -621,7 +621,7 @@ export class TeamsService {
   async reassignCaptaincyBeforeDeletion(playerId: string): Promise<void> {
     const teams = await this.teamsRepo.findByCaptainId(playerId);
     for (const team of teams) {
-      await this.removePlayerFromTeam(team.id, playerId);
+      await this.removePlayerFromTeam(team.id, playerId, RemovePlayerPenalty.SUBTRACT, playerId);
     }
   }
 
