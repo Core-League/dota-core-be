@@ -181,6 +181,7 @@ export class TournamentsController {
       tournamentId,
       body.dotaMatchId,
       req.user!.playerId,
+      body.skipMatchValidation ?? true,
     );
   }
 

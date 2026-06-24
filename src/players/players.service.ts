@@ -77,6 +77,15 @@ export class PlayersService {
         );
       }
     }
+    // Players may not unlink their own Steam account — only admins can clear steamId
+    if (
+      Object.prototype.hasOwnProperty.call(payload, 'steamId') &&
+      !options?.actorHasAdminRole &&
+      player.steamId != null &&
+      (payload.steamId == null || payload.steamId === '')
+    ) {
+      throw new ForbiddenException('Players cannot unlink their Steam account');
+    }
     // teamId is managed exclusively by TeamsService.syncPlayerTeamLinks — never accept it from outside
     const safePayload = { ...(payload as Record<string, unknown>) };
     delete safePayload['teamId'];
