@@ -450,7 +450,6 @@ export class QualificationService {
     tournamentId: string,
     dotaMatchId: string,
     playerId: string,
-    skipMatchValidation: boolean,
   ): Promise<QualificationMatch> {
     const isAdmin = await this.playerHasAdminRole(playerId);
     const matchData = await this.dota2.getOpenDotaMatch(dotaMatchId);
@@ -537,11 +536,7 @@ export class QualificationService {
       );
     }
 
-    // Admins may skip OpenDota validation; the winner/points are still derived
-    // from the fetched match. The flag is a no-op for non-admins.
-    if (!(isAdmin && skipMatchValidation)) {
-      this.validateOpenDotaMatch(matchData, qualMatch);
-    }
+    this.validateOpenDotaMatch(matchData, qualMatch);
 
     const teamAIsRadiant =
       radiantTeamId === qualMatch.teamA.dotaTeamId ||
@@ -591,19 +586,13 @@ export class QualificationService {
     tournamentId: string,
     amount: number,
   ): Promise<void> {
-    const repo = manager.getRepository(PlayerTournamentPoints);
     for (const player of players) {
-      const existing = await repo.findOne({
-        where: { playerId: player.id, tournamentId },
-      });
-      if (existing) {
-        existing.points += amount;
-        await repo.save(existing);
-      } else {
-        await repo.save(
-          repo.create({ playerId: player.id, tournamentId, points: amount }),
-        );
-      }
+      await manager.query(
+        `INSERT INTO player_tournament_points ("playerId", "tournamentId", points)
+         VALUES ($1, $2, $3)
+         ON CONFLICT ("playerId", "tournamentId") DO UPDATE SET points = player_tournament_points.points + $3`,
+        [player.id, tournamentId, amount],
+      );
     }
   }
 
