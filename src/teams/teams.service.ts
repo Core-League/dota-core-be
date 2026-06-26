@@ -59,7 +59,7 @@ export class TeamsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authService: AuthService,
     private readonly dota2: Dota2Service,
-  ) {}
+  ) { }
 
   /** Для інших модулів (напр. турніри) — той самий DTO, що й у REST. */
   toTeamResponse(team: Team): TeamResponseDto {
@@ -199,7 +199,6 @@ export class TeamsService {
     const { discordRoleId, discordChannelId } = team;
 
     await this.dataSource.transaction(async (manager) => {
-      await this.resetPlayersTeamIdColumn(id, manager);
       await manager.query(`DELETE FROM "tournament_team" WHERE "teamId" = $1`, [
         id,
       ]);
@@ -209,6 +208,7 @@ export class TeamsService {
       );
       team.disbandedAt = new Date();
       await manager.save(team);
+      await this.resetPlayersTeamIdColumn(id, manager);
     });
 
     if (captainId) {
@@ -285,9 +285,9 @@ export class TeamsService {
       ];
       team.reservedPlayers = oldCaptain
         ? [
-            ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
-            oldCaptain,
-          ]
+          ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
+          oldCaptain,
+        ]
         : reservedPlayers.filter((p) => p.id !== newCaptainPlayerId);
     }
 
@@ -621,7 +621,12 @@ export class TeamsService {
   async reassignCaptaincyBeforeDeletion(playerId: string): Promise<void> {
     const teams = await this.teamsRepo.findByCaptainId(playerId);
     for (const team of teams) {
-      await this.removePlayerFromTeam(team.id, playerId, RemovePlayerPenalty.SUBTRACT, playerId);
+      await this.removePlayerFromTeam(
+        team.id,
+        playerId,
+        RemovePlayerPenalty.SUBTRACT,
+        playerId,
+      );
     }
   }
 
