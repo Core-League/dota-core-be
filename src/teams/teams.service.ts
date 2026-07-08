@@ -20,7 +20,7 @@ import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role, getRoleColorByName } from '../user-roles/role.constants';
 import { toPlayerRankDto } from '../players/dto/player-rank.dto';
-import { TournamentDivision } from '../tournaments/tournaments.model';
+import { computeTeamDivision } from '../tournaments/tournament-division.util';
 import { DiscordBotService } from '../discord/discord-bot.service';
 import { AuthService } from '../auth/auth.service';
 import { Dota2Service } from '../dota2/dota2.service';
@@ -31,20 +31,6 @@ import {
 import { PlayerResponseDto } from '../players/dto/player-response.dto';
 import { Tournament } from '../tournaments/tournaments.entity';
 import { RemovePlayerPenalty } from './dto/remove-player-query.dto';
-
-function computeTeamDivision(
-  players: { rating: number }[],
-): TournamentDivision | null {
-  if (!players.length) return null;
-  const ratings = players.map((p) => p.rating);
-  const maxRating = Math.max(...ratings);
-  const avgRating = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
-  if (avgRating <= 2500 && maxRating <= 3500)
-    return TournamentDivision.DIVISION_I;
-  if (avgRating <= 4500 && maxRating <= 5500)
-    return TournamentDivision.DIVISION_II;
-  return TournamentDivision.DIVISION_III;
-}
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -59,7 +45,7 @@ export class TeamsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authService: AuthService,
     private readonly dota2: Dota2Service,
-  ) { }
+  ) {}
 
   /** Для інших модулів (напр. турніри) — той самий DTO, що й у REST. */
   toTeamResponse(team: Team): TeamResponseDto {
@@ -285,9 +271,9 @@ export class TeamsService {
       ];
       team.reservedPlayers = oldCaptain
         ? [
-          ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
-          oldCaptain,
-        ]
+            ...reservedPlayers.filter((p) => p.id !== newCaptainPlayerId),
+            oldCaptain,
+          ]
         : reservedPlayers.filter((p) => p.id !== newCaptainPlayerId);
     }
 

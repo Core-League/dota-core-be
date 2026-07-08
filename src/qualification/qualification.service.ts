@@ -15,10 +15,8 @@ import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
-import {
-  TournamentDivision,
-  TournamentStatus,
-} from '../tournaments/tournaments.model';
+import { TournamentStatus } from '../tournaments/tournaments.model';
+import { computeTeamDivision } from '../tournaments/tournament-division.util';
 import { QualificationMatch } from './qualification-match.entity';
 import { QualificationMatchRepository } from './qualification-match.repository';
 import { Qualification } from './qualification.entity';
@@ -31,19 +29,6 @@ const MAX_RESERVED_PLAYERS = 3;
 
 function steamId64ToAccountId(steamId64: string): number {
   return Number(BigInt(steamId64) - STEAM_ID_OFFSET);
-}
-
-function computeDivision(mainPlayers: Player[]): TournamentDivision | null {
-  if (!mainPlayers.length) return null;
-  const ratings = mainPlayers.map((p) => p.rating);
-  const maxRating = Math.max(...ratings);
-  const avgRating = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
-  if (avgRating <= 2500 && maxRating <= 3500)
-    return TournamentDivision.DIVISION_I;
-  if (avgRating <= 4500 && maxRating <= 5500)
-    return TournamentDivision.DIVISION_II;
-  if (avgRating <= 7000) return TournamentDivision.DIVISION_III;
-  return null;
 }
 
 @Injectable()
@@ -243,7 +228,7 @@ export class QualificationService {
         );
       }
 
-      const teamDivision = computeDivision(main);
+      const teamDivision = computeTeamDivision(main);
       if (!teamDivision) {
         throw new BadRequestException(
           'Рейтинг команди виходить за межі дозволених дивізіонів',
@@ -598,15 +583,30 @@ export class QualificationService {
 
   private validateSubstitute(mainPlayers: Player[], sub: Player): void {
     const ratings = mainPlayers.map((p) => p.rating).sort((a, b) => a - b);
-    const lowestIdx = 0;
-    const modifiedRatings = [...ratings];
-    modifiedRatings[lowestIdx] = sub.rating;
+    if (ratings.length === 0) return;
 
-    const mockPlayers = modifiedRatings.map((r) => ({ rating: r }) as Player);
-    const newDivision = computeDivision(mockPlayers);
-    const originalDivision = computeDivision(mainPlayers);
+    const originalDivision = computeTeamDivision(mainPlayers);
 
-    if (newDivision !== originalDivision) {
+    // A sub can come in for ANY main player. Replacing the lowest-rated player
+    // maximises the team's post-substitution average; replacing the highest-rated
+    // one minimises it; every other position lands between those two. Division is
+    // a monotonic threshold on the average, so if BOTH extremes stay in the
+    // original division the substitution is safe regardless of whom it replaces.
+    const divisionWithReplacementAt = (index: number) => {
+      const modified = [...ratings];
+      modified[index] = sub.rating;
+      return computeTeamDivision(modified.map((rating) => ({ rating })));
+    };
+
+    const divisionReplacingLowest = divisionWithReplacementAt(0);
+    const divisionReplacingHighest = divisionWithReplacementAt(
+      ratings.length - 1,
+    );
+
+    if (
+      divisionReplacingLowest !== originalDivision ||
+      divisionReplacingHighest !== originalDivision
+    ) {
       throw new BadRequestException(
         `Запасний гравець ${sub.id} змінює дивізіон команди — заміна не дозволена`,
       );

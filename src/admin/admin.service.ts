@@ -16,7 +16,7 @@ import {
   RoleName,
   ROLE_NAMES,
 } from '../user-roles/role.constants';
-import { TournamentDivision } from '../tournaments/tournaments.model';
+import { computeTeamDivision } from '../tournaments/tournament-division.util';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { QualificationMatch } from '../qualification/qualification-match.entity';
 import { PlayoffMatch } from '../playoff/playoff-match.entity';
@@ -28,17 +28,6 @@ import {
   AdminPlayerRoleItemDto,
   AdminSetPlayerRolesDto,
 } from './dto/admin-set-player-roles.dto';
-
-function computeTeamDivision(
-  players: { rating: number }[],
-): TournamentDivision | null {
-  if (!players.length) return null;
-  const maxRating = Math.max(...players.map((p) => p.rating));
-  if (maxRating <= 3500) return TournamentDivision.DIVISION_I;
-  if (maxRating <= 5500) return TournamentDivision.DIVISION_II;
-  if (maxRating <= 7000) return TournamentDivision.DIVISION_III;
-  return null;
-}
 
 /** Одна «базова» роль: Гість / Гравець / Медіа. Капітан — окремий рядок, не чіпаємо тут. */
 const PRIMARY_TIER_NAMES = new Set<RoleName>([
