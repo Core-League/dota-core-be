@@ -31,6 +31,9 @@ import { PlayoffLeagueFixture } from './playoff-league-fixture.entity';
 import { Playoff } from './playoff.entity';
 import { PlayoffSeries, PlayoffFinalType } from './playoff-series.entity';
 
+/** Auto-started playoffs take the top N eligible teams by qualification standings. */
+const PLAYOFF_TEAM_LIMIT = 8;
+
 @Injectable()
 export class PlayoffService {
   private readonly logger = new Logger(PlayoffService.name);
@@ -192,10 +195,16 @@ export class PlayoffService {
       return;
     }
 
-    this.logger.log(
-      `Auto-starting playoff for tournament ${tournamentId} with ${eligibleTeamIds.length} eligible teams`,
+    const playoffTeamIds = await this.selectTopTeamsByStandings(
+      tournamentId,
+      eligibleTeamIds,
+      PLAYOFF_TEAM_LIMIT,
     );
-    await this.startPlayoff(tournamentId, eligibleTeamIds);
+    this.logger.log(
+      `Auto-starting playoff for tournament ${tournamentId} with ${playoffTeamIds.length} ` +
+        `of ${eligibleTeamIds.length} eligible teams (top ${PLAYOFF_TEAM_LIMIT})`,
+    );
+    await this.startPlayoff(tournamentId, playoffTeamIds);
     this.logger.log(`Auto-start succeeded for tournament ${tournamentId}`);
   }
 
@@ -1046,6 +1055,46 @@ export class PlayoffService {
       }
     }
     return out;
+  }
+
+  /**
+   * Picks the top `limit` teams by qualification standings for the playoff.
+   * Ranked by qualification points (desc); ties broken by a deterministic key
+   * (team id) so the cut is stable. Returns all teams when `limit` or fewer are
+   * eligible. Used by auto-start; manual admin start uses the explicit team list.
+   */
+  private async selectTopTeamsByStandings(
+    tournamentId: string,
+    teamIds: string[],
+    limit: number,
+  ): Promise<string[]> {
+    const uniq = [...new Set(teamIds)];
+    if (uniq.length <= limit) return uniq;
+
+    const teamRepo = this.dataSource.getRepository(Team);
+    const pointsRepo = this.dataSource.getRepository(PlayerTournamentPoints);
+    const teams = await teamRepo.find({
+      where: { id: In(uniq) },
+      relations: ['captain'],
+    });
+
+    const withPoints = await Promise.all(
+      teams.map(async (team) => {
+        let points = 0;
+        if (team.captain) {
+          const row = await pointsRepo.findOne({
+            where: { playerId: team.captain.id, tournamentId },
+          });
+          points = row?.points ?? 0;
+        }
+        return { teamId: team.id, points };
+      }),
+    );
+
+    withPoints.sort(
+      (a, b) => b.points - a.points || a.teamId.localeCompare(b.teamId),
+    );
+    return withPoints.slice(0, limit).map((t) => t.teamId);
   }
 
   private async computeSeeds(
