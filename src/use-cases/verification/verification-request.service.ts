@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { DiscordConnectorService } from '../../connectors/discord/discord-connector.service';
 import { toVerificationRequestView } from '../../db/mappers/verification-request.mapper';
 import { Dota2Service } from '../../dota2/dota2.service';
 import { PlayerRepository } from '../../repos/player.repository';
@@ -21,6 +22,7 @@ import { VerificationType } from '../../types/enums/verification/VerificationTyp
 import {
   ESTABLISHED_TEAM_VERIFIED_COUNT,
   VERIFICATION_REBLOCK_MS,
+  VERIFICATION_VOICE_ROLE_ID,
   utcDateRange,
 } from './verification.constants';
 
@@ -47,6 +49,7 @@ export class VerificationRequestService {
     private readonly teamRepo: TeamRepository,
     private readonly playerRepo: PlayerRepository,
     private readonly dota2: Dota2Service,
+    private readonly discord: DiscordConnectorService,
   ) {}
 
   async createRequest(
@@ -152,7 +155,9 @@ export class VerificationRequestService {
       );
     }
     await this.requestRepo.setStatus(id, VerificationRequestStatus.Processing);
-    // TODO: notify the captain + players that the request is being processed
+    // Open temporary Discord voice access for the captain + players being verified.
+    const discordIds = await this.verificationDiscordIds(request);
+    void this.discord.grantRole(discordIds, VERIFICATION_VOICE_ROLE_ID);
     return this.toView({
       ...request,
       status: VerificationRequestStatus.Processing,
@@ -218,7 +223,9 @@ export class VerificationRequestService {
       }
     }
 
-    // TODO: notify the captain + players that verification completed
+    // Close the temporary verification voice access — the session is over.
+    const discordIds = await this.verificationDiscordIds(request);
+    void this.discord.revokeRole(discordIds, VERIFICATION_VOICE_ROLE_ID);
     const updated = await this.requestRepo.findById(id);
     return this.toView(updated ?? request);
   }
@@ -270,7 +277,9 @@ export class VerificationRequestService {
       );
       await this.teamRepo.setVerificationBlock(request.teamId, blockedUntil, m);
     });
-    // TODO: notify the captain + players that the request was cancelled
+    // Close the temporary verification voice access opened at processing time.
+    const discordIds = await this.verificationDiscordIds(request);
+    void this.discord.revokeRole(discordIds, VERIFICATION_VOICE_ROLE_ID);
     return this.toView({
       ...request,
       status: VerificationRequestStatus.Cancelled,
@@ -289,13 +298,41 @@ export class VerificationRequestService {
 
     const request = await this.requestRepo.findBySlotId(slotId);
     if (request && request.status !== VerificationRequestStatus.Completed) {
+      // Capture the pre-cancel status: setStatus updates the DB by id, not this
+      // in-memory object, so request.status still reflects the current status.
+      const wasProcessing =
+        request.status === VerificationRequestStatus.Processing;
       await this.requestRepo.setStatus(
         request.id,
         VerificationRequestStatus.Cancelled,
       );
+      // A processing request had the temporary voice-access role granted at
+      // process() time — remove it now that an admin cancelled it via the slot.
+      if (wasProcessing) {
+        const discordIds = await this.verificationDiscordIds(request);
+        void this.discord.revokeRole(discordIds, VERIFICATION_VOICE_ROLE_ID);
+      }
       // TODO: notify the captain + players that the slot was cancelled by an admin
     }
     await this.slotRepo.setStatus(slotId, VerificationSlotStatus.Cancelled);
+  }
+
+  /**
+   * Discord IDs of the captain (createdByPlayerId) plus every player on the
+   * request, deduped, with unlinked players dropped. Used to grant/revoke the
+   * temporary verification voice-access role.
+   */
+  private async verificationDiscordIds(
+    request: VerificationRequest,
+  ): Promise<string[]> {
+    const playerIds = new Set<string>([
+      request.createdByPlayerId,
+      ...request.players.map((p) => p.player.id),
+    ]);
+    const rows = await this.playerRepo.findDiscordIdsByIds([...playerIds]);
+    return rows
+      .map((r) => r.discordId)
+      .filter((d): d is string => d != null && d !== '');
   }
 
   private async toView(
