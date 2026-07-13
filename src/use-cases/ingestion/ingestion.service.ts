@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MonobankService } from '../../connectors/monobank/monobank.service';
 import { TransactionRepository } from '../../repos/transaction.repository';
+import { TournamentPaymentRepository } from '../../repos/tournament-payment.repository';
 import { ClassificationService } from '../classification/classification.service';
 import { toStoredTransaction } from '../shared/bank-transaction.mapper';
 import { ConfigConnectorService } from 'src/connectors/config/config-connector.service';
@@ -18,6 +19,7 @@ export class IngestionService {
     private readonly bank: MonobankService,
     private readonly transactionRepo: TransactionRepository,
     private readonly classificationService: ClassificationService,
+    private readonly tournamentPaymentRepo: TournamentPaymentRepository,
     private readonly configConnector: ConfigConnectorService,
   ) {}
 
@@ -34,6 +36,8 @@ export class IngestionService {
       const stored = toStoredTransaction(account, statementItem);
       await this.transactionRepo.upsert(stored);
       await this.classificationService.classify(stored);
+      // Bridge to tournament entry-fee payments (matched by reference in comment).
+      await this.tournamentPaymentRepo.reconcileTransactions([stored]);
       this.logger.log(
         `Ingested transaction ${stored.id} on account ${account}`,
       );
