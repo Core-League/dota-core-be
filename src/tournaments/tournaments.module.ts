@@ -12,6 +12,7 @@ import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { TournamentsRepository } from './tournaments.repository';
 import { TournamentPlayoffTeamRepository } from './tournament-playoff-team.repository';
+import { TournamentPlayoffScheduler } from './tournament-playoff.scheduler';
 import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsModule } from '../teams/teams.module';
 
@@ -34,6 +35,7 @@ import { TeamsModule } from '../teams/teams.module';
     TournamentsService,
     TournamentsRepository,
     TournamentPlayoffTeamRepository,
+    TournamentPlayoffScheduler,
   ],
   controllers: [TournamentsController],
 })

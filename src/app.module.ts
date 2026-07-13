@@ -1,5 +1,6 @@
 import './config/load-env';
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PlayersModule } from './players/players.module';
 import { UserRolesModule } from './user-roles/user-roles.module';
@@ -13,6 +14,7 @@ import { DevModule } from './dev/dev.module';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DB_HOST,

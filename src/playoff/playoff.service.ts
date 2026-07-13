@@ -157,6 +157,48 @@ export class PlayoffService {
     return this.buildPlayoffResponse(embedUrl, tournamentId);
   }
 
+  /**
+   * Автоматичний старт плей-оф (без адміна) для планувальника.
+   * Сам добирає всі допущені команди з кваліфікації та стартує сітку.
+   *
+   * Ідемпотентність / самовідновлення:
+   * - якщо плей-оф уже існує (напр. попередній прогін впав після створення Playoff,
+   *   але до оновлення статусу) — просто дотягуємо статус до PLAYOFF і виходимо;
+   * - якщо допущених команд немає — пропускаємо (лог), плановик спробує знову згодом.
+   */
+  async autoStartPlayoff(tournamentId: string): Promise<void> {
+    const existing = await this.playoffRepo.findByTournamentId(tournamentId);
+    if (existing) {
+      await this.dataSource
+        .getRepository(Tournament)
+        .update(
+          { id: tournamentId },
+          { tournamentStatus: TournamentStatus.PLAYOFF },
+        );
+      this.logger.warn(
+        `Auto-start: playoff already existed for tournament ${tournamentId}; reconciled status to PLAYOFF`,
+      );
+      return;
+    }
+
+    const eligibleTeamIds = await findEligibleQualificationTeamIds(
+      this.dataSource,
+      tournamentId,
+    );
+    if (eligibleTeamIds.length === 0) {
+      this.logger.warn(
+        `Auto-start skipped for tournament ${tournamentId}: no eligible teams yet`,
+      );
+      return;
+    }
+
+    this.logger.log(
+      `Auto-starting playoff for tournament ${tournamentId} with ${eligibleTeamIds.length} eligible teams`,
+    );
+    await this.startPlayoff(tournamentId, eligibleTeamIds);
+    this.logger.log(`Auto-start succeeded for tournament ${tournamentId}`);
+  }
+
   async submitMatch(
     tournamentId: string,
     dotaMatchId: string,
