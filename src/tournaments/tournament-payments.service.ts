@@ -117,7 +117,7 @@ export class TournamentPaymentsService {
       payment = await this.paymentRepo.save(payment);
     }
 
-    return this.toIntentDto(payment, entryFee);
+    return this.toIntentDto(payment, entryFee, tournament.paymentJarUrl);
   }
 
   /** The caller's own team payment for a tournament (used for polling), or null. */
@@ -138,25 +138,36 @@ export class TournamentPaymentsService {
       .getRepository(Tournament)
       .findOne({ where: { id: tournamentId } });
     const entryFee = tournament?.entryFee ?? 0;
-    return this.toIntentDto(payment, entryFee);
+    return this.toIntentDto(payment, entryFee, tournament?.paymentJarUrl);
   }
 
   private toIntentDto(
     payment: TournamentTeamPayment,
     entryFee: number,
+    jarBase?: string | null,
   ): TournamentPaymentIntentDto {
     return {
       reference: payment.reference,
       status: payment.status,
       amount: entryFee,
       amountPaid: payment.amountPaid,
-      jarUrl: this.buildJarUrl(payment.reference, entryFee),
+      jarUrl: this.buildJarUrl(payment.reference, entryFee, jarBase),
     };
   }
 
-  /** Composes the prefilled jar URL, or null when the jar is not configured. */
-  private buildJarUrl(reference: string, amountKopecks: number): string | null {
-    const base = (process.env.MONOBANK_JAR_URL ?? '').trim();
+  /**
+   * Composes the prefilled jar URL from the tournament's own jar link, falling
+   * back to the global MONOBANK_JAR_URL. Null when neither is configured/valid.
+   */
+  private buildJarUrl(
+    reference: string,
+    amountKopecks: number,
+    jarBase?: string | null,
+  ): string | null {
+    const base = (
+      jarBase?.trim() ||
+      (process.env.MONOBANK_JAR_URL ?? '')
+    ).trim();
     if (!base) return null;
     try {
       const url = new URL(base);
