@@ -36,6 +36,7 @@ import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { JoinTournamentDto } from './dto/join-tournament.dto';
 import { MarkPaymentPaidDto } from './dto/mark-payment-paid.dto';
 import { TournamentPaymentSummaryDto } from './dto/tournament-payment-summary.dto';
+import { TournamentPaymentIntentDto } from './dto/tournament-payment-intent.dto';
 import { PlayoffTeamsDto } from './dto/playoff-teams.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import {
@@ -184,6 +185,35 @@ export class TournamentsController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<TournamentPaymentSummaryDto[]> {
     return this.tournamentPaymentsService.getSummaries(id);
+  }
+
+  @Post(':id/payments/intent')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Create/return the caller team's entry-fee payment intent",
+  })
+  @ApiOkResponse({ type: TournamentPaymentIntentDto })
+  createPaymentIntent(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<TournamentPaymentIntentDto> {
+    return this.tournamentPaymentsService.createIntentForCaptain(
+      id,
+      req.user!.playerId,
+    );
+  }
+
+  @Get(':id/payments/me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "The caller team's entry-fee payment status" })
+  @ApiOkResponse({ type: TournamentPaymentIntentDto })
+  getMyPayment(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<TournamentPaymentIntentDto | null> {
+    return this.tournamentPaymentsService.getMyPayment(id, req.user!.playerId);
   }
 
   @Post(':id/payments/:teamId/mark-paid')

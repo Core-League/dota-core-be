@@ -40,6 +40,11 @@ export const EnvSchema = z.object({
   MONOBANK_API_URL: z.string(),
   MONOBANK_HTTP_TIMEOUT: z.string(),
   MONOBANK_ACCOUNT_ID: z.string(),
+
+  // Public Monobank jar link (e.g. https://send.monobank.ua/jar/XXXX) that
+  // captains are sent to for tournament entry fees. Optional so the app still
+  // boots where the payment feature is not configured.
+  MONOBANK_JAR_URL: z.string().default(''),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
