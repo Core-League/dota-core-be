@@ -42,3 +42,11 @@ export function utcDateRange(
   }
   return { start, end };
 }
+
+/**
+ * Discord role granting temporary access to the private verification voice
+ * channels. Granted when an admin takes a request into processing, removed on
+ * complete/cancel. The role's channel permissions are configured on the Discord
+ * server, not here.
+ */
+export const VERIFICATION_VOICE_ROLE_ID = '1526337913854496922';
