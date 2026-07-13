@@ -28,9 +28,12 @@ book (pending) ──POST /verification/requests/:id/process──▶ GRANT role
 ```
 
 - **Grant** happens when the admin takes the request into processing (`process()`).
-- **Revoke** happens on `complete()` (any) and on `cancel()` **only when the
-  request was in `processing`** (a `pending` cancel never granted the role, so
-  nothing to revoke).
+- **Revoke** happens on `complete()` (any) and when a request that was in
+  `processing` is cancelled. A processing request can be cancelled through two
+  admin paths, both of which revoke: `cancel()` (`POST .../cancel`) and
+  `deleteSlot()` (`DELETE /verification/slots/:id`, which cancels the booked
+  slot's request). A `pending` cancel never granted the role, so it revokes
+  nothing.
 - Recipients: the captain (`verification_request.createdByPlayerId`) **and** every
   player in `verification_request_player`, restricted to those with a linked
   `player.discordId`. Players without a linked Discord are silently skipped.
