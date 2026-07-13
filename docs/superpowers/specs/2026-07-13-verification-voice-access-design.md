@@ -115,10 +115,11 @@ existing `// TODO: notify the captain + players` hooks:
 
 - **Discord:** grant role `1526337913854496922` View Channel + Connect on the
   private verification voice category (one-time, admin in Discord UI).
-- **Deploy:** forward `DISCORD_BOT_TOKEN` + `DISCORD_SYNC_GUILD_ID` to the
-  `api-v2` service — add both names to the `api-v2` `environment:` list in
-  `docker-compose.yml` and to the inline list in `.github/workflows/deploy.yml`.
-  The GitHub secrets already exist (v1 uses them); no new secret is created.
+- **Deploy:** nothing to do. `DISCORD_BOT_TOKEN` + `DISCORD_SYNC_GUILD_ID` are
+  already set inline in `.github/workflows/deploy.yml` and forwarded to `api-v2`
+  via the shared `&common` `environment:` anchor in `docker-compose.yml` (both
+  `api-v1` and `api-v2` use `<<: *common`). v2 reads them from `process.env` at
+  runtime — no new secret, no compose/workflow edit.
 
 ## Error handling
 
@@ -152,4 +153,6 @@ Changed:
 - `src/use-cases/verification/verification-request.service.ts` — grant/revoke wiring
 - `src/use-cases/verification/verification.module.ts` — import Discord module
 - `src/use-cases/verification/verification.constants.ts` — role-id constant
-- `docker-compose.yml` + `.github/workflows/deploy.yml` — forward two env vars to api-v2
+
+No deployment/config files change — the two Discord env vars are already
+forwarded to `api-v2`.
