@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MonobankService } from '../../connectors/monobank/monobank.service';
 import { TransactionRepository } from '../../repos/transaction.repository';
+import { TournamentPaymentRepository } from '../../repos/tournament-payment.repository';
 import { ClassificationService } from '../classification/classification.service';
 import { toStoredTransaction } from '../shared/bank-transaction.mapper';
 
@@ -17,6 +18,7 @@ export class SyncService {
     private readonly bank: MonobankService,
     private readonly transactionRepo: TransactionRepository,
     private readonly classificationService: ClassificationService,
+    private readonly tournamentPaymentRepo: TournamentPaymentRepository,
   ) {}
 
   async syncPeriod(accountId: string, from: Date, to?: Date): Promise<number> {
@@ -32,6 +34,7 @@ export class SyncService {
       await this.transactionRepo.upsert(tx);
     }
     await this.classificationService.classifyNew(newTransactions);
+    await this.tournamentPaymentRepo.reconcileTransactions(newTransactions);
 
     this.logger.log(
       `Synced ${newTransactions.length} new transactions for account ${accountId} (${fetched.length} fetched)`,
@@ -46,6 +49,9 @@ export class SyncService {
    */
   async reclassifyAll(): Promise<number> {
     const count = await this.classificationService.reclassifyAll();
+    // Backfill/repair tournament payments from all stored transactions.
+    const allTransactions = await this.transactionRepo.findAll();
+    await this.tournamentPaymentRepo.reconcileTransactions(allTransactions);
     this.logger.log(`Reclassified ${count} operations`);
     return count;
   }
