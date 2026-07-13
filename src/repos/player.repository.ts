@@ -9,6 +9,12 @@ export interface VerificationPlayer {
   verifiedAt: Date | null;
 }
 
+/** Discord link for a subset of `player` rows (nulls = not linked). */
+export interface PlayerDiscordId {
+  id: string;
+  discordId: string | null;
+}
+
 interface PlayerRow {
   id: string;
   rating: number | string;
@@ -36,6 +42,18 @@ export class PlayerRepository {
       rating: Number(r.rating),
       verifiedAt: r.verifiedAt ? new Date(r.verifiedAt) : null,
     }));
+  }
+
+  /**
+   * Discord IDs for the given player ids (v1-owned `player.discordId`). Rows
+   * without a linked Discord return `discordId: null`; missing ids are omitted.
+   */
+  async findDiscordIdsByIds(ids: string[]): Promise<PlayerDiscordId[]> {
+    if (ids.length === 0) return [];
+    return this.dataSource.query<PlayerDiscordId[]>(
+      `SELECT "id", "discordId" FROM "player" WHERE "id" = ANY($1)`,
+      [ids],
+    );
   }
 
   /**
