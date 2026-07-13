@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
@@ -14,6 +16,8 @@ import { DueloService } from '../duelo/duelo.service';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
+import { TournamentTeamPayment } from '../tournaments/tournament-team-payment.entity';
+import { PaymentStatus } from '../tournaments/tournament-team-payment.model';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { TournamentStatus } from '../tournaments/tournaments.model';
 import { computeTeamDivision } from '../tournaments/tournament-division.util';
@@ -253,6 +257,31 @@ export class QualificationService {
           );
         }
         this.validateSubstitute(main, sub);
+      }
+    }
+
+    /**
+     * Entry-fee gate: a fee'd tournament requires a PAID payment record for this
+     * team before the captain can join. Admin/dev-bypass registrations skip it.
+     */
+    if (!bypassParticipantChecks) {
+      const entryFee = tournament.entryFee ?? 0;
+      if (entryFee > 0) {
+        const paidCount = await this.dataSource
+          .getRepository(TournamentTeamPayment)
+          .count({
+            where: {
+              tournamentId: tournament.id,
+              teamId: team.id,
+              status: PaymentStatus.PAID,
+            },
+          });
+        if (paidCount === 0) {
+          throw new HttpException(
+            'Необхідно сплатити вступний внесок за участь у турнірі',
+            HttpStatus.PAYMENT_REQUIRED,
+          );
+        }
       }
     }
 

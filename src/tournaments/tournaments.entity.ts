@@ -20,6 +20,10 @@ export class Tournament {
   @Column({ nullable: true, type: 'int' })
   prizePool: number | null;
 
+  /** Tournament entry fee in kopecks. null or 0 means the tournament is free (no payment gate). */
+  @Column({ nullable: true, type: 'int' })
+  entryFee: number | null;
+
   @Column({ type: 'enum', enum: TournamentDivision, nullable: true })
   division: TournamentDivision | null;
 

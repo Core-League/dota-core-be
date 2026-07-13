@@ -8,10 +8,13 @@ import { TournamentsService } from './tournaments.service';
 import { TournamentsController } from './tournaments.controller';
 import { Tournament } from './tournaments.entity';
 import { TournamentPlayoffTeam } from './tournament-playoff-team.entity';
+import { TournamentTeamPayment } from './tournament-team-payment.entity';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { TournamentsRepository } from './tournaments.repository';
 import { TournamentPlayoffTeamRepository } from './tournament-playoff-team.repository';
+import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
+import { TournamentPaymentsService } from './tournament-payments.service';
 import { TournamentPlayoffScheduler } from './tournament-playoff.scheduler';
 import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsModule } from '../teams/teams.module';
@@ -21,6 +24,7 @@ import { TeamsModule } from '../teams/teams.module';
     TypeOrmModule.forFeature([
       Tournament,
       TournamentPlayoffTeam,
+      TournamentTeamPayment,
       Team,
       UserRoles,
     ]),
@@ -35,6 +39,8 @@ import { TeamsModule } from '../teams/teams.module';
     TournamentsService,
     TournamentsRepository,
     TournamentPlayoffTeamRepository,
+    TournamentTeamPaymentRepository,
+    TournamentPaymentsService,
     TournamentPlayoffScheduler,
   ],
   controllers: [TournamentsController],

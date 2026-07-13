@@ -23,6 +23,15 @@ export class CreateTournamentDto {
   @Min(0)
   prizePool?: number | null;
 
+  @ApiPropertyOptional({
+    description:
+      'Entry fee in kopecks. null or 0 means the tournament is free (no payment gate).',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  entryFee?: number | null;
+
   @ApiProperty({
     enum: [TournamentDivision.DIVISION_I, TournamentDivision.DIVISION_II],
     enumName: 'TournamentDivision',

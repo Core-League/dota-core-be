@@ -31,8 +31,11 @@ import { SubmitMatchDto } from '../qualification/dto/submit-match.dto';
 import { QualificationResponseDto } from '../qualification/dto/qualification-response.dto';
 import { TeamResponseDto } from '../teams/dto/team-response.dto';
 import { TournamentsService } from './tournaments.service';
+import { TournamentPaymentsService } from './tournament-payments.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { JoinTournamentDto } from './dto/join-tournament.dto';
+import { MarkPaymentPaidDto } from './dto/mark-payment-paid.dto';
+import { TournamentPaymentSummaryDto } from './dto/tournament-payment-summary.dto';
 import { PlayoffTeamsDto } from './dto/playoff-teams.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import {
@@ -67,6 +70,7 @@ const FILE_API_BODY = {
 export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
+    private readonly tournamentPaymentsService: TournamentPaymentsService,
     private readonly uploadsService: UploadsService,
     private readonly qualificationService: QualificationService,
     private readonly playoffService: PlayoffService,
@@ -167,6 +171,40 @@ export class TournamentsController {
       body?.teamId,
     );
     return this.tournamentsService.findOne(id);
+  }
+
+  @Get(':id/payments')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Per-team entry-fee payment status for a tournament',
+  })
+  @ApiOkResponse({ type: [TournamentPaymentSummaryDto] })
+  getPayments(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<TournamentPaymentSummaryDto[]> {
+    return this.tournamentPaymentsService.getSummaries(id);
+  }
+
+  @Post(':id/payments/:teamId/mark-paid')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin: mark a team as having paid the entry fee' })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiParam({ name: 'teamId', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: TournamentPaymentSummaryDto })
+  markPaymentPaid(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('teamId', new ParseUUIDPipe()) teamId: string,
+    @Body() body: MarkPaymentPaidDto,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<TournamentPaymentSummaryDto> {
+    return this.tournamentPaymentsService.markPaidByAdmin(
+      id,
+      teamId,
+      req.user!.playerId,
+      body?.note,
+    );
   }
 
   @Post(':id/qualification/submit')
