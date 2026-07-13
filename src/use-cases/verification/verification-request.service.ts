@@ -298,10 +298,20 @@ export class VerificationRequestService {
 
     const request = await this.requestRepo.findBySlotId(slotId);
     if (request && request.status !== VerificationRequestStatus.Completed) {
+      // Capture the pre-cancel status: setStatus updates the DB by id, not this
+      // in-memory object, so request.status still reflects the current status.
+      const wasProcessing =
+        request.status === VerificationRequestStatus.Processing;
       await this.requestRepo.setStatus(
         request.id,
         VerificationRequestStatus.Cancelled,
       );
+      // A processing request had the temporary voice-access role granted at
+      // process() time — remove it now that an admin cancelled it via the slot.
+      if (wasProcessing) {
+        const discordIds = await this.verificationDiscordIds(request);
+        void this.discord.revokeRole(discordIds, VERIFICATION_VOICE_ROLE_ID);
+      }
       // TODO: notify the captain + players that the slot was cancelled by an admin
     }
     await this.slotRepo.setStatus(slotId, VerificationSlotStatus.Cancelled);
