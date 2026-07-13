@@ -1,14 +1,10 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class TournamentEntryFeeAndPayments1783971446406
-  implements MigrationInterface
-{
+export class TournamentEntryFeeAndPayments1783971446406 implements MigrationInterface {
   name = 'TournamentEntryFeeAndPayments1783971446406';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "tournament" ADD "entryFee" integer`,
-    );
+    await queryRunner.query(`ALTER TABLE "tournament" ADD "entryFee" integer`);
     await queryRunner.query(
       `CREATE TYPE "public"."tournament_team_payment_status_enum" AS ENUM('PENDING', 'UNDERPAID', 'PAID')`,
     );
