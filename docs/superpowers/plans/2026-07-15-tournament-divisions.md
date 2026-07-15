@@ -19,6 +19,7 @@
   | `DIVISION_II` | `Любительський` | 0 | 7000 | `null` |
   | `DIVISION_III` | `Аматорський` | 7000 | `null` | `null` |
 - **All bounds are inclusive.** An average of exactly 7000 satisfies both `DIVISION_II` and `DIVISION_III`. A player rated exactly 5500 passes the `DIVISION_I` cap.
+- **Eligibility is computed from the EXACT, unrounded average — on both the backend and the frontend. Rounding is display-only.** `player.rating` is a Postgres `real`, so fractional averages are routine. If the frontend rounded before checking eligibility, a roster averaging 3500.4 would round to 3500, show a join button, and be rejected by the backend. Hence the frontend has two functions: `computeTeamAvgRating` (exact, for eligibility) and `computeTeamAvgRatingRounded` (for display).
 - **"Аматорський" now means the HIGHEST tier.** It previously meant the lowest. Do not assume continuity of this word when reading existing code, comments, or tournament names.
 - **`DIVISION_II` is the catch-all**, accepting any average ≤ 7000 regardless of player ratings. Combined with `DIVISION_III` (7000+), every non-empty roster matches at least one division.
 - **No DB migration and no data migration.** The enum already holds all three values; existing tournaments keep their keys and are relabelled in place.
@@ -933,8 +934,9 @@ git commit -m "feat(teams): expose avgRating on team responses"
 - Consumes: nothing from the backend at runtime; this mirrors `DIVISION_RULES` by hand.
 - Produces (imported by Tasks 8–10):
   - `DIVISION_RULES: Record<TTournamentDivisionValue, TDivisionRule>`
-  - `computeTeamAvgRating(players: { rating?: number | null }[] | null | undefined): number | null` — **rounded**, to match the API's `avgRating`.
-  - `isTeamEligibleForDivision(players, division): boolean`
+  - `computeTeamAvgRating(players: { rating?: number | null }[] | null | undefined): number | null` — **exact, unrounded**, mirroring the backend. Used for eligibility.
+  - `computeTeamAvgRatingRounded(players): number | null` — rounded, matching the API's `avgRating`. Used for display only.
+  - `isTeamEligibleForDivision(players, division): boolean` — must use the **exact** average.
   - `resolveTeamDivision(players): TTournamentDivisionValue | null`
   - `resolveTeamDivisionForDisplay(rawDivision, mainPlayers)` — **signature changed**: second parameter is now the roster, not a pre-computed average.
   - `tournamentDivisionLabelMap`, `tournamentDivisionMmrHintMap`, `TOURNAMENT_DIVISION_CREATE_VALUES` (all three values).
@@ -1011,14 +1013,31 @@ const DIVISIONS_BY_STRENGTH: readonly TTournamentDivisionValue[] = [
 
 type TRatedPlayer = { rating?: number | null }
 
-/** Середній рейтинг основи, округлений — щоб збігатися з `avgRating` з API. */
+/**
+ * Точний середній рейтинг основи, БЕЗ округлення — дзеркалить бекенд
+ * (computeTeamAvgRating у tournament-division.util.ts).
+ *
+ * Округлювати тут не можна: допуск рахується за точним значенням. `rating` у
+ * БД — `real`, тому дробовий АВГ звичайна річ, і склад з АВГ 3500.4 бекенд у
+ * Початковий НЕ пустить, а округлений до 3500 — пустив би. Тоді фронт показав
+ * би кнопку «Приєднатися», а запит впав би з помилкою.
+ *
+ * Для показу є computeTeamAvgRatingRounded.
+ */
 export function computeTeamAvgRating (
   players: TRatedPlayer[] | null | undefined
 ): number | null {
   const list = players ?? []
   if (!list.length) return null
-  const sum = list.reduce((acc, p) => acc + (Number(p.rating) || 0), 0)
-  return Math.round(sum / list.length)
+  return list.reduce((acc, p) => acc + (Number(p.rating) || 0), 0) / list.length
+}
+
+/** Середній рейтинг для показу — округлений, щоб збігатися з `avgRating` з API. */
+export function computeTeamAvgRatingRounded (
+  players: TRatedPlayer[] | null | undefined
+): number | null {
+  const avg = computeTeamAvgRating(players)
+  return avg == null ? null : Math.round(avg)
 }
 
 /**
@@ -1174,7 +1193,7 @@ git commit -m "feat(divisions): three-tier rule table mirroring the backend"
 - Modify: `src/views/teams/components/TeamAvg.vue:14-19`
 
 **Interfaces:**
-- Consumes: `Team.avgRating` from Task 6; `computeTeamAvgRating` and the changed `resolveTeamDivisionForDisplay(rawDivision, mainPlayers)` from Task 7.
+- Consumes: `Team.avgRating` from Task 6; `computeTeamAvgRatingRounded` (the display variant — **not** the exact one used for eligibility) and the changed `resolveTeamDivisionForDisplay(rawDivision, mainPlayers)` from Task 7.
 - Produces: nothing downstream.
 
 Each component prefers the API's `avgRating` and falls back to a local computation, so the UI stays correct against a backend that has not yet deployed Task 6.
@@ -1231,7 +1250,7 @@ with:
 ```ts
 const mainAvgRating = computed(() =>
   ('avgRating' in props.team ? props.team.avgRating : null) ??
-  computeTeamAvgRating(props.team.mainPlayers)
+  computeTeamAvgRatingRounded(props.team.mainPlayers)
 )
 
 const resolvedDivisionKey = computed((): TTournamentDivisionValue | null =>
@@ -1242,7 +1261,7 @@ const resolvedDivisionKey = computed((): TTournamentDivisionValue | null =>
 )
 ```
 
-Add `computeTeamAvgRating` to the existing import from `@/components/tournaments-tags/tournament.constants`.
+Add `computeTeamAvgRatingRounded` to the existing import from `@/components/tournaments-tags/tournament.constants`.
 
 - [ ] **Step 4: TeamRoster.vue — use the API average**
 
@@ -1261,14 +1280,14 @@ with:
 
 ```ts
 const mainRosterAvgRatingRounded = computed(() =>
-  props.team?.avgRating ?? computeTeamAvgRating(props.team?.mainPlayers)
+  props.team?.avgRating ?? computeTeamAvgRatingRounded(props.team?.mainPlayers)
 )
 ```
 
 Add to the imports:
 
 ```ts
-import { computeTeamAvgRating } from '@/components/tournaments-tags/tournament.constants'
+import { computeTeamAvgRatingRounded } from '@/components/tournaments-tags/tournament.constants'
 ```
 
 - [ ] **Step 5: TeamProfileCard.vue — use the API average**
@@ -1294,7 +1313,7 @@ with:
 
 ```ts
 const mainRosterAvgRatingRounded = computed(() =>
-  props.team?.avgRating ?? computeTeamAvgRating(props.team?.mainPlayers)
+  props.team?.avgRating ?? computeTeamAvgRatingRounded(props.team?.mainPlayers)
 )
 
 const teamDivisionForDisplay = computed(() =>
@@ -1304,7 +1323,7 @@ const teamDivisionForDisplay = computed(() =>
 )
 ```
 
-Add `computeTeamAvgRating` to the existing import from `@/components/tournaments-tags/tournament.constants`.
+Add `computeTeamAvgRatingRounded` to the existing import from `@/components/tournaments-tags/tournament.constants`.
 
 - [ ] **Step 6: TeamAvg.vue — stop including reserves**
 
@@ -1325,14 +1344,14 @@ with:
 // Основа без запасних — так само, як рахує бекенд (`avgRating`) і як показують
 // картка та профіль команди.
 const teamAvg = computed(() =>
-  props.team?.avgRating ?? computeTeamAvgRating(props.team?.mainPlayers)
+  props.team?.avgRating ?? computeTeamAvgRatingRounded(props.team?.mainPlayers)
 )
 ```
 
 Add to the imports:
 
 ```ts
-import { computeTeamAvgRating } from '@/components/tournaments-tags/tournament.constants'
+import { computeTeamAvgRatingRounded } from '@/components/tournaments-tags/tournament.constants'
 ```
 
 - [ ] **Step 7: Confirm no local average survives**
