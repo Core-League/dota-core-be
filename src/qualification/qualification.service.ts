@@ -19,8 +19,15 @@ import { Tournament } from '../tournaments/tournaments.entity';
 import { TournamentTeamPayment } from '../tournaments/tournament-team-payment.entity';
 import { PaymentStatus } from '../tournaments/tournament-team-payment.model';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
-import { TournamentStatus } from '../tournaments/tournaments.model';
-import { computeTeamDivision } from '../tournaments/tournament-division.util';
+import {
+  TournamentDivision,
+  TournamentStatus,
+} from '../tournaments/tournaments.model';
+import {
+  DIVISION_RULES,
+  computeTeamAvgRating,
+  isTeamEligibleForDivision,
+} from '../tournaments/tournament-division.util';
 import { QualificationMatch } from './qualification-match.entity';
 import { QualificationMatchRepository } from './qualification-match.repository';
 import { Qualification } from './qualification.entity';
@@ -232,15 +239,20 @@ export class QualificationService {
         );
       }
 
-      const teamDivision = computeTeamDivision(main);
-      if (!teamDivision) {
+      // An empty roster is checked separately: it is not an MMR problem, and the
+      // all-players-verified check above passes vacuously on an empty list.
+      if (!main.length) {
         throw new BadRequestException(
-          'Рейтинг команди виходить за межі дозволених дивізіонів',
+          'У складі команди немає основних гравців',
         );
       }
-      if (teamDivision !== tournament.division) {
+
+      if (
+        tournament.division &&
+        !isTeamEligibleForDivision(main, tournament.division)
+      ) {
         throw new BadRequestException(
-          `Дивізіон команди (${teamDivision}) не відповідає дивізіону турніру (${tournament.division})`,
+          this.divisionRejectionMessage(main, tournament.division),
         );
       }
 
@@ -256,7 +268,9 @@ export class QualificationService {
             `Запасний гравець ${sub.id} не верифікований`,
           );
         }
-        this.validateSubstitute(main, sub);
+        if (tournament.division) {
+          this.validateSubstitute(main, sub, tournament.division);
+        }
       }
     }
 
@@ -610,34 +624,73 @@ export class QualificationService {
     }
   }
 
-  private validateSubstitute(mainPlayers: Player[], sub: Player): void {
+  /**
+   * Explains WHY a roster failed a division. Average-out-of-range and
+   * player-over-cap are different problems with different fixes, and a captain
+   * cannot act on an undifferentiated rejection.
+   */
+  private divisionRejectionMessage(
+    main: { rating: number }[],
+    division: TournamentDivision,
+  ): string {
+    const rule = DIVISION_RULES[division];
+
+    // Bound to a local so TypeScript narrows it inside the closure.
+    const cap = rule.maxPlayerRating;
+    if (cap !== null) {
+      const overCap = main
+        .map((p) => p.rating)
+        .filter((rating) => rating > cap);
+      if (overCap.length) {
+        const highest = Math.round(Math.max(...overCap));
+        return `Гравець з MMR ${highest} перевищує ліміт ${cap} для дивізіону «${rule.label}»`;
+      }
+    }
+
+    const avg = computeTeamAvgRating(main);
+    const avgRounded = avg === null ? 0 : Math.round(avg);
+    return `Середній MMR команди (${avgRounded}) не підходить для дивізіону «${rule.label}»`;
+  }
+
+  /**
+   * A sub may come in for ANY main player, so the roster must stay eligible for
+   * the tournament's division under every possible swap. Checking two extremes
+   * suffices, because eligibility decomposes:
+   *   - the average is monotonic — replacing the lowest-rated starter maximises
+   *     it, replacing the highest minimises it, and every other slot lands
+   *     between those two;
+   *   - the per-player cap needs no separate check: the sub appears in every
+   *     candidate roster (it is the one player common to all five), so
+   *     `isTeamEligibleForDivision` already tests it there on both extremes.
+   * So if both extremes are eligible, all five are.
+   *
+   * Note this validates against the TOURNAMENT's division, not against the
+   * team's division being unchanged: under play-up a sub may shift the team's
+   * resolved division while the roster still satisfies the tournament it enters.
+   */
+  private validateSubstitute(
+    mainPlayers: Player[],
+    sub: Player,
+    division: TournamentDivision,
+  ): void {
     const ratings = mainPlayers.map((p) => p.rating).sort((a, b) => a - b);
     if (ratings.length === 0) return;
 
-    const originalDivision = computeTeamDivision(mainPlayers);
-
-    // A sub can come in for ANY main player. Replacing the lowest-rated player
-    // maximises the team's post-substitution average; replacing the highest-rated
-    // one minimises it; every other position lands between those two. Division is
-    // a monotonic threshold on the average, so if BOTH extremes stay in the
-    // original division the substitution is safe regardless of whom it replaces.
-    const divisionWithReplacementAt = (index: number) => {
+    const eligibleWithReplacementAt = (index: number) => {
       const modified = [...ratings];
       modified[index] = sub.rating;
-      return computeTeamDivision(modified.map((rating) => ({ rating })));
+      return isTeamEligibleForDivision(
+        modified.map((rating) => ({ rating })),
+        division,
+      );
     };
 
-    const divisionReplacingLowest = divisionWithReplacementAt(0);
-    const divisionReplacingHighest = divisionWithReplacementAt(
-      ratings.length - 1,
-    );
-
     if (
-      divisionReplacingLowest !== originalDivision ||
-      divisionReplacingHighest !== originalDivision
+      !eligibleWithReplacementAt(0) ||
+      !eligibleWithReplacementAt(ratings.length - 1)
     ) {
       throw new BadRequestException(
-        `Запасний гравець ${sub.id} змінює дивізіон команди — заміна не дозволена`,
+        `Запасний гравець ${sub.id} не підходить для дивізіону турніру`,
       );
     }
   }

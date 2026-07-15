@@ -20,7 +20,10 @@ import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role, getRoleColorByName } from '../user-roles/role.constants';
 import { toPlayerRankDto } from '../players/dto/player-rank.dto';
-import { computeTeamDivision } from '../tournaments/tournament-division.util';
+import {
+  computeTeamAvgRating,
+  resolveTeamDivision,
+} from '../tournaments/tournament-division.util';
 import { DiscordBotService } from '../discord/discord-bot.service';
 import { AuthService } from '../auth/auth.service';
 import { Dota2Service } from '../dota2/dota2.service';
@@ -33,6 +36,9 @@ import { Tournament } from '../tournaments/tournaments.entity';
 import { RemovePlayerPenalty } from './dto/remove-player-query.dto';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const roundOrNull = (value: number | null): number | null =>
+  value === null ? null : Math.round(value);
 
 @Injectable()
 export class TeamsService {
@@ -129,7 +135,7 @@ export class TeamsService {
   }
 
   private async onTeamVerified(team: Team): Promise<void> {
-    const division = computeTeamDivision(team.mainPlayers ?? []);
+    const division = resolveTeamDivision(team.mainPlayers ?? []);
     if (!division) {
       this.logger.warn(
         `Team ${team.id} verified but division could not be determined — skipping Discord setup`,
@@ -767,7 +773,8 @@ export class TeamsService {
       tournaments: (team.tournaments ?? []).map((t) =>
         this.mapTournamentEmbedded(t),
       ),
-      division: computeTeamDivision(team.mainPlayers ?? []),
+      division: resolveTeamDivision(team.mainPlayers ?? []),
+      avgRating: roundOrNull(computeTeamAvgRating(team.mainPlayers ?? [])),
     };
   }
 }
