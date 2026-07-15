@@ -50,11 +50,16 @@ describe('QualificationService.validateSubstitute (two-sided division guard)', (
     ).not.toThrow();
   });
 
-  it('rejects a reserve that exceeds the per-player cap, regardless of average', () => {
-    // Cap is a flat check on the sub, independent of who it replaces.
+  it('rejects a reserve that exceeds the per-player cap even though the post-swap average stays in range', () => {
+    // Original roster: avg 500, every starter at 500 <= cap 5500 -> eligible
+    // for DIVISION_I on its own. Sub is 6000, over the 5500 cap. Because every
+    // starter is equal, both extremes produce the same post-swap average:
+    // (6000 + 500*4) / 5 = 1600, comfortably inside 0-3500. The average check
+    // alone would pass this roster, so the rejection can only come from the
+    // per-player cap on the sub.
     expect(() =>
       validate(
-        players(3000, 3000, 3000, 3000, 3000),
+        players(500, 500, 500, 500, 500),
         sub(6000),
         TournamentDivision.DIVISION_I,
       ),
@@ -74,16 +79,38 @@ describe('QualificationService.validateSubstitute (two-sided division guard)', (
   });
 
   it('rejects a reserve that could drop a DIVISION_III team below the min (down-move)', () => {
-    // The roster is eligible for DIVISION_III (avg 7004), but replacing the
-    // highest-rated starter with a weak sub drops the average under 7000 —
-    // ineligible for the tournament's division even though the roster's own
-    // resolved division would still be fine.
+    // Original roster: (7000+7000+7000+7000+8000)/5 = 7200 -> eligible for
+    // DIVISION_III (avg >= 7000). Sub is 6500.
+    // Replace-lowest (7000 -> 6500): (6500+7000+7000+7000+8000)/5 = 7100,
+    // still >= 7000 -> that extreme alone stays eligible.
+    // Replace-highest (8000 -> 6500): (7000+7000+7000+7000+6500)/5 = 6900,
+    // < 7000 -> that extreme alone is ineligible.
+    // Only the down-move (replace-highest) extreme fires; the replace-lowest
+    // extreme would pass this roster on its own, so this isolates the
+    // down-move branch.
     expect(() =>
       validate(
-        players(7000, 7000, 7000, 7010, 7010),
-        sub(1000),
+        players(7000, 7000, 7000, 7000, 8000),
+        sub(6500),
         TournamentDivision.DIVISION_III,
       ),
     ).toThrow(BadRequestException);
+  });
+
+  it('allows a reserve over the DIVISION_I cap under DIVISION_II, the catch-all with no per-player cap', () => {
+    // Same roster and sub as the cap test above, but under DIVISION_II
+    // (maxPlayerRating: null). Original avg 500 is eligible for DIVISION_II
+    // (0-7000, no cap). Since every starter is equal, both extremes give the
+    // same post-swap average: (6000 + 500*4) / 5 = 1600, inside 0-7000. With
+    // no per-player cap for this division, nothing rejects the sub even
+    // though its rating (6000) exceeds the DIVISION_I cap of 5500 that
+    // rejected the identical sub above.
+    expect(() =>
+      validate(
+        players(500, 500, 500, 500, 500),
+        sub(6000),
+        TournamentDivision.DIVISION_II,
+      ),
+    ).not.toThrow();
   });
 });
