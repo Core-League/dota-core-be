@@ -94,18 +94,3 @@ export function resolveTeamDivision(
     ) ?? null
   );
 }
-
-/**
- * @deprecated Superseded by resolveTeamDivision / isTeamEligibleForDivision.
- * Retained only until its last call sites migrate; removed in Task 4.
- */
-export function computeTeamDivision(
-  players: { rating: number }[],
-): TournamentDivision | null {
-  if (!players.length) return null;
-  const avgRating =
-    players.reduce((sum, p) => sum + p.rating, 0) / players.length;
-  return avgRating <= 6500
-    ? TournamentDivision.DIVISION_I
-    : TournamentDivision.DIVISION_II;
-}

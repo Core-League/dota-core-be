@@ -26,7 +26,6 @@ import {
 import {
   DIVISION_RULES,
   computeTeamAvgRating,
-  computeTeamDivision,
   isTeamEligibleForDivision,
 } from '../tournaments/tournament-division.util';
 import { QualificationMatch } from './qualification-match.entity';
@@ -269,7 +268,9 @@ export class QualificationService {
             `Запасний гравець ${sub.id} не верифікований`,
           );
         }
-        this.validateSubstitute(main, sub);
+        if (tournament.division) {
+          this.validateSubstitute(main, sub, tournament.division);
+        }
       }
     }
 
@@ -651,34 +652,51 @@ export class QualificationService {
     return `Середній MMR команди (${avgRounded}) не підходить для дивізіону «${rule.label}»`;
   }
 
-  private validateSubstitute(mainPlayers: Player[], sub: Player): void {
+  /**
+   * A sub may come in for ANY main player, so the roster must stay eligible for
+   * the tournament's division under every possible swap. Checking two extremes
+   * suffices, because eligibility decomposes:
+   *   - the per-player cap is independent of WHO is replaced, so it is a flat
+   *     check on the sub (every starter already passes);
+   *   - the average is monotonic — replacing the lowest-rated starter maximises
+   *     it, replacing the highest minimises it, and every other slot lands
+   *     between those two.
+   * So if both extremes are eligible, all five are.
+   *
+   * Note this validates against the TOURNAMENT's division, not against the
+   * team's division being unchanged: under play-up a sub may shift the team's
+   * resolved division while the roster still satisfies the tournament it enters.
+   */
+  private validateSubstitute(
+    mainPlayers: Player[],
+    sub: Player,
+    division: TournamentDivision,
+  ): void {
     const ratings = mainPlayers.map((p) => p.rating).sort((a, b) => a - b);
     if (ratings.length === 0) return;
 
-    const originalDivision = computeTeamDivision(mainPlayers);
+    const rule = DIVISION_RULES[division];
+    if (rule.maxPlayerRating !== null && sub.rating > rule.maxPlayerRating) {
+      throw new BadRequestException(
+        `Запасний гравець ${sub.id} не підходить для дивізіону турніру`,
+      );
+    }
 
-    // A sub can come in for ANY main player. Replacing the lowest-rated player
-    // maximises the team's post-substitution average; replacing the highest-rated
-    // one minimises it; every other position lands between those two. Division is
-    // a monotonic threshold on the average, so if BOTH extremes stay in the
-    // original division the substitution is safe regardless of whom it replaces.
-    const divisionWithReplacementAt = (index: number) => {
+    const eligibleWithReplacementAt = (index: number) => {
       const modified = [...ratings];
       modified[index] = sub.rating;
-      return computeTeamDivision(modified.map((rating) => ({ rating })));
+      return isTeamEligibleForDivision(
+        modified.map((rating) => ({ rating })),
+        division,
+      );
     };
 
-    const divisionReplacingLowest = divisionWithReplacementAt(0);
-    const divisionReplacingHighest = divisionWithReplacementAt(
-      ratings.length - 1,
-    );
-
     if (
-      divisionReplacingLowest !== originalDivision ||
-      divisionReplacingHighest !== originalDivision
+      !eligibleWithReplacementAt(0) ||
+      !eligibleWithReplacementAt(ratings.length - 1)
     ) {
       throw new BadRequestException(
-        `Запасний гравець ${sub.id} змінює дивізіон команди — заміна не дозволена`,
+        `Запасний гравець ${sub.id} не підходить для дивізіону турніру`,
       );
     }
   }
