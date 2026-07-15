@@ -10,7 +10,9 @@ import type { Player } from '../players/player.entity';
  * three-tier thresholds: DIVISION_I maxAvg 3500 / cap 5500, DIVISION_II maxAvg
  * 7000 / no cap, DIVISION_III minAvg 7000 / no cap). The two-sided check must
  * guard both the up-move (replace weakest -> highest avg) and the down-move
- * (replace strongest -> lowest avg), plus the flat per-player cap.
+ * (replace strongest -> lowest avg). The per-player cap needs no separate
+ * guard: the sub sits in every candidate roster, so isTeamEligibleForDivision
+ * rejects an over-cap sub at both extremes.
  */
 describe('QualificationService.validateSubstitute (two-sided division guard)', () => {
   type SubstituteSurface = {
