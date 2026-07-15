@@ -16,7 +16,7 @@ import {
   RoleName,
   ROLE_NAMES,
 } from '../user-roles/role.constants';
-import { computeTeamDivision } from '../tournaments/tournament-division.util';
+import { resolveTeamDivision } from '../tournaments/tournament-division.util';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { QualificationMatch } from '../qualification/qualification-match.entity';
 import { PlayoffMatch } from '../playoff/playoff-match.entity';
@@ -349,7 +349,7 @@ export class AdminService {
     let skipped = 0;
 
     for (const team of teams) {
-      const division = computeTeamDivision(team.mainPlayers ?? []);
+      const division = resolveTeamDivision(team.mainPlayers ?? []);
       if (!division) {
         this.logger.warn(
           `syncDiscord: team ${team.id} (${team.name}) has no determinable division — skipped`,
