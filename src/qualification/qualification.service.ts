@@ -656,11 +656,12 @@ export class QualificationService {
    * A sub may come in for ANY main player, so the roster must stay eligible for
    * the tournament's division under every possible swap. Checking two extremes
    * suffices, because eligibility decomposes:
-   *   - the per-player cap is independent of WHO is replaced, so it is a flat
-   *     check on the sub (every starter already passes);
    *   - the average is monotonic — replacing the lowest-rated starter maximises
    *     it, replacing the highest minimises it, and every other slot lands
-   *     between those two.
+   *     between those two;
+   *   - the per-player cap needs no separate check: the sub appears in every
+   *     candidate roster (it is the one player common to all five), so
+   *     `isTeamEligibleForDivision` already tests it there on both extremes.
    * So if both extremes are eligible, all five are.
    *
    * Note this validates against the TOURNAMENT's division, not against the
@@ -674,13 +675,6 @@ export class QualificationService {
   ): void {
     const ratings = mainPlayers.map((p) => p.rating).sort((a, b) => a - b);
     if (ratings.length === 0) return;
-
-    const rule = DIVISION_RULES[division];
-    if (rule.maxPlayerRating !== null && sub.rating > rule.maxPlayerRating) {
-      throw new BadRequestException(
-        `Запасний гравець ${sub.id} не підходить для дивізіону турніру`,
-      );
-    }
 
     const eligibleWithReplacementAt = (index: number) => {
       const modified = [...ratings];
