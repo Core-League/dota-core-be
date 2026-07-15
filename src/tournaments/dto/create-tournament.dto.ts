@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsDateString,
+  IsEnum,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -41,11 +42,12 @@ export class CreateTournamentDto {
   paymentJarUrl?: string | null;
 
   @ApiProperty({
-    enum: [TournamentDivision.DIVISION_I, TournamentDivision.DIVISION_II],
+    enum: TournamentDivision,
     enumName: 'TournamentDivision',
-    description: 'DIVISION_III is retired and cannot be set',
+    description:
+      'DIVISION_I = Початковий (avg 0–3500, player cap 5500), DIVISION_II = Любительський (avg 0–7000), DIVISION_III = Аматорський (avg 7000+)',
   })
-  @IsIn([TournamentDivision.DIVISION_I, TournamentDivision.DIVISION_II])
+  @IsEnum(TournamentDivision)
   division: TournamentDivision;
 
   @ApiPropertyOptional()
