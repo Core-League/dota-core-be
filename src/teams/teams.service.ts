@@ -20,7 +20,10 @@ import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role, getRoleColorByName } from '../user-roles/role.constants';
 import { toPlayerRankDto } from '../players/dto/player-rank.dto';
-import { resolveTeamDivision } from '../tournaments/tournament-division.util';
+import {
+  computeTeamAvgRating,
+  resolveTeamDivision,
+} from '../tournaments/tournament-division.util';
 import { DiscordBotService } from '../discord/discord-bot.service';
 import { AuthService } from '../auth/auth.service';
 import { Dota2Service } from '../dota2/dota2.service';
@@ -33,6 +36,9 @@ import { Tournament } from '../tournaments/tournaments.entity';
 import { RemovePlayerPenalty } from './dto/remove-player-query.dto';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const roundOrNull = (value: number | null): number | null =>
+  value === null ? null : Math.round(value);
 
 @Injectable()
 export class TeamsService {
@@ -768,6 +774,7 @@ export class TeamsService {
         this.mapTournamentEmbedded(t),
       ),
       division: resolveTeamDivision(team.mainPlayers ?? []),
+      avgRating: roundOrNull(computeTeamAvgRating(team.mainPlayers ?? [])),
     };
   }
 }

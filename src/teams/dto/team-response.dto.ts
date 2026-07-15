@@ -86,4 +86,12 @@ export class TeamResponseDto {
 
   @ApiPropertyOptional({ enum: TournamentDivision, nullable: true })
   division: TournamentDivision | null;
+
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    description:
+      'Rounded mean rating of mainPlayers (reserves excluded). Null for an empty roster.',
+  })
+  avgRating: number | null;
 }
