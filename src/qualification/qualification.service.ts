@@ -19,8 +19,16 @@ import { Tournament } from '../tournaments/tournaments.entity';
 import { TournamentTeamPayment } from '../tournaments/tournament-team-payment.entity';
 import { PaymentStatus } from '../tournaments/tournament-team-payment.model';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
-import { TournamentStatus } from '../tournaments/tournaments.model';
-import { computeTeamDivision } from '../tournaments/tournament-division.util';
+import {
+  TournamentDivision,
+  TournamentStatus,
+} from '../tournaments/tournaments.model';
+import {
+  DIVISION_RULES,
+  computeTeamAvgRating,
+  computeTeamDivision,
+  isTeamEligibleForDivision,
+} from '../tournaments/tournament-division.util';
 import { QualificationMatch } from './qualification-match.entity';
 import { QualificationMatchRepository } from './qualification-match.repository';
 import { Qualification } from './qualification.entity';
@@ -232,15 +240,20 @@ export class QualificationService {
         );
       }
 
-      const teamDivision = computeTeamDivision(main);
-      if (!teamDivision) {
+      // An empty roster is checked separately: it is not an MMR problem, and the
+      // all-players-verified check above passes vacuously on an empty list.
+      if (!main.length) {
         throw new BadRequestException(
-          'Рейтинг команди виходить за межі дозволених дивізіонів',
+          'У складі команди немає основних гравців',
         );
       }
-      if (teamDivision !== tournament.division) {
+
+      if (
+        tournament.division &&
+        !isTeamEligibleForDivision(main, tournament.division)
+      ) {
         throw new BadRequestException(
-          `Дивізіон команди (${teamDivision}) не відповідає дивізіону турніру (${tournament.division})`,
+          this.divisionRejectionMessage(main, tournament.division),
         );
       }
 
@@ -608,6 +621,34 @@ export class QualificationService {
         [player.id, tournamentId, amount],
       );
     }
+  }
+
+  /**
+   * Explains WHY a roster failed a division. Average-out-of-range and
+   * player-over-cap are different problems with different fixes, and a captain
+   * cannot act on an undifferentiated rejection.
+   */
+  private divisionRejectionMessage(
+    main: { rating: number }[],
+    division: TournamentDivision,
+  ): string {
+    const rule = DIVISION_RULES[division];
+
+    // Bound to a local so TypeScript narrows it inside the closure.
+    const cap = rule.maxPlayerRating;
+    if (cap !== null) {
+      const overCap = main
+        .map((p) => p.rating)
+        .filter((rating) => rating > cap);
+      if (overCap.length) {
+        const highest = Math.round(Math.max(...overCap));
+        return `Гравець з MMR ${highest} перевищує ліміт ${cap} для дивізіону «${rule.label}»`;
+      }
+    }
+
+    const avg = computeTeamAvgRating(main);
+    const avgRounded = avg === null ? 0 : Math.round(avg);
+    return `Середній MMR команди (${avgRounded}) не підходить для дивізіону «${rule.label}»`;
   }
 
   private validateSubstitute(mainPlayers: Player[], sub: Player): void {
