@@ -6,6 +6,7 @@ import { ReposModule } from '../../../repos/repos.module';
 import { CommonControllerModule } from '../../../controllers/common/common-controller.module';
 import { WebhookControllerModule } from '../../../controllers/webhook-controller/webhook-controller.module';
 import { SyncControllerModule } from '../../../controllers/sync-controller/sync-controller.module';
+import { BankWebhookControllerModule } from '../../../controllers/bank-webhook-controller/bank-webhook-controller.module';
 import { OperationsControllerModule } from '../../../controllers/operations-controller/operations-controller.module';
 import { BalanceControllerModule } from '../../../controllers/balance-controller/balance-controller.module';
 import { SponsorsControllerModule } from '../../../controllers/sponsors-controller/sponsors-controller.module';
@@ -28,6 +29,7 @@ import { MmrControllerModule } from '../../../controllers/mmr-controller/mmr-con
     CommonControllerModule,
     WebhookControllerModule,
     SyncControllerModule,
+    BankWebhookControllerModule,
     OperationsControllerModule,
     BalanceControllerModule,
     SponsorsControllerModule,

@@ -71,7 +71,8 @@ export class TournamentPaymentRepository {
   ): Promise<ReconcileResult[]> {
     const rows = await this.dataSource.query<UpdatedPaymentRow[]>(
       `UPDATE "tournament_team_payment" AS p
-       SET "status" = CASE WHEN $2 >= t."entryFee" THEN 'PAID' ELSE 'UNDERPAID' END,
+       SET "status" = (CASE WHEN $2 >= t."entryFee" THEN 'PAID' ELSE 'UNDERPAID' END)
+                        ::"public"."tournament_team_payment_status_enum",
            "amountPaid" = $2,
            "transactionId" = $1,
            "paidAt" = CASE WHEN $2 >= t."entryFee" THEN $3 ELSE p."paidAt" END,

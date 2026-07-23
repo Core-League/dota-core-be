@@ -22,6 +22,26 @@ export const AccountSchema = z.object({
 export type Account = z.infer<typeof AccountSchema>;
 
 /**
+ * A single jar (банка) from `client-info`. Note `id` and `sendId` are different
+ * values and are NOT derivable from each other: `sendId` is what appears in the
+ * public `https://send.monobank.ua/{sendId}` link (and therefore in
+ * `tournament.paymentJarUrl`), while `id` is what arrives as `data.account` in a
+ * webhook push and what `getStatement` accepts. Mapping one to the other requires
+ * this endpoint.
+ */
+export const JarSchema = z.object({
+  id: z.string(),
+  sendId: z.string().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  currencyCode: z.number(),
+  balance: z.number(),
+  goal: z.number().nullable().optional(),
+});
+
+export type Jar = z.infer<typeof JarSchema>;
+
+/**
  * A single operation — identical shape in a statement and in a webhook push
  * (`StatementItem`). Amounts are in kopecks.
  */
@@ -54,6 +74,8 @@ export const ClientInfoSchema = z.object({
   webHookUrl: z.string().optional(),
   permissions: z.string().optional(),
   accounts: z.array(AccountSchema),
+  // Absent for tokens without jar access — default so those clients still parse.
+  jars: z.array(JarSchema).default([]),
 });
 
 export type ClientInfo = z.infer<typeof ClientInfoSchema>;
