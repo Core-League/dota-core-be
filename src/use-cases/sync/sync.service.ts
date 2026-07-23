@@ -34,7 +34,11 @@ export class SyncService {
       await this.transactionRepo.upsert(tx);
     }
     await this.classificationService.classifyNew(newTransactions);
-    await this.tournamentPaymentRepo.reconcileTransactions(newTransactions);
+    // Reconcile the whole fetched window, not just the new rows: a transfer can
+    // land before the captain creates the payment record, and that reference
+    // would then never be matched by any later sync. Re-matching costs nothing —
+    // the UPDATE skips rows that are already PAID.
+    await this.tournamentPaymentRepo.reconcileTransactions(fetched);
 
     this.logger.log(
       `Synced ${newTransactions.length} new transactions for account ${accountId} (${fetched.length} fetched)`,

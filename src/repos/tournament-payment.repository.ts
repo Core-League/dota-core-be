@@ -69,7 +69,12 @@ export class TournamentPaymentRepository {
     amount: number,
     time: Date,
   ): Promise<ReconcileResult[]> {
-    const rows = await this.dataSource.query<UpdatedPaymentRow[]>(
+    // TypeORM's postgres driver wraps UPDATE results as `[rows, rowCount]` even
+    // when the statement carries a RETURNING clause, so the rows must be
+    // unwrapped. Reading the raw result as a row list yields two all-undefined
+    // entries on every call — a length of 2 no matter what actually matched —
+    // which silently defeats the `length`-based branching in IngestionService.
+    const [rows] = await this.dataSource.query<[UpdatedPaymentRow[], number]>(
       `UPDATE "tournament_team_payment" AS p
        SET "status" = (CASE WHEN $2 >= t."entryFee" THEN 'PAID' ELSE 'UNDERPAID' END)
                         ::"public"."tournament_team_payment_status_enum",
@@ -86,7 +91,7 @@ export class TournamentPaymentRepository {
        RETURNING p."id", p."reference", p."status"`,
       [transactionId, amount, time, comment],
     );
-    return rows.map((r) => ({
+    return (rows ?? []).map((r) => ({
       paymentId: r.id,
       reference: r.reference,
       status: r.status,
