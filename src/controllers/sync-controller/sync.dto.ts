@@ -15,7 +15,16 @@ export class SyncRequestDto extends createZodDto(SyncRequestSchema) {}
 
 /* ── Response DTOs ─────────────────────────────────────────────────────────── */
 
-export const SyncResultSchema = z.object({ synced: z.number().int() });
+/**
+ * `synced` counts newly stored transactions — always 0 for an account/jar outside
+ * `MONOBANK_ACCOUNT_ID(S)`, which is expected for a tournament-jar backfill.
+ * `reconciled` is the meaningful signal there: entry-fee payments moved to
+ * PAID/UNDERPAID by this run.
+ */
+export const SyncResultSchema = z.object({
+  synced: z.number().int(),
+  reconciled: z.number().int(),
+});
 export class SyncResultDto extends createZodDto(SyncResultSchema) {}
 
 export const ReclassifyResultSchema = z.object({

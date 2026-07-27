@@ -10,6 +10,7 @@ import { AdminGuard } from '../../connectors/auth/guards/admin.guard';
 import { JwtAuthGuard } from '../../connectors/auth/guards/jwt-auth.guard';
 import { ConfigConnectorService } from '../../connectors/config/config-connector.service';
 import { MonobankService } from '../../connectors/monobank/monobank.service';
+import { watchedAccountIds } from '../../use-cases/shared/watched-accounts';
 import {
   SetWebhookRequestDto,
   SetWebhookResultDto,
@@ -116,12 +117,8 @@ export class BankWebhookController {
     return `${base}/webhook/monobank`;
   }
 
-  /** Mirrors IngestionService: primary account id plus the comma-separated extras. */
+  /** Same rule the push and backfill paths apply. */
   private watchedAccountIds(): string[] {
-    const env = this.config.getEnvConfig();
-    const extras = env.MONOBANK_ACCOUNT_IDS.split(',')
-      .map((id) => id.trim())
-      .filter(Boolean);
-    return [...new Set([env.MONOBANK_ACCOUNT_ID, ...extras].filter(Boolean))];
+    return watchedAccountIds(this.config.getEnvConfig());
   }
 }

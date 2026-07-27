@@ -4,8 +4,8 @@ import { TransactionRepository } from '../../repos/transaction.repository';
 import { TournamentPaymentRepository } from '../../repos/tournament-payment.repository';
 import { ClassificationService } from '../classification/classification.service';
 import { toStoredTransaction } from '../shared/bank-transaction.mapper';
+import { isWatchedAccount } from '../shared/watched-accounts';
 import { ConfigConnectorService } from 'src/connectors/config/config-connector.service';
-import type { Env } from '../../types/entities/env';
 
 /**
  * Webhook entry point. Validates the push, persists the raw transaction
@@ -44,7 +44,7 @@ export class IngestionService {
       const { account, statementItem } = payload.data;
 
       const stored = toStoredTransaction(account, statementItem);
-      const watched = this.isWatchedAccount(account, envConfig);
+      const watched = isWatchedAccount(account, envConfig);
 
       // Always attempted: reference matching is account-agnostic, so this is what
       // makes a brand-new tournament jar work with no config change.
@@ -72,20 +72,5 @@ export class IngestionService {
     } catch (err) {
       this.logger.error('Failed to handle webhook push', err);
     }
-  }
-
-  /**
-   * Whether a push belongs to an account/jar whose full traffic we store and
-   * classify: the primary `MONOBANK_ACCOUNT_ID` plus every id in
-   * `MONOBANK_ACCOUNT_IDS`. Entry-fee reconciliation does NOT depend on this —
-   * listing a jar here only adds finance-side visibility for its non-payment
-   * transactions.
-   */
-  private isWatchedAccount(account: string, envConfig: Env): boolean {
-    if (account === envConfig.MONOBANK_ACCOUNT_ID) return true;
-    return envConfig.MONOBANK_ACCOUNT_IDS.split(',')
-      .map((id) => id.trim())
-      .filter(Boolean)
-      .includes(account);
   }
 }

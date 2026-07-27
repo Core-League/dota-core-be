@@ -23,9 +23,18 @@ export class SyncController {
   ) {}
 
   @Post()
-  @ApiOperation({ summary: 'Backfill transactions for a period' })
+  @ApiOperation({
+    summary: 'Backfill transactions for a period',
+    description:
+      'Reconciles entry-fee payments for any account/jar. Storing and classifying ' +
+      'the statement is limited to `MONOBANK_ACCOUNT_ID(S)`, so backfilling a ' +
+      'tournament jar recovers its payments without importing its traffic into ' +
+      'the finance views — expect `synced: 0` there and read `reconciled`.',
+  })
   @ApiCreatedResponse({ type: SyncResultDto })
-  async sync(@Body() body: SyncRequestDto): Promise<{ synced: number }> {
+  async sync(
+    @Body() body: SyncRequestDto,
+  ): Promise<{ synced: number; reconciled: number }> {
     const accountId =
       body.accountId ?? this.config.getEnvConfig().MONOBANK_ACCOUNT_ID;
     if (!accountId) {
@@ -33,12 +42,11 @@ export class SyncController {
         'accountId is required (or set MONOBANK_ACCOUNT_ID)',
       );
     }
-    const synced = await this.syncService.syncPeriod(
+    return this.syncService.syncPeriod(
       accountId,
       new Date(body.from),
       body.to ? new Date(body.to) : undefined,
     );
-    return { synced };
   }
 
   @Post('reclassify')
