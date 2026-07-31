@@ -336,34 +336,23 @@ export class QualificationService {
     }
 
     const newMatches: QualificationMatch[] = [];
+    const createdNodeGroupIds: string[] = [];
     for (const opponent of existingTeams) {
       if (!opponent.dotaTeamId || !team.dotaTeamId) continue;
 
       this.logger.log(
         `Creating match node inside NodeGroup${qualification.nodeGroupId} (team=${team.dotaTeamId} vs opponent=${opponent.dotaTeamId})`,
       );
-      await this.dota2.addNodeGroup({
-        nodeGroupId: '',
-        nodeGroupType: 2,
-        teamCount: 2,
-        containingNodeGroupId: qualification.nodeGroupId,
-        phase: 0,
-        defaultNodeType: 1,
-      });
-      const matchNodeGroupId = await this.dota2.resolveRoundRobinNodeGroupId(
+      const matchNodeGroupId = await this.dota2.createTwoTeamFixtureNode(
         qualification.nodeGroupId,
+        team.dotaTeamId,
+        opponent.dotaTeamId,
+        `${team.name} vs ${opponent.name}`,
       );
       this.logger.log(
-        `Match node nodeGroupId=${matchNodeGroupId} (parsed from Dota2 page) — adding teams`,
+        `Match node nodeGroupId=${matchNodeGroupId} created with both teams`,
       );
-      await this.dota2.addNodeGroupTeam(matchNodeGroupId, team.dotaTeamId);
-      this.logger.log(
-        `Added team ${team.dotaTeamId} to match nodeGroupId=${matchNodeGroupId}`,
-      );
-      await this.dota2.addNodeGroupTeam(matchNodeGroupId, opponent.dotaTeamId);
-      this.logger.log(
-        `Added opponent ${opponent.dotaTeamId} to match nodeGroupId=${matchNodeGroupId}`,
-      );
+      createdNodeGroupIds.push(matchNodeGroupId);
 
       const match = this.qualMatchRepo.create({
         qualification,
@@ -374,6 +363,21 @@ export class QualificationService {
         nodeGroupId: matchNodeGroupId,
       });
       newMatches.push(match);
+    }
+
+    /**
+     * Guard against the failure that produced a whole qualification of
+     * unpickable matches: teams attached to the group but never bound to its
+     * node. The join itself still succeeds — admins can record results by
+     * hand — but the breakage must not pass unnoticed again.
+     */
+    const unplayable =
+      await this.dota2.findUnplayableFixtureNodeGroups(createdNodeGroupIds);
+    if (unplayable.length > 0) {
+      this.logger.error(
+        `Dota fixtures created without teams bound to their node — these matches ` +
+          `cannot be selected when creating a lobby: NodeGroup${unplayable.join(', NodeGroup')}`,
+      );
     }
 
     await this.dataSource.transaction(async (manager) => {

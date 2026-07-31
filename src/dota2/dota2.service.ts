@@ -98,6 +98,47 @@ export interface OpenDotaMatch {
   replay_url?: string;
 }
 
+/**
+ * Valve `node_group_type` values — mirrors the "Match Group Type" dropdown on
+ * the league tournament page.
+ *
+ * Only SHOWMATCH reliably binds added teams to the group's node. Creating a
+ * two-team fixture as ROUND_ROBIN leaves the node with `team_id_1/2 = 0`, and
+ * such a match cannot be picked when creating a lobby.
+ */
+export const NODE_GROUP_TYPE = {
+  ORGANIZATIONAL: 1,
+  ROUND_ROBIN: 2,
+  SHOWMATCH: 7,
+} as const;
+
+/** Valve `default_node_type`: series length of the nodes in a group. */
+export const DEFAULT_NODE_TYPE = {
+  BO1: 1,
+  BO3: 2,
+} as const;
+
+interface DotaNode {
+  node_id: number;
+  node_group_id: number;
+  node_type: number;
+  team_id_1: number;
+  team_id_2: number;
+  has_started: boolean;
+  is_completed: boolean;
+}
+
+/** The node group blob Valve embeds in each group header's onclick handler. */
+interface DotaNodeGroup {
+  node_group_id: number;
+  parent_node_group_id: number;
+  node_group_type: number;
+  default_node_type: number;
+  name: string;
+  team_count: number;
+  nodes: DotaNode[];
+}
+
 @Injectable()
 export class Dota2Service {
   private readonly logger = new Logger(Dota2Service.name);
@@ -291,134 +332,150 @@ export class Dota2Service {
   }
 
   /**
+   * Every non-organisational node group on the page carries its full state as
+   * JSON inside its header's edit/delete `onclick`. Reading that is exact,
+   * unlike matching on the `.Type*` CSS classes: a group created with
+   * `node_group_type=7` renders as `.TypeShowmatch` and never matches
+   * `.TypeRoundRobin`, so class-based lookups miss silently.
+   *
+   * Organisational groups have no edit/delete controls and so are absent here —
+   * use {@link resolveOrganizationalNodeGroupId} for those.
+   */
+  private parseNodeGroups(html: string): Map<number, DotaNodeGroup> {
+    const $ = cheerio.load(html);
+    const groups = new Map<number, DotaNodeGroup>();
+
+    $('.NodeGroup').each((_, el) => {
+      const header = $(el).children('.NodeGroupHeader');
+      const onclick =
+        header.children('.NodeGroupHeaderEdit').attr('onclick') ??
+        header.children('.NodeGroupHeaderDelete').attr('onclick');
+      if (!onclick) return;
+
+      const start = onclick.indexOf('{');
+      const end = onclick.lastIndexOf('}');
+      if (start < 0 || end <= start) return;
+
+      try {
+        const group = JSON.parse(
+          onclick.slice(start, end + 1),
+        ) as DotaNodeGroup;
+        if (typeof group.node_group_id === 'number') {
+          groups.set(group.node_group_id, group);
+        }
+      } catch {
+        // one malformed blob must not blind us to the rest of the page
+      }
+    });
+
+    return groups;
+  }
+
+  /**
    * After calling addNodeGroup (nodeGroupType=1, organisational), fetch the
-   * tournament page and return the id of the last .TypeOrganizational.NodeGroup
-   * element — that is the node group Dota2 just created.
+   * tournament page and return the highest .TypeOrganizational.NodeGroup id —
+   * ids are handed out monotonically, so that is the group just created.
    */
   async resolveOrganizationalNodeGroupId(): Promise<string> {
     const html = await this.fetchTournamentPage();
     const $ = cheerio.load(html);
-    const el = $('.TypeOrganizational.NodeGroup').last();
-    const rawId = el.attr('id'); // e.g. "NodeGroup96"
-    const match = rawId?.match(/^NodeGroup(\d+)$/);
-    if (!match) {
+
+    let newest = -1;
+    $('.TypeOrganizational.NodeGroup').each((_, el) => {
+      const match = $(el)
+        .attr('id')
+        ?.match(/^NodeGroup(\d+)$/);
+      if (match) newest = Math.max(newest, parseInt(match[1], 10));
+    });
+
+    if (newest < 0) {
       this.logger.error(
-        `Could not find .TypeOrganizational.NodeGroup on page (last id="${rawId ?? 'none'}")`,
+        'Could not find any .TypeOrganizational.NodeGroup on the Dota2 page',
       );
       throw new InternalServerErrorException(
         'Could not resolve organisational NodeGroup id from Dota2 page',
       );
     }
-    const id = match[1];
+
     this.logger.log(
-      `Resolved organisational nodeGroupId=${id} from Dota2 page`,
+      `Resolved organisational nodeGroupId=${newest} from Dota2 page`,
     );
-    return id;
+    return String(newest);
   }
 
   /**
-   * After calling addNodeGroup (nodeGroupType=2, RR pairing) inside a
-   * qualification group, fetch the tournament page and return the id of the
-   * last .TypeRoundRobin.NodeGroup element under
-   * #NodeGroup{containingNodeGroupId}.
+   * After calling addNodeGroup with a `containing_node_group_id`, return the
+   * newest child of that parent — the group just created.
+   *
+   * Scoped to the given parent on purpose: picking the globally highest id on
+   * the page can hand back a group belonging to a different tournament in the
+   * same league.
    */
-  async resolveRoundRobinNodeGroupId(
+  async resolveNewestChildNodeGroupId(
     containingNodeGroupId: string,
   ): Promise<string> {
-    const html = await this.fetchTournamentPage();
-    const $ = cheerio.load(html);
-    const el = $(
-      `#NodeGroup${containingNodeGroupId} .TypeRoundRobin.NodeGroup`,
-    ).last();
-    const rawId = el.attr('id'); // e.g. "NodeGroup85"
-    const match = rawId?.match(/^NodeGroup(\d+)$/);
-    if (!match) {
+    const groups = this.parseNodeGroups(await this.fetchTournamentPage());
+    const parentId = parseInt(containingNodeGroupId, 10);
+
+    let newest = -1;
+    for (const group of groups.values()) {
+      if (group.parent_node_group_id === parentId) {
+        newest = Math.max(newest, group.node_group_id);
+      }
+    }
+
+    if (newest < 0) {
       this.logger.error(
-        `Could not find .TypeRoundRobin.NodeGroup inside #NodeGroup${containingNodeGroupId} (last id="${rawId ?? 'none'}")`,
+        `No child node group found under NodeGroup${containingNodeGroupId} ` +
+          `(parsed ${groups.size} node groups from the page)`,
       );
       throw new InternalServerErrorException(
-        `Could not resolve round-robin NodeGroup id inside NodeGroup${containingNodeGroupId} from Dota2 page`,
+        `Could not resolve child NodeGroup id inside NodeGroup${containingNodeGroupId} from Dota2 page`,
       );
     }
-    const id = match[1];
+
     this.logger.log(
-      `Resolved round-robin nodeGroupId=${id} inside NodeGroup${containingNodeGroupId}`,
+      `Resolved child nodeGroupId=${newest} inside NodeGroup${containingNodeGroupId}`,
     );
-    return id;
+    return String(newest);
   }
 
   /**
-   * After addNodeGroup for league BO-series fixtures (`node_group_type=7`;
-   * `default_node_type=2` for BO3, matching Valve `post_editnodegroup`).
-   * Prefer RR scrape (often still works); fall back to elimination/series wrappers.
+   * Post-condition check for two-team fixtures. Adding teams to a group does
+   * not always bind them to that group's node — when it doesn't, the node keeps
+   * `team_id_1/2 = 0` and the match cannot be selected while creating a lobby,
+   * with nothing in the create/add responses to signal it.
+   *
+   * @returns the subset of ids whose node has no teams bound (missing groups
+   *          count as unplayable).
    */
-  async resolveBestOfSeriesNodeGroupId(
-    containingNodeGroupId: string,
-  ): Promise<string> {
-    try {
-      return await this.resolveRoundRobinNodeGroupId(containingNodeGroupId);
-    } catch {
-      this.logger.warn(
-        `RR scrape missed BO-series node inside NodeGroup${containingNodeGroupId} — trying fallbacks`,
+  async findUnplayableFixtureNodeGroups(
+    nodeGroupIds: string[],
+  ): Promise<string[]> {
+    if (nodeGroupIds.length === 0) return [];
+
+    const groups = this.parseNodeGroups(await this.fetchTournamentPage());
+    return nodeGroupIds.filter((id) => {
+      const group = groups.get(parseInt(id, 10));
+      if (!group) return true;
+      return !(group.nodes ?? []).some(
+        (node) => node.team_id_1 > 0 && node.team_id_2 > 0,
       );
-    }
-
-    const html = await this.fetchTournamentPage();
-    const $ = cheerio.load(html);
-    const root = $(`#NodeGroup${containingNodeGroupId}`);
-    const trySelectors = [
-      '.TypeElimination.NodeGroup',
-      '.TypeSeries.NodeGroup',
-    ];
-
-    for (const selector of trySelectors) {
-      const el = root.find(selector).last();
-      const rawId = el.attr('id');
-      const match = rawId?.match(/^NodeGroup(\d+)$/);
-      if (match) {
-        this.logger.log(
-          `Resolved BO series nodeGroupId=${match[1]} via ${selector} under NodeGroup${containingNodeGroupId}`,
-        );
-        return match[1];
-      }
-    }
-
-    // Fallback: find the highest-ID NodeGroup on the page that is newer than the
-    // parent org group. Since IDs are monotonically increasing and we just called
-    // addNodeGroup, the newly created node will have the largest ID.
-    const parentId = parseInt(containingNodeGroupId, 10);
-    let bestId = -1;
-    $('[id^="NodeGroup"]').each((_, el) => {
-      const rawId = $(el).attr('id');
-      const m = rawId?.match(/^NodeGroup(\d+)$/);
-      if (m) {
-        const id = parseInt(m[1], 10);
-        if (id > parentId && id > bestId) bestId = id;
-      }
     });
-    if (bestId > -1) {
-      this.logger.log(
-        `Resolved BO series nodeGroupId=${bestId} via max-ID fallback (parent NodeGroup${containingNodeGroupId})`,
-      );
-      return String(bestId);
-    }
-
-    this.logger.error(
-      `Could not resolve BO series NodeGroup inside #NodeGroup${containingNodeGroupId}`,
-    );
-    throw new InternalServerErrorException(
-      `Could not resolve BO series NodeGroup inside NodeGroup${containingNodeGroupId} from Dota2 page`,
-    );
   }
 
   /**
    * Pair node under organisational parent.
-   * Both BO1 and BO3 use `node_group_type=7`; only `default_node_type` differs:
+   * Both BO1 and BO3 use `node_group_type=7` (Showmatch); only
+   * `default_node_type` differs:
    *   BO1 → default_node_type=1
    *   BO3 → default_node_type=2
    *
-   * @param bestOfOne — When false, creates a BO3-series slot.
+   * Showmatch is the only type that binds the added teams to the group's node,
+   * which is what makes the match selectable when creating a lobby.
+   *
    * @param name — Optional display label shown on the Dota 2 admin page ("Team A vs Team B").
+   * @param isBo3 — When true, creates a BO3-series slot instead of a BO1.
    */
   async createTwoTeamFixtureNode(
     containingOrganizationalGroupId: string,
@@ -429,16 +486,16 @@ export class Dota2Service {
   ): Promise<string> {
     await this.addNodeGroup({
       nodeGroupId: '',
-      nodeGroupType: 7,
+      nodeGroupType: NODE_GROUP_TYPE.SHOWMATCH,
       teamCount: 2,
       containingNodeGroupId: containingOrganizationalGroupId,
       phase: 0,
-      defaultNodeType: isBo3 ? 2 : 1,
+      defaultNodeType: isBo3 ? DEFAULT_NODE_TYPE.BO3 : DEFAULT_NODE_TYPE.BO1,
       name,
     });
     let matchNodeGroupId: string | undefined;
     try {
-      matchNodeGroupId = await this.resolveBestOfSeriesNodeGroupId(
+      matchNodeGroupId = await this.resolveNewestChildNodeGroupId(
         containingOrganizationalGroupId,
       );
 
