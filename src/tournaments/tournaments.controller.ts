@@ -297,6 +297,22 @@ export class TournamentsController {
     return this.playoffService.startPlayoff(id, body.teamIds ?? []);
   }
 
+  @Post(':id/playoff/restart')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Restart the playoff from scratch',
+    description:
+      'Destroys all playoff results, series and disqualifications, re-derives participants from ' +
+      'current qualification standings, then rebuilds the Challonge bracket and Dota league ' +
+      'mirror. End state matches starting the playoff for the first time. If no playoff exists ' +
+      'yet, this starts one. Irreversible.',
+  })
+  @ApiOkResponse({ type: PlayoffResponseDto })
+  restartPlayoff(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.playoffService.restartPlayoff(id);
+  }
+
   @Post(':id/playoff/submit-manual')
   @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiBearerAuth()
