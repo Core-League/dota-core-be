@@ -42,7 +42,8 @@ describe('TeamsService captain user-role sync', () => {
     it('creates a Captain role when the player has none', async () => {
       const rolesRepo = {
         findOne: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockImplementation((x) => x),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        create: jest.fn().mockImplementation((x: any) => x),
         save: jest.fn().mockResolvedValue(undefined),
         remove: jest.fn(),
       };

@@ -12,6 +12,7 @@ import { PlayoffSeries } from './playoff-series.entity';
 import { Playoff } from './playoff.entity';
 import { PlayoffRepository } from './playoff.repository';
 import { PlayoffService } from './playoff.service';
+import { PlayoffTeardownService } from './playoff-teardown.service';
 
 @Module({
   imports: [
@@ -26,7 +27,12 @@ import { PlayoffService } from './playoff.service';
     DueloModule,
     TeamsModule,
   ],
-  providers: [PlayoffService, PlayoffRepository, PlayoffMatchRepository],
+  providers: [
+    PlayoffService,
+    PlayoffRepository,
+    PlayoffMatchRepository,
+    PlayoffTeardownService,
+  ],
   exports: [PlayoffService],
 })
 export class PlayoffModule {}
