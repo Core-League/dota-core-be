@@ -30,8 +30,9 @@ import { PlayoffBracketGameSummaryDto } from './dto/series-game-slot.dto';
 import { PlayoffLeagueFixture } from './playoff-league-fixture.entity';
 import { Playoff } from './playoff.entity';
 import { PlayoffSeries, PlayoffFinalType } from './playoff-series.entity';
+import { PlayoffTeardownService } from './playoff-teardown.service';
 
-/** Auto-started playoffs take the top N eligible teams by qualification standings. */
+/** Auto-started and restarted playoffs take the top N eligible teams by qualification standings. */
 const PLAYOFF_TEAM_LIMIT = 8;
 
 @Injectable()
@@ -41,6 +42,7 @@ export class PlayoffService {
   constructor(
     private readonly playoffRepo: PlayoffRepository,
     private readonly playoffMatchRepo: PlayoffMatchRepository,
+    private readonly teardown: PlayoffTeardownService,
     private readonly challonge: ChallongeService,
     private readonly dota2: Dota2Service,
     private readonly duelo: DueloService,
@@ -221,6 +223,55 @@ export class PlayoffService {
       eligibleTeamIds,
       PLAYOFF_TEAM_LIMIT,
     );
+  }
+
+  /**
+   * Full playoff reset — same end state as a first-ever auto-start.
+   *
+   * Re-derives participants from current qualification standings, drops every prior result and
+   * disqualification, and rebuilds the Challonge bracket plus Dota league mirror by delegating
+   * to `startPlayoff`.
+   *
+   * Ordering matters:
+   * - validation runs before any destruction, so a rejected restart leaves the existing playoff
+   *   completely untouched;
+   * - external handles are captured before the wipe, which deletes the rows holding them;
+   * - old Challonge/Dota resources are released only after the replacement bracket is live.
+   *
+   * Tournament status is intentionally left as-is. `TournamentPlayoffScheduler` sweeps only
+   * `QUALIFICATIONS`, so it can never race a restart, and a crash mid-restart cannot trigger a
+   * surprise auto-start. When no playoff exists (e.g. a previous restart died mid-flight) this
+   * behaves as a plain start, which makes a failed restart retryable rather than terminal.
+   */
+  async restartPlayoff(tournamentId: string): Promise<PlayoffResponseDto> {
+    const tournament = await this.dataSource
+      .getRepository(Tournament)
+      .findOne({ where: { id: tournamentId } });
+    if (!tournament) throw new NotFoundException('Tournament not found');
+
+    const freshTeamIds = await this.deriveTopEligibleTeamIds(tournamentId);
+    if (freshTeamIds.length < 2) {
+      throw new BadRequestException(
+        `Cannot restart playoff: only ${freshTeamIds.length} eligible team(s) in qualification ` +
+          'standings, at least 2 required. Existing playoff left untouched.',
+      );
+    }
+
+    const existing = await this.playoffRepo.findByTournamentId(tournamentId);
+    const handles = existing
+      ? await this.teardown.captureExternalHandles(existing)
+      : null;
+
+    await this.teardown.wipePlayoffState(tournamentId);
+
+    const response = await this.startPlayoff(tournamentId, freshTeamIds);
+
+    if (handles) await this.teardown.releaseExternals(handles);
+
+    this.logger.log(
+      `Playoff restarted for tournament ${tournamentId} with ${freshTeamIds.length} teams`,
+    );
+    return response;
   }
 
   async submitMatch(
