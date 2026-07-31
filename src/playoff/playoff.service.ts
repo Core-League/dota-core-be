@@ -184,28 +184,43 @@ export class PlayoffService {
       return;
     }
 
-    const eligibleTeamIds = await findEligibleQualificationTeamIds(
-      this.dataSource,
-      tournamentId,
-    );
-    if (eligibleTeamIds.length === 0) {
+    const playoffTeamIds = await this.deriveTopEligibleTeamIds(tournamentId);
+    if (playoffTeamIds.length === 0) {
       this.logger.warn(
         `Auto-start skipped for tournament ${tournamentId}: no eligible teams yet`,
       );
       return;
     }
 
-    const playoffTeamIds = await this.selectTopTeamsByStandings(
+    this.logger.log(
+      `Auto-starting playoff for tournament ${tournamentId} with ${playoffTeamIds.length} ` +
+        `teams (top ${PLAYOFF_TEAM_LIMIT} by standings)`,
+    );
+    await this.startPlayoff(tournamentId, playoffTeamIds);
+    this.logger.log(`Auto-start succeeded for tournament ${tournamentId}`);
+  }
+
+  /**
+   * Participants for an automatic start or a restart: every team eligible from qualification,
+   * cut to the top `PLAYOFF_TEAM_LIMIT` by current standings. Shared by `autoStartPlayoff` and
+   * `restartPlayoff` so the two cannot drift apart on how the field is chosen.
+   *
+   * Returns an empty array when nothing is eligible yet.
+   */
+  private async deriveTopEligibleTeamIds(
+    tournamentId: string,
+  ): Promise<string[]> {
+    const eligibleTeamIds = await findEligibleQualificationTeamIds(
+      this.dataSource,
+      tournamentId,
+    );
+    if (eligibleTeamIds.length === 0) return [];
+
+    return this.selectTopTeamsByStandings(
       tournamentId,
       eligibleTeamIds,
       PLAYOFF_TEAM_LIMIT,
     );
-    this.logger.log(
-      `Auto-starting playoff for tournament ${tournamentId} with ${playoffTeamIds.length} ` +
-        `of ${eligibleTeamIds.length} eligible teams (top ${PLAYOFF_TEAM_LIMIT})`,
-    );
-    await this.startPlayoff(tournamentId, playoffTeamIds);
-    this.logger.log(`Auto-start succeeded for tournament ${tournamentId}`);
   }
 
   async submitMatch(
