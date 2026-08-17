@@ -78,6 +78,8 @@ export class TournamentsController {
   ) {}
 
   @Post()
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   create(@Body() body: CreateTournamentDto) {
     return this.tournamentsService.create(body);
   }
@@ -93,6 +95,8 @@ export class TournamentsController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateTournamentDto,
@@ -126,6 +130,33 @@ export class TournamentsController {
   @ApiBearerAuth()
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.tournamentsService.remove(id);
+  }
+
+  @Post(':id/registration/close')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Admin: close tournament registration ahead of the deadline',
+    description:
+      'Блокує приєднання команд і створення платіжних інтентів незалежно від ' +
+      'registrationEndsAt. Дати турніру та вікно подачі кваліфікаційних матчів не змінюються. ' +
+      'Повертає актуальний турнір.',
+  })
+  closeRegistration(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.tournamentsService.closeRegistration(id);
+  }
+
+  @Post(':id/registration/open')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Admin: reopen registration closed ahead of the deadline',
+    description:
+      'Знімає ручне закриття. Далі діють лише планові дати ' +
+      'registrationStartsAt / registrationEndsAt. Повертає актуальний турнір.',
+  })
+  openRegistration(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.tournamentsService.openRegistration(id);
   }
 
   @Get(':id/qualification')

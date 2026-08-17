@@ -37,6 +37,18 @@ export class TournamentsRepository {
     });
   }
 
+  /**
+   * Targeted column write. Preferred over load-modify-`save` for single-field
+   * toggles: it never re-saves the loaded relation graph, so it cannot touch the
+   * `tournament_team` join table.
+   */
+  async updateRegistrationClosedAt(
+    id: string,
+    registrationClosedAt: Date | null,
+  ): Promise<void> {
+    await this.repo.update({ id }, { registrationClosedAt });
+  }
+
   remove(tournament: Tournament): Promise<Tournament> {
     return this.repo.remove(tournament);
   }

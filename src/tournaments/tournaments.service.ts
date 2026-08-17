@@ -103,6 +103,30 @@ export class TournamentsService {
     return saved;
   }
 
+  /**
+   * Ручне закриття реєстрації адміном до настання `registrationEndsAt`.
+   * Свідомо не торкається дат турніру, тому вікно подачі кваліфікаційних
+   * матчів (`Qualification.endTime`) лишається незмінним.
+   */
+  async closeRegistration(id: string) {
+    const tournament = await this.findOneEntity(id);
+    if (!tournament.registrationClosedAt) {
+      await this.tournamentsRepo.updateRegistrationClosedAt(id, new Date());
+      this.logger.log(`Tournament ${id}: registration closed by admin`);
+    }
+    return this.findOne(id);
+  }
+
+  /** Повторне відкриття реєстрації: діють лише планові дати. */
+  async openRegistration(id: string) {
+    const tournament = await this.findOneEntity(id);
+    if (tournament.registrationClosedAt) {
+      await this.tournamentsRepo.updateRegistrationClosedAt(id, null);
+      this.logger.log(`Tournament ${id}: registration reopened by admin`);
+    }
+    return this.findOne(id);
+  }
+
   async remove(id: string): Promise<void> {
     const tournament = await this.findOneEntity(id);
 

@@ -13,6 +13,10 @@ import { TournamentTeamPaymentRepository } from './tournament-team-payment.repos
 import { PaymentStatus } from './tournament-team-payment.model';
 import { TournamentPaymentSummaryDto } from './dto/tournament-payment-summary.dto';
 import { TournamentPaymentIntentDto } from './dto/tournament-payment-intent.dto';
+import {
+  getRegistrationBlockReason,
+  registrationBlockMessage,
+} from './tournament-registration.util';
 
 @Injectable()
 export class TournamentPaymentsService {
@@ -92,6 +96,16 @@ export class TournamentPaymentsService {
     const entryFee = tournament.entryFee ?? 0;
     if (entryFee <= 0) {
       throw new BadRequestException('Турнір безкоштовний — оплата не потрібна');
+    }
+
+    /**
+     * Не даємо стартувати оплату після закриття реєстрації: інакше капітан
+     * сплатив би внесок і отримав відмову на приєднанні (повернення коштів).
+     * Уже створені платежі лишаються доступними через getMyPayment.
+     */
+    const blockReason = getRegistrationBlockReason(tournament);
+    if (blockReason) {
+      throw new BadRequestException(registrationBlockMessage(blockReason));
     }
 
     const team = await this.findCaptainTeam(playerId);

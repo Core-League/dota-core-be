@@ -49,6 +49,15 @@ export class Tournament {
   @Column()
   registrationEndsAt: Date;
 
+  /**
+   * Set when an admin closes registration ahead of `registrationEndsAt`; null means
+   * "not manually closed". Deliberately separate from `registrationEndsAt`, which also
+   * drives the qualification match-submission window (`Qualification.endTime`) — moving
+   * that date to close registration early would cut off match submissions too.
+   */
+  @Column({ nullable: true, type: 'timestamp' })
+  registrationClosedAt: Date | null;
+
   @Column()
   tournamentStartsAt: Date;
 

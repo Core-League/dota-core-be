@@ -28,6 +28,10 @@ import {
   computeTeamAvgRating,
   isTeamEligibleForDivision,
 } from '../tournaments/tournament-division.util';
+import {
+  getRegistrationBlockReason,
+  registrationBlockMessage,
+} from '../tournaments/tournament-registration.util';
 import { QualificationMatch } from './qualification-match.entity';
 import { QualificationMatchRepository } from './qualification-match.repository';
 import { Qualification } from './qualification.entity';
@@ -160,12 +164,22 @@ export class QualificationService {
     });
     if (!tournament) throw new NotFoundException('Турнір не знайдено');
 
+    const enforceRegistrationRules =
+      !bypassEnv && !(useExplicitTeamId && isAdmin);
+
     if (
-      !bypassEnv &&
-      !(useExplicitTeamId && isAdmin) &&
+      enforceRegistrationRules &&
       tournament.tournamentStatus !== TournamentStatus.QUALIFICATIONS
     ) {
       throw new BadRequestException('Реєстрація на турнір закрита');
+    }
+
+    /** Реєстраційне вікно та ручне закриття адміном — лише для капітанів. */
+    if (enforceRegistrationRules) {
+      const blockReason = getRegistrationBlockReason(tournament);
+      if (blockReason) {
+        throw new BadRequestException(registrationBlockMessage(blockReason));
+      }
     }
 
     const teamRepo = this.dataSource.getRepository(Team);
