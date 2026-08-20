@@ -43,6 +43,21 @@ export class Tournament {
   @Column({ nullable: true })
   tournamentSlots: number;
 
+  /**
+   * Tournament schedule — three independent windows, each authored by an admin:
+   *
+   * 1. Registration (`registrationStartsAt`/`registrationEndsAt`) — when a captain may
+   *    join the tournament and start an entry-fee payment. See `tournament-registration.util.ts`.
+   * 2. Qualification (`qualificationStartsAt`/`qualificationEndsAt`) — the qualification
+   *    match-submission window, mirrored onto `Qualification.startTime`/`endTime`.
+   * 3. Playoff (`tournamentStartsAt`/`tournamentEndsAt`) — bracket start (the auto-start
+   *    scheduler trigger) and tournament end. Kept under the historical `tournament*`
+   *    names because they are part of the public team/tournament response contract.
+   *
+   * Ordering is enforced by `validateTournamentSchedule`: start < end within each window,
+   * and qualification must finish before the playoff starts. Registration is deliberately
+   * allowed to overlap qualification — teams register and play their qualifier the same day.
+   */
   @Column()
   registrationStartsAt: Date;
 
@@ -51,16 +66,23 @@ export class Tournament {
 
   /**
    * Set when an admin closes registration ahead of `registrationEndsAt`; null means
-   * "not manually closed". Deliberately separate from `registrationEndsAt`, which also
-   * drives the qualification match-submission window (`Qualification.endTime`) — moving
-   * that date to close registration early would cut off match submissions too.
+   * "not manually closed". Separate from `registrationEndsAt` so an early close is
+   * reported as an admin action rather than a schedule change.
    */
   @Column({ nullable: true, type: 'timestamp' })
   registrationClosedAt: Date | null;
 
   @Column()
+  qualificationStartsAt: Date;
+
+  @Column()
+  qualificationEndsAt: Date;
+
+  /** Playoff bracket start. `TournamentPlayoffScheduler` auto-starts the bracket at this moment. */
+  @Column()
   tournamentStartsAt: Date;
 
+  /** Playoff / tournament end. Also bounds the per-team overlapping-tournament check. */
   @Column()
   tournamentEndsAt: Date;
 

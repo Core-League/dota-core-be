@@ -66,19 +66,35 @@ export class CreateTournamentDto {
   @Min(1)
   tournamentSlots?: number;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Початок реєстрації команд на турнір.' })
   @IsDateString()
   registrationStartsAt: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Кінець реєстрації команд на турнір.' })
   @IsDateString()
   registrationEndsAt: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'Початок вікна подачі кваліфікаційних матчів. Може перетинатися з реєстрацією.',
+  })
+  @IsDateString()
+  qualificationStartsAt: string;
+
+  @ApiProperty({
+    description:
+      'Кінець вікна подачі кваліфікаційних матчів. Має бути не пізніше tournamentStartsAt.',
+  })
+  @IsDateString()
+  qualificationEndsAt: string;
+
+  @ApiProperty({
+    description: 'Початок плей-оф — момент автоматичного старту сітки.',
+  })
   @IsDateString()
   tournamentStartsAt: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Кінець плей-оф / турніру.' })
   @IsDateString()
   tournamentEndsAt: string;
 

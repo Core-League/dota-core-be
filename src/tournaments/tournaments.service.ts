@@ -12,6 +12,11 @@ import { TournamentsRepository } from './tournaments.repository';
 import { TournamentPlayoffTeamRepository } from './tournament-playoff-team.repository';
 import { TeamsService } from '../teams/teams.service';
 import { TeamResponseDto } from '../teams/dto/team-response.dto';
+import {
+  QUALIFICATION_WINDOW_KEYS,
+  TTournamentSchedule,
+  validateTournamentSchedule,
+} from './tournament-schedule.util';
 
 @Injectable()
 export class TournamentsService {
@@ -26,13 +31,17 @@ export class TournamentsService {
   ) {}
 
   async create(dto: CreateTournamentDto): Promise<Tournament> {
-    const entity = this.tournamentsRepo.create({
-      ...dto,
+    const schedule: TTournamentSchedule = {
       registrationStartsAt: new Date(dto.registrationStartsAt),
       registrationEndsAt: new Date(dto.registrationEndsAt),
+      qualificationStartsAt: new Date(dto.qualificationStartsAt),
+      qualificationEndsAt: new Date(dto.qualificationEndsAt),
       tournamentStartsAt: new Date(dto.tournamentStartsAt),
       tournamentEndsAt: new Date(dto.tournamentEndsAt),
-    });
+    };
+    validateTournamentSchedule(schedule);
+
+    const entity = this.tournamentsRepo.create({ ...dto, ...schedule });
     const tournament = await this.tournamentsRepo.save(entity);
 
     this.logger.log(
@@ -82,16 +91,23 @@ export class TournamentsService {
 
   async update(id: string, payload: Partial<Tournament>): Promise<Tournament> {
     const tournament = await this.findOneEntity(id);
+
+    /**
+     * Валідуємо підсумковий розклад, а не лише прислані поля: зсув однієї дати
+     * не має залишити турнір із суперечливими вікнами (напр. кваліфікація, що
+     * триває після старту плей-оф).
+     */
+    validateTournamentSchedule({ ...tournament, ...payload });
+
     Object.assign(tournament, payload);
     const saved = await this.tournamentsRepo.save(tournament);
 
-    const qualDateKeys: Array<
-      keyof Pick<
-        Tournament,
-        'registrationStartsAt' | 'registrationEndsAt' | 'tournamentStartsAt'
-      >
-    > = ['registrationStartsAt', 'registrationEndsAt', 'tournamentStartsAt'];
-    const shouldSyncQualification = qualDateKeys.some(
+    /**
+     * Вікно подачі кваліфікаційних матчів тепер має власні колонки, тож
+     * пересинхронізовуємо `Qualification` лише коли змінили саме їх. Правки
+     * дат реєстрації більше не рухають дедлайн подачі матчів.
+     */
+    const shouldSyncQualification = QUALIFICATION_WINDOW_KEYS.some(
       (k) => payload[k] !== undefined,
     );
     if (shouldSyncQualification) {
@@ -105,8 +121,8 @@ export class TournamentsService {
 
   /**
    * Ручне закриття реєстрації адміном до настання `registrationEndsAt`.
-   * Свідомо не торкається дат турніру, тому вікно подачі кваліфікаційних
-   * матчів (`Qualification.endTime`) лишається незмінним.
+   * Торкається лише вікна реєстрації: кваліфікація має власні дати
+   * (`qualificationStartsAt`/`qualificationEndsAt`), тож подача матчів триває.
    */
   async closeRegistration(id: string) {
     const tournament = await this.findOneEntity(id);

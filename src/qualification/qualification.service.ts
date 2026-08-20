@@ -88,13 +88,10 @@ export class QualificationService {
     this.logger.log(
       `Creating qualification for tournament ${tournament.id} with nodeGroupId=${nodeGroupId}`,
     );
-    const qualificationEndBound =
-      QualificationService.qualificationEndBound(tournament);
-
     const q = this.qualRepo.create({
       tournament,
-      startTime: tournament.registrationStartsAt,
-      endTime: qualificationEndBound,
+      startTime: tournament.qualificationStartsAt,
+      endTime: tournament.qualificationEndsAt,
       nodeGroupId,
     });
     const saved = await this.qualRepo.save(q);
@@ -105,23 +102,18 @@ export class QualificationService {
   }
 
   /**
-   * Кінець кваліфікації — найраніший з двох моментів: закриття реєстрації або старт основного турніру.
-   * Так OpenDota/перевірки матчів узгоджені з актуальними датами турніру, а не лише колонки реєстрації.
+   * Вікно подачі кваліфікаційних матчів дзеркалить власні колонки турніру
+   * `qualificationStartsAt`/`qualificationEndsAt`. Раніше воно виводилося з дат
+   * реєстрації, через що зсув дедлайну реєстрації мовчки обрізав подачу матчів.
+   * Узгодженість із плей-оф гарантує `validateTournamentSchedule`.
    */
-  private static qualificationEndBound(t: Tournament): Date {
-    return new Date(
-      Math.min(t.registrationEndsAt.getTime(), t.tournamentStartsAt.getTime()),
-    );
-  }
-
   async syncQualificationWindowFromTournament(
     tournament: Tournament,
   ): Promise<void> {
     const qualification = await this.qualRepo.findByTournamentId(tournament.id);
     if (!qualification) return;
-    qualification.startTime = tournament.registrationStartsAt;
-    qualification.endTime =
-      QualificationService.qualificationEndBound(tournament);
+    qualification.startTime = tournament.qualificationStartsAt;
+    qualification.endTime = tournament.qualificationEndsAt;
     await this.qualRepo.save(qualification);
     this.logger.log(
       `Qualification ${qualification.id}: synced window from tournament ${tournament.id}`,
@@ -564,7 +556,13 @@ export class QualificationService {
         }
       }
 
-      if (new Date() > qualMatch.qualification.endTime) {
+      const now = new Date();
+      if (now < qualMatch.qualification.startTime) {
+        throw new BadRequestException(
+          'Кваліфікаційний етап ще не розпочався — подача матчів недоступна',
+        );
+      }
+      if (now > qualMatch.qualification.endTime) {
         throw new BadRequestException(
           'Кваліфікаційний етап завершено — подача матчів заборонена',
         );
@@ -729,6 +727,20 @@ export class QualificationService {
 
     if (match.duration <= MIN_MATCH_DURATION_SEC) {
       throw new UnprocessableEntityException('Матч тривав менше 15 хвилин');
+    }
+
+    /**
+     * Матч має повністю вміщатися у вікно кваліфікації. Верхню межу перевіряли
+     * й раніше; нижня зʼявилася разом з окремою колонкою `qualificationStartsAt`
+     * — без неї можна було подати матч, зіграний задовго до старту етапу.
+     */
+    const qualStartUnix = Math.floor(
+      qualMatch.qualification.startTime.getTime() / 1000,
+    );
+    if (match.start_time < qualStartUnix) {
+      throw new UnprocessableEntityException(
+        'Матч розпочався до початку кваліфікаційного етапу',
+      );
     }
 
     const qualEndUnix = Math.floor(

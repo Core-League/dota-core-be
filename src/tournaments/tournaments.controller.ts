@@ -104,6 +104,8 @@ export class TournamentsController {
     const {
       registrationStartsAt,
       registrationEndsAt,
+      qualificationStartsAt,
+      qualificationEndsAt,
       tournamentStartsAt,
       tournamentEndsAt,
       ...rest
@@ -115,6 +117,12 @@ export class TournamentsController {
       }),
       ...(registrationEndsAt !== undefined && {
         registrationEndsAt: new Date(registrationEndsAt),
+      }),
+      ...(qualificationStartsAt !== undefined && {
+        qualificationStartsAt: new Date(qualificationStartsAt),
+      }),
+      ...(qualificationEndsAt !== undefined && {
+        qualificationEndsAt: new Date(qualificationEndsAt),
       }),
       ...(tournamentStartsAt !== undefined && {
         tournamentStartsAt: new Date(tournamentStartsAt),

@@ -740,6 +740,8 @@ export class TeamsService {
       tournamentSlots: t.tournamentSlots ?? null,
       registrationStartsAt: t.registrationStartsAt,
       registrationEndsAt: t.registrationEndsAt,
+      qualificationStartsAt: t.qualificationStartsAt,
+      qualificationEndsAt: t.qualificationEndsAt,
       tournamentStartsAt: t.tournamentStartsAt,
       tournamentEndsAt: t.tournamentEndsAt,
       tournamentStatus: t.tournamentStatus,
