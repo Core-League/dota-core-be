@@ -41,6 +41,11 @@ export const EnvSchema = z.object({
   MONOBANK_HTTP_TIMEOUT: z.string(),
   MONOBANK_ACCOUNT_ID: z.string(),
 
+  // Monobank ACQUIRING (ФОП) merchant token — a different credential from
+  // MONOBANK_TOKEN, which is the Personal API token used for statements.
+  // Issued in the merchant cabinet; Monobank also publishes a sandbox token.
+  MONOBANK_MERCHANT_TOKEN: z.string().default(''),
+
   // OPTIONAL. Extra account/jar ids whose full transaction traffic is stored and
   // classified, comma-separated, on top of MONOBANK_ACCOUNT_ID. Entry-fee
   // reconciliation does NOT need this: payments are matched by their unique
