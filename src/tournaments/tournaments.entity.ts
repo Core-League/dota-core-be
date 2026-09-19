@@ -50,13 +50,15 @@ export class Tournament {
    *    join the tournament and start an entry-fee payment. See `tournament-registration.util.ts`.
    * 2. Qualification (`qualificationStartsAt`/`qualificationEndsAt`) — the qualification
    *    match-submission window, mirrored onto `Qualification.startTime`/`endTime`.
+   *    Both are null when `hasQualification` is false; `getScheduleViolation` skips
+   *    every rule whose dates are absent, so the window simply drops out.
    * 3. Playoff (`tournamentStartsAt`/`tournamentEndsAt`) — bracket start (the auto-start
    *    scheduler trigger) and tournament end. Kept under the historical `tournament*`
    *    names because they are part of the public team/tournament response contract.
    *
    * Ordering is enforced by `validateTournamentSchedule`: start < end within each window,
    * and qualification must finish before the playoff starts. Registration is deliberately
-   * allowed to overlap qualification — teams register and play their qualifier the same day.
+   * allowed to overlap qualification — a team may join during either phase.
    */
   @Column()
   registrationStartsAt: Date;
@@ -72,11 +74,25 @@ export class Tournament {
   @Column({ nullable: true, type: 'timestamp' })
   registrationClosedAt: Date | null;
 
-  @Column()
-  qualificationStartsAt: Date;
+  @Column({ type: 'timestamp', nullable: true })
+  qualificationStartsAt: Date | null;
 
-  @Column()
-  qualificationEndsAt: Date;
+  @Column({ type: 'timestamp', nullable: true })
+  qualificationEndsAt: Date | null;
+
+  /**
+   * Whether the tournament runs a qualification stage at all. Set at creation and
+   * never changed afterwards, so a tournament cannot lose qualification data it
+   * already holds.
+   *
+   * When false there is no `Qualification` row, no qualification dates, no
+   * qualification tab on the frontend, and the lifecycle is REGISTRATION →
+   * PLAYOFF: `TournamentQualificationScheduler` skips the tournament and
+   * `TournamentPlayoffScheduler` starts the bracket at `tournamentStartsAt`.
+   * See `validateQualificationConfig` for the rules this implies.
+   */
+  @Column({ type: 'boolean', default: true })
+  hasQualification: boolean;
 
   /** Playoff bracket start. `TournamentPlayoffScheduler` auto-starts the bracket at this moment. */
   @Column()
@@ -86,6 +102,15 @@ export class Tournament {
   @Column()
   tournamentEndsAt: Date;
 
+  /**
+   * Lifecycle: REGISTRATION → QUALIFICATIONS → PLAYOFF → COMPLETED.
+   *
+   * A team may join (and pay an entry fee) in REGISTRATION **or** QUALIFICATIONS —
+   * see `isJoinableStatus`; whether registration is actually open is decided by the
+   * dates. `TournamentQualificationScheduler` advances the status at
+   * `qualificationStartsAt` and `TournamentPlayoffScheduler` at `tournamentStartsAt`.
+   * COMPLETED is never set on creation — see `CreateTournamentDto`.
+   */
   @Column({ type: 'enum', enum: TournamentStatus })
   tournamentStatus: TournamentStatus;
 

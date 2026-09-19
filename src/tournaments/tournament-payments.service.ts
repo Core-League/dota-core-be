@@ -17,6 +17,7 @@ import {
   getRegistrationBlockReason,
   registrationBlockMessage,
 } from './tournament-registration.util';
+import { isJoinableStatus } from './tournaments.model';
 
 @Injectable()
 export class TournamentPaymentsService {
@@ -102,7 +103,14 @@ export class TournamentPaymentsService {
      * Не даємо стартувати оплату після закриття реєстрації: інакше капітан
      * сплатив би внесок і отримав відмову на приєднанні (повернення коштів).
      * Уже створені платежі лишаються доступними через getMyPayment.
+     *
+     * Статус перевіряємо разом із вікном дат: поза статусами, у яких можна
+     * приєднатися, оплата так само призвела б до відмови на приєднанні.
      */
+    if (!isJoinableStatus(tournament.tournamentStatus)) {
+      throw new BadRequestException('Реєстрація на турнір закрита');
+    }
+
     const blockReason = getRegistrationBlockReason(tournament);
     if (blockReason) {
       throw new BadRequestException(registrationBlockMessage(blockReason));

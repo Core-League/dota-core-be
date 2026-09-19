@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsIn,
@@ -9,6 +10,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { TournamentDivision, TournamentStatus } from '../tournaments.model';
 
@@ -74,19 +76,35 @@ export class CreateTournamentDto {
   @IsDateString()
   registrationEndsAt: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
+    default: true,
     description:
-      'Початок вікна подачі кваліфікаційних матчів. Може перетинатися з реєстрацією.',
+      'Чи проводиться кваліфікація. false — без кваліфікаційного етапу: дати ' +
+      'кваліфікації не передаються, слоти команд обовʼязкові й не більші за ' +
+      'розмір сітки, статус QUALIFICATIONS недоступний. Змінити після ' +
+      'створення не можна.',
   })
-  @IsDateString()
-  qualificationStartsAt: string;
+  @IsOptional()
+  @IsBoolean()
+  hasQualification?: boolean;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description:
-      'Кінець вікна подачі кваліфікаційних матчів. Має бути не пізніше tournamentStartsAt.',
+      'Початок вікна подачі кваліфікаційних матчів. Може перетинатися з ' +
+      'реєстрацією. Обовʼязкове, якщо hasQualification не false.',
   })
+  @ValidateIf((o: CreateTournamentDto) => o.hasQualification !== false)
   @IsDateString()
-  qualificationEndsAt: string;
+  qualificationStartsAt?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Кінець вікна подачі кваліфікаційних матчів. Має бути не пізніше ' +
+      'tournamentStartsAt. Обовʼязкове, якщо hasQualification не false.',
+  })
+  @ValidateIf((o: CreateTournamentDto) => o.hasQualification !== false)
+  @IsDateString()
+  qualificationEndsAt?: string;
 
   @ApiProperty({
     description: 'Початок плей-оф — момент автоматичного старту сітки.',
@@ -99,11 +117,19 @@ export class CreateTournamentDto {
   tournamentEndsAt: string;
 
   @ApiProperty({
-    enum: [TournamentStatus.QUALIFICATIONS, TournamentStatus.PLAYOFF],
+    enum: [
+      TournamentStatus.REGISTRATION,
+      TournamentStatus.QUALIFICATIONS,
+      TournamentStatus.PLAYOFF,
+    ],
     enumName: 'TournamentStatus',
     description: 'COMPLETED cannot be set on creation',
   })
-  @IsIn([TournamentStatus.QUALIFICATIONS, TournamentStatus.PLAYOFF])
+  @IsIn([
+    TournamentStatus.REGISTRATION,
+    TournamentStatus.QUALIFICATIONS,
+    TournamentStatus.PLAYOFF,
+  ])
   tournamentStatus: TournamentStatus;
 
   @ApiPropertyOptional()
