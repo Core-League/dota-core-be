@@ -11,6 +11,8 @@ export const INVOICE_MIN_VALIDITY_SEC = 15 * 60;
 /**
  * How long an invoice should stay payable: never longer than the registration
  * window it is paying into, never longer than a day.
+ * If either date is invalid (e.g., parsing failure), returns the floor
+ * instead of NaN, preserving the stated invariant.
  */
 export function invoiceValiditySeconds(
   now: Date,
@@ -19,6 +21,10 @@ export function invoiceValiditySeconds(
   const remaining = Math.floor(
     (registrationEndsAt.getTime() - now.getTime()) / 1000,
   );
+  // Guard against Invalid Date or other non-finite results
+  if (!Number.isFinite(remaining)) {
+    return INVOICE_MIN_VALIDITY_SEC;
+  }
   return Math.max(
     INVOICE_MIN_VALIDITY_SEC,
     Math.min(INVOICE_MAX_VALIDITY_SEC, remaining),

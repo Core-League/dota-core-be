@@ -29,4 +29,29 @@ describe('invoiceValiditySeconds', () => {
       INVOICE_MIN_VALIDITY_SEC,
     );
   });
+
+  it('returns the minimum when remaining exactly equals the floor', () => {
+    const registrationEndsAt = new Date(
+      now.getTime() + INVOICE_MIN_VALIDITY_SEC * 1000,
+    );
+    expect(invoiceValiditySeconds(now, registrationEndsAt)).toBe(
+      INVOICE_MIN_VALIDITY_SEC,
+    );
+  });
+
+  it('returns the maximum when remaining exactly equals the cap', () => {
+    const registrationEndsAt = new Date(
+      now.getTime() + INVOICE_MAX_VALIDITY_SEC * 1000,
+    );
+    expect(invoiceValiditySeconds(now, registrationEndsAt)).toBe(
+      INVOICE_MAX_VALIDITY_SEC,
+    );
+  });
+
+  it('returns the minimum when registrationEndsAt is an Invalid Date', () => {
+    const invalidDate = new Date('not-a-date');
+    expect(invoiceValiditySeconds(now, invalidDate)).toBe(
+      INVOICE_MIN_VALIDITY_SEC,
+    );
+  });
 });
