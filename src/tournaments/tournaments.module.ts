@@ -7,6 +7,7 @@ import { QualificationModule } from '../qualification/qualification.module';
 import { PlayoffModule } from '../playoff/playoff.module';
 import { TournamentsService } from './tournaments.service';
 import { TournamentsController } from './tournaments.controller';
+import { TournamentPaymentCallbackController } from './tournament-payment-callback.controller';
 import { Tournament } from './tournaments.entity';
 import { TournamentPlayoffTeam } from './tournament-playoff-team.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
@@ -47,6 +48,6 @@ import { TeamsModule } from '../teams/teams.module';
     TournamentPlayoffScheduler,
     TournamentQualificationScheduler,
   ],
-  controllers: [TournamentsController],
+  controllers: [TournamentsController, TournamentPaymentCallbackController],
 })
 export class TournamentsModule {}

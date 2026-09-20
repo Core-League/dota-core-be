@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -10,10 +11,12 @@ import { DataSource, IsNull } from 'typeorm';
 import { Team } from '../teams/team.entity';
 import { ConfigConnectorService } from '../connectors/config/config-connector.service';
 import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monobank-acquiring.service';
+import type { TInvoiceCallbackPayload } from '../connectors/monobank-acquiring/monobank-acquiring.types';
 import { Tournament } from './tournaments.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
 import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
 import { PaymentStatus } from './tournament-team-payment.model';
+import { nextPaymentState } from './tournament-payment-transition';
 import { TournamentPaymentSummaryDto } from './dto/tournament-payment-summary.dto';
 import { TournamentPaymentIntentDto } from './dto/tournament-payment-intent.dto';
 import { invoiceValiditySeconds } from './invoice-validity';
@@ -30,6 +33,8 @@ import { isJoinableStatus } from './tournaments.model';
 
 @Injectable()
 export class TournamentPaymentsService {
+  private readonly logger = new Logger(TournamentPaymentsService.name);
+
   constructor(
     private readonly paymentRepo: TournamentTeamPaymentRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
@@ -265,6 +270,42 @@ export class TournamentPaymentsService {
       amountPaid: payment.amountPaid,
       pageUrl: payment.paymentPageUrl,
     };
+  }
+
+  /**
+   * Applies one acquiring callback. Idempotent and order-independent: Monobank
+   * retries up to three times and does not guarantee ordering, and the decision
+   * itself lives in `nextPaymentState`.
+   */
+  async applyInvoiceCallback(payload: TInvoiceCallbackPayload): Promise<void> {
+    // invoiceId is the precise key; reference covers a push that predates the
+    // row storing its invoice (e.g. a retry arriving after a failure cleared it).
+    const payment =
+      (await this.paymentRepo.findByInvoiceId(payload.invoiceId)) ??
+      (payload.reference
+        ? ((await this.paymentRepo.findByReferences([payload.reference]))[0] ??
+          null)
+        : null);
+    if (!payment) {
+      this.logger.warn(
+        `Acquiring callback for unknown reference ${payload.reference ?? '(none)'} / invoice ${payload.invoiceId}`,
+      );
+      return;
+    }
+
+    const change = nextPaymentState(payment, payload, new Date());
+    if (!change) return;
+
+    payment.status = change.status;
+    payment.amountPaid = change.amountPaid;
+    payment.paidAt = change.paidAt;
+    payment.invoiceId = change.invoiceId;
+    payment.paymentPageUrl = change.paymentPageUrl;
+    await this.paymentRepo.save(payment);
+
+    this.logger.log(
+      `Payment ${payment.reference}: invoice ${payload.invoiceId} -> ${payload.status} (${change.status})`,
+    );
   }
 
   /** The caller's non-disbanded team where they are the captain, or null. */
