@@ -19,20 +19,33 @@ export type TCreatedInvoice = {
 };
 
 /**
- * Type-only import: pins this list to the domain union in
- * `tournament-payment-transition.ts` so the two cannot drift. A value import
- * would invert the layering; `satisfies` gives the same guarantee at compile
- * time with no runtime edge.
+ * Type-only import: pins the zod enum below to the domain union in
+ * `tournament-payment-transition.ts`. A value import would invert the
+ * layering, so the check runs through this exhaustive map instead.
+ *
+ * `Record<TInvoiceStatus, true>` is checked in both directions: TypeScript
+ * rejects the object literal if a member of `TInvoiceStatus` is missing, and
+ * rejects it if a key is added that isn't in `TInvoiceStatus`. That is a
+ * stronger guarantee than the `as const satisfies readonly T[]` form this
+ * replaced — that form only proved every listed literal belongs to `T`, not
+ * that every member of `T` was listed, so an added `TInvoiceStatus` member
+ * could silently fall out of this enum and fail every real callback with
+ * that status.
  */
-const INVOICE_STATUSES = [
-  'created',
-  'processing',
-  'hold',
-  'success',
-  'failure',
-  'reversed',
-  'expired',
-] as const satisfies readonly TInvoiceStatus[];
+const INVOICE_STATUS_MAP: Record<TInvoiceStatus, true> = {
+  created: true,
+  processing: true,
+  hold: true,
+  success: true,
+  failure: true,
+  reversed: true,
+  expired: true,
+};
+
+const INVOICE_STATUSES = Object.keys(INVOICE_STATUS_MAP) as [
+  TInvoiceStatus,
+  ...TInvoiceStatus[],
+];
 
 const InvoiceStatusSchema = z.enum(INVOICE_STATUSES);
 

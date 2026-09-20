@@ -54,7 +54,7 @@ export class MonobankAcquiringService {
     return CreateInvoiceResponseSchema.parse(raw);
   }
 
-  getInvoiceStatus(invoiceId: string): Promise<unknown> {
+  async getInvoiceStatus(invoiceId: string): Promise<unknown> {
     return this.http.get<unknown>(
       `/api/merchant/invoice/status?invoiceId=${encodeURIComponent(invoiceId)}`,
       this.authConfig(),
@@ -75,18 +75,37 @@ export class MonobankAcquiringService {
   /**
    * Verifies a callback, refreshing the cached key exactly once if the first
    * attempt fails — that is the documented signal that the key has rotated.
+   *
+   * A malformed or forged push must resolve to `false` (→ a 403 to the
+   * caller), never reject: an empty signature skips the network entirely
+   * (no reason to spend a bank call on it, and no reason to let an
+   * unauthenticated caller trigger unbounded `GET /api/merchant/pubkey`
+   * traffic), and a failure while refreshing the key after a bad first
+   * attempt is swallowed rather than propagated — a Monobank outage on the
+   * refresh must not turn every in-flight callback into a 500.
    */
   async verifyCallback(
     rawBody: Buffer,
     signatureB64: string,
   ): Promise<boolean> {
+    if (!signatureB64) return false;
+
     const key = await this.getPublicKey();
     if (verifyWebhookSignature(rawBody, signatureB64, key)) return true;
 
     this.logger.warn(
       'Acquiring callback failed verification; refreshing the public key once',
     );
-    const refreshed = await this.getPublicKey(true);
+    let refreshed: string;
+    try {
+      refreshed = await this.getPublicKey(true);
+    } catch (err) {
+      this.logger.error(
+        'Failed to refresh the acquiring public key after a failed verification',
+        err instanceof Error ? err.stack : undefined,
+      );
+      return false;
+    }
     return verifyWebhookSignature(rawBody, signatureB64, refreshed);
   }
 

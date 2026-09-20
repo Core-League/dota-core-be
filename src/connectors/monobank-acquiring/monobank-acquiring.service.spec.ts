@@ -1,3 +1,4 @@
+import { createSign, generateKeyPairSync } from 'node:crypto';
 import { MonobankAcquiringService } from './monobank-acquiring.service';
 
 type THttpStub = {
@@ -99,5 +100,74 @@ describe('MonobankAcquiringService', () => {
     expect(verified).toBe(false);
     // once for the initial key, once for the post-failure refresh
     expect(http.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('verifies a genuine callback and does not refetch the key', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ec', {
+      namedCurve: 'prime256v1',
+    });
+    const rawBody = Buffer.from('{"invoiceId":"inv_1","status":"success"}');
+    const signatureB64 = createSign('SHA256')
+      .update(rawBody)
+      .sign(privateKey)
+      .toString('base64');
+    const publicKeyB64 = Buffer.from(
+      publicKey.export({ type: 'spki', format: 'pem' }) as string,
+      'utf8',
+    ).toString('base64');
+    http.get.mockResolvedValue({ key: publicKeyB64 });
+
+    const verified = await service.verifyCallback(rawBody, signatureB64);
+
+    expect(verified).toBe(true);
+    expect(http.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call the bank when the signature is missing', async () => {
+    const verified = await service.verifyCallback(Buffer.from('{}'), '');
+
+    expect(verified).toBe(false);
+    expect(http.get).not.toHaveBeenCalled();
+  });
+
+  it('resolves false, not a rejection, when the key refresh fails after a bad signature', async () => {
+    http.get
+      .mockResolvedValueOnce({ key: 'stale' })
+      .mockRejectedValueOnce(new Error('network down'));
+
+    await expect(
+      service.verifyCallback(Buffer.from('{}'), 'c2ln'),
+    ).resolves.toBe(false);
+  });
+
+  it('fetches invoice status', async () => {
+    http.get.mockResolvedValue({ invoiceId: 'inv_1', status: 'processing' });
+
+    const status = await service.getInvoiceStatus('inv_1');
+
+    expect(status).toEqual({ invoiceId: 'inv_1', status: 'processing' });
+    const [url] = http.get.mock.calls[0] as [string];
+    expect(url).toBe('/api/merchant/invoice/status?invoiceId=inv_1');
+  });
+
+  it('rejects rather than throwing synchronously when the merchant token is not configured', async () => {
+    const unconfigured = new MonobankAcquiringService(
+      http as never,
+      {
+        getEnvConfig: () => ({ MONOBANK_MERCHANT_TOKEN: '' }),
+      } as never,
+    );
+
+    let threwSynchronously = false;
+    let result: Promise<unknown> | undefined;
+    try {
+      result = unconfigured.getInvoiceStatus('inv_1');
+    } catch {
+      threwSynchronously = true;
+    }
+
+    expect(threwSynchronously).toBe(false);
+    await expect(result).rejects.toThrow('MONOBANK_MERCHANT_TOKEN');
+    expect(http.get).not.toHaveBeenCalled();
   });
 });
