@@ -2,9 +2,9 @@ import { ApiProperty } from '@nestjs/swagger';
 import { PaymentStatus } from '../tournament-team-payment.model';
 
 /**
- * A captain-scoped payment intent: the reference to put in the Monobank jar
- * comment, the amount owed, and the jar URL to open. Returned by the create-intent
- * and status endpoints so the frontend can redirect and poll.
+ * A captain-scoped payment intent: the reference carried on the Monobank
+ * invoice, the amount owed, and the hosted page to pay on. Returned by the
+ * create-intent and status endpoints so the frontend can redirect and poll.
  */
 export class TournamentPaymentIntentDto {
   @ApiProperty({ description: 'Unique code to include in the jar comment.' })
@@ -22,7 +22,7 @@ export class TournamentPaymentIntentDto {
   @ApiProperty({
     nullable: true,
     description:
-      'Prefilled Monobank jar URL, or null when the jar is not configured.',
+      'Monobank payment page for the open invoice, or null when there is none to pay.',
   })
-  jarUrl: string | null;
+  pageUrl: string | null;
 }

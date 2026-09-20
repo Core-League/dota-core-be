@@ -2,17 +2,26 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull } from 'typeorm';
 import { Team } from '../teams/team.entity';
+import { ConfigConnectorService } from '../connectors/config/config-connector.service';
+import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monobank-acquiring.service';
 import { Tournament } from './tournaments.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
 import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
 import { PaymentStatus } from './tournament-team-payment.model';
 import { TournamentPaymentSummaryDto } from './dto/tournament-payment-summary.dto';
 import { TournamentPaymentIntentDto } from './dto/tournament-payment-intent.dto';
+import { invoiceValiditySeconds } from './invoice-validity';
+import {
+  apiOriginFrom,
+  spaOriginFrom,
+  type TRequestHeaders,
+} from './request-origin.util';
 import {
   getRegistrationBlockReason,
   registrationBlockMessage,
@@ -24,6 +33,8 @@ export class TournamentPaymentsService {
   constructor(
     private readonly paymentRepo: TournamentTeamPaymentRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly acquiring: MonobankAcquiringService,
+    private readonly config: ConfigConnectorService,
   ) {}
 
   /** Per-team payment status for a tournament (used by admin overview and captain gating). */
@@ -83,11 +94,13 @@ export class TournamentPaymentsService {
 
   /**
    * Creates (or returns the existing) pending payment intent for the caller's
-   * team on a fee'd tournament, so the captain can be redirected to the jar.
+   * team on a fee'd tournament, so the captain can be redirected to the
+   * Monobank-hosted payment page.
    */
   async createIntentForCaptain(
     tournamentId: string,
     playerId: string,
+    headers: TRequestHeaders,
   ): Promise<TournamentPaymentIntentDto> {
     const tournament = await this.dataSource
       .getRepository(Tournament)
@@ -139,7 +152,61 @@ export class TournamentPaymentsService {
       payment = await this.paymentRepo.save(payment);
     }
 
-    return this.toIntentDto(payment, entryFee, tournament.paymentJarUrl);
+    if (payment.status === PaymentStatus.PAID) {
+      return this.toIntentDto(payment, entryFee);
+    }
+
+    // Reuse a live invoice so repeat clicks do not mint one each time.
+    if (!payment.invoiceId || !payment.paymentPageUrl) {
+      const apiOrigin = apiOriginFrom(headers);
+      if (!this.hasHost(apiOrigin)) {
+        // apiOriginFrom falls back to a bare "http://" when neither `host`
+        // nor `x-forwarded-host` is present. Putting that on a real invoice's
+        // webHookUrl would mean Monobank's callback has nowhere to land — a
+        // payment that goes through but never settles, silently. Fail loudly
+        // here instead.
+        throw new InternalServerErrorException(
+          "Cannot derive this API's public host from the request headers — refusing to create an invoice with an unreachable webHookUrl",
+        );
+      }
+      const invoice = await this.acquiring.createInvoice({
+        amount: entryFee,
+        reference: payment.reference,
+        destination: `Вступний внесок — ${tournament.name}`,
+        redirectUrl: this.redirectUrlFor(headers, tournamentId),
+        webHookUrl: `${apiOrigin}/webhook/monobank/acquiring`,
+        validitySec: invoiceValiditySeconds(
+          new Date(),
+          tournament.registrationEndsAt,
+        ),
+      });
+      payment.invoiceId = invoice.invoiceId;
+      payment.paymentPageUrl = invoice.pageUrl;
+      payment = await this.paymentRepo.save(payment);
+    }
+
+    return this.toIntentDto(payment, entryFee);
+  }
+
+  /** Where Monobank returns the captain after paying: the tournament page. */
+  private redirectUrlFor(
+    headers: TRequestHeaders,
+    tournamentId: string,
+  ): string {
+    const allowed = (this.config.getEnvConfig().CORS_ORIGINS ?? '').split(',');
+    const spa = spaOriginFrom(headers, allowed);
+    return spa
+      ? `${spa}/tournaments/${tournamentId}`
+      : `${apiOriginFrom(headers)}/tournaments/${tournamentId}`;
+  }
+
+  /** True when a derived api/spa origin string carries a real host, not just a scheme. */
+  private hasHost(origin: string): boolean {
+    try {
+      return new URL(origin).host.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** The caller's own team payment for a tournament (used for polling), or null. */
@@ -160,45 +227,20 @@ export class TournamentPaymentsService {
       .getRepository(Tournament)
       .findOne({ where: { id: tournamentId } });
     const entryFee = tournament?.entryFee ?? 0;
-    return this.toIntentDto(payment, entryFee, tournament?.paymentJarUrl);
+    return this.toIntentDto(payment, entryFee);
   }
 
   private toIntentDto(
     payment: TournamentTeamPayment,
     entryFee: number,
-    jarBase?: string | null,
   ): TournamentPaymentIntentDto {
     return {
       reference: payment.reference,
       status: payment.status,
       amount: entryFee,
       amountPaid: payment.amountPaid,
-      jarUrl: this.buildJarUrl(payment.reference, entryFee, jarBase),
+      pageUrl: payment.paymentPageUrl,
     };
-  }
-
-  /**
-   * Composes the prefilled jar URL from the tournament's own jar link, falling
-   * back to the global MONOBANK_JAR_URL. Null when neither is configured/valid.
-   */
-  private buildJarUrl(
-    reference: string,
-    amountKopecks: number,
-    jarBase?: string | null,
-  ): string | null {
-    const base = (
-      jarBase?.trim() ||
-      (process.env.MONOBANK_JAR_URL ?? '')
-    ).trim();
-    if (!base) return null;
-    try {
-      const url = new URL(base);
-      url.searchParams.set('a', String(Math.round(amountKopecks / 100)));
-      url.searchParams.set('t', reference);
-      return url.toString();
-    } catch {
-      return null;
-    }
   }
 
   /** The caller's non-disbanded team where they are the captain, or null. */

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
+import { MonobankAcquiringModule } from '../connectors/monobank-acquiring/monobank-acquiring.module';
 import { Dota2Module } from '../dota2/dota2.module';
 import { QualificationModule } from '../qualification/qualification.module';
 import { PlayoffModule } from '../playoff/playoff.module';
@@ -35,6 +36,7 @@ import { TeamsModule } from '../teams/teams.module';
     QualificationModule,
     PlayoffModule,
     TeamsModule,
+    MonobankAcquiringModule.register(),
   ],
   providers: [
     TournamentsService,
