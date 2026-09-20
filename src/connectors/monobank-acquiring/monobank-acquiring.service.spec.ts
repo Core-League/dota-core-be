@@ -1,10 +1,23 @@
 import { createSign, generateKeyPairSync } from 'node:crypto';
-import { MonobankAcquiringService } from './monobank-acquiring.service';
+import {
+  MonobankAcquiringService,
+  PUBKEY_REFRESH_COOLDOWN_MS,
+} from './monobank-acquiring.service';
 
 type THttpStub = {
   get: jest.Mock;
   post: jest.Mock;
 };
+
+/**
+ * Overrides the service's private clock indirection (`now()`) so cooldown
+ * tests can move time forward deterministically without `jest.useFakeTimers`.
+ * `now` is a plain TS-private method (not a real `#private` field), so
+ * shadowing it with an own property works at runtime.
+ */
+function setClock(target: MonobankAcquiringService, atMs: number): void {
+  (target as unknown as { now: () => number }).now = () => atMs;
+}
 
 describe('MonobankAcquiringService', () => {
   let http: THttpStub;
@@ -138,6 +151,51 @@ describe('MonobankAcquiringService', () => {
     await expect(
       service.verifyCallback(Buffer.from('{}'), 'c2ln'),
     ).resolves.toBe(false);
+  });
+
+  it('performs at most one forced refetch across a flood of invalid signatures within the cooldown window', async () => {
+    // Warm the cache first so the "current key" read (cache hit, no GET)
+    // doesn't muddy the refetch count the assertion below cares about.
+    http.get.mockResolvedValueOnce({ key: 'stale' });
+    await service.getPublicKey();
+    http.get.mockClear();
+    http.get.mockResolvedValue({ key: 'still-stale' });
+
+    const first = await service.verifyCallback(Buffer.from('{}'), 'garbage-1');
+    const second = await service.verifyCallback(Buffer.from('{}'), 'garbage-2');
+
+    expect(first).toBe(false);
+    expect(second).toBe(false);
+    // one forced refetch for the whole flood, not one per request
+    expect(http.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('refetches again once the cooldown window has elapsed', async () => {
+    http.get.mockResolvedValueOnce({ key: 'stale' });
+    await service.getPublicKey();
+    http.get.mockClear();
+    http.get.mockResolvedValue({ key: 'still-stale' });
+
+    let clock = 1_700_000_000_000;
+    setClock(service, clock);
+
+    const first = await service.verifyCallback(Buffer.from('{}'), 'garbage-1');
+    expect(first).toBe(false);
+    expect(http.get).toHaveBeenCalledTimes(1);
+
+    // still within the cooldown window: no further refetch
+    clock += 1_000;
+    setClock(service, clock);
+    const second = await service.verifyCallback(Buffer.from('{}'), 'garbage-2');
+    expect(second).toBe(false);
+    expect(http.get).toHaveBeenCalledTimes(1);
+
+    // cooldown has elapsed: one more refetch is allowed
+    clock += PUBKEY_REFRESH_COOLDOWN_MS + 1;
+    setClock(service, clock);
+    const third = await service.verifyCallback(Buffer.from('{}'), 'garbage-3');
+    expect(third).toBe(false);
+    expect(http.get).toHaveBeenCalledTimes(2);
   });
 
   it('fetches invoice status', async () => {

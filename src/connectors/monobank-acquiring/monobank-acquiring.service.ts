@@ -14,6 +14,20 @@ import {
 const CCY_UAH = 980;
 
 /**
+ * Minimum gap between forced key refetches triggered by a failed
+ * verification. `GET /api/merchant/pubkey` is public and unauthenticated by
+ * construction, so without this bound a flood of garbage-signature POSTs —
+ * each of which fails verification and would otherwise trigger its own
+ * forced refetch — costs one outbound Monobank call per request. Monobank
+ * rate-limits that endpoint; once exhausted, verification of *genuine*
+ * callbacks starts failing too and payments silently stop settling. The
+ * cooldown caps the damage at one refetch per window regardless of how many
+ * requests arrive. Tradeoff: a real key rotation is noticed up to one
+ * window late, which is fine against Monobank's own callback retry budget.
+ */
+export const PUBKEY_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
  * Client for the Monobank acquiring («plata by mono») merchant API.
  *
  * Separate from `MonobankService` on purpose: that one speaks the Personal API
@@ -28,6 +42,13 @@ export class MonobankAcquiringService {
 
   /** Cached per the docs' explicit instruction not to fetch it per webhook. */
   private publicKeyB64: string | null = null;
+
+  /**
+   * Epoch ms of the last forced-refresh *attempt* (set whether or not it
+   * succeeded) — gates {@link PUBKEY_REFRESH_COOLDOWN_MS}. Zero means "never
+   * attempted", which is always outside the cooldown.
+   */
+  private lastForcedRefreshAt = 0;
 
   constructor(
     private readonly http: HttpClientConnectorService,
@@ -74,14 +95,16 @@ export class MonobankAcquiringService {
 
   /**
    * Verifies a callback, refreshing the cached key exactly once if the first
-   * attempt fails — that is the documented signal that the key has rotated.
+   * attempt fails — that is the documented signal that the key has rotated —
+   * and only if {@link PUBKEY_REFRESH_COOLDOWN_MS} has elapsed since the last
+   * such attempt.
    *
    * A malformed or forged push must resolve to `false` (→ a 403 to the
-   * caller), never reject: an empty signature skips the network entirely
-   * (no reason to spend a bank call on it, and no reason to let an
-   * unauthenticated caller trigger unbounded `GET /api/merchant/pubkey`
-   * traffic), and a failure while refreshing the key after a bad first
-   * attempt is swallowed rather than propagated — a Monobank outage on the
+   * caller), never reject: an empty signature skips the network entirely,
+   * a signature still within the refresh cooldown skips it too (both guard
+   * against the same thing — an unauthenticated caller forcing unbounded
+   * `GET /api/merchant/pubkey` traffic), and a failure while refreshing the
+   * key is swallowed rather than propagated — a Monobank outage on the
    * refresh must not turn every in-flight callback into a 500.
    */
   async verifyCallback(
@@ -93,9 +116,20 @@ export class MonobankAcquiringService {
     const key = await this.getPublicKey();
     if (verifyWebhookSignature(rawBody, signatureB64, key)) return true;
 
+    if (this.now() - this.lastForcedRefreshAt < PUBKEY_REFRESH_COOLDOWN_MS) {
+      this.logger.warn(
+        'Acquiring callback failed verification; skipping refresh — still within the cooldown window',
+      );
+      return false;
+    }
+
     this.logger.warn(
       'Acquiring callback failed verification; refreshing the public key once',
     );
+    // Set before the attempt, not after: a failing fetch must still start the
+    // cooldown, or a flood of requests keeps re-attempting the refetch on
+    // every single one instead of at most once per window.
+    this.lastForcedRefreshAt = this.now();
     let refreshed: string;
     try {
       refreshed = await this.getPublicKey(true);
@@ -107,6 +141,11 @@ export class MonobankAcquiringService {
       return false;
     }
     return verifyWebhookSignature(rawBody, signatureB64, refreshed);
+  }
+
+  /** Indirection over `Date.now()` so cooldown tests can control the clock without `jest.useFakeTimers`. */
+  private now(): number {
+    return Date.now();
   }
 
   private authConfig(): AxiosRequestConfig {
