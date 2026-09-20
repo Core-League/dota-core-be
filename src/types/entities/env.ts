@@ -41,20 +41,17 @@ export const EnvSchema = z.object({
   MONOBANK_HTTP_TIMEOUT: z.string(),
   MONOBANK_ACCOUNT_ID: z.string(),
 
+  // Monobank ACQUIRING (ФОП) merchant token — a different credential from
+  // MONOBANK_TOKEN, which is the Personal API token used for statements.
+  // Issued in the merchant cabinet; Monobank also publishes a sandbox token.
+  MONOBANK_MERCHANT_TOKEN: z.string().default(''),
+
   // OPTIONAL. Extra account/jar ids whose full transaction traffic is stored and
-  // classified, comma-separated, on top of MONOBANK_ACCOUNT_ID. Entry-fee
-  // reconciliation does NOT need this: payments are matched by their unique
-  // `CORE-…` reference regardless of which jar they land in, so a new
-  // per-tournament jar works with no config change. List a jar here only to see
-  // its non-payment transactions in the finance views. Ids come from
+  // classified, comma-separated, on top of MONOBANK_ACCOUNT_ID. List a jar here
+  // to see its transactions in the finance views. Ids come from
   // `GET /bank/webhook` (client-info `jars[].id`), NOT from the
   // `send.monobank.ua/{sendId}` link.
   MONOBANK_ACCOUNT_IDS: z.string().default(''),
-
-  // Public Monobank jar link (e.g. https://send.monobank.ua/jar/XXXX) that
-  // captains are sent to for tournament entry fees. Optional so the app still
-  // boots where the payment feature is not configured.
-  MONOBANK_JAR_URL: z.string().default(''),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

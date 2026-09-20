@@ -2,17 +2,29 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull } from 'typeorm';
 import { Team } from '../teams/team.entity';
+import { ConfigConnectorService } from '../connectors/config/config-connector.service';
+import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monobank-acquiring.service';
+import type { TInvoiceCallbackPayload } from '../connectors/monobank-acquiring/monobank-acquiring.types';
 import { Tournament } from './tournaments.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
 import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
 import { PaymentStatus } from './tournament-team-payment.model';
+import { nextPaymentState } from './tournament-payment-transition';
 import { TournamentPaymentSummaryDto } from './dto/tournament-payment-summary.dto';
 import { TournamentPaymentIntentDto } from './dto/tournament-payment-intent.dto';
+import { invoiceValiditySeconds } from './invoice-validity';
+import {
+  apiOriginFrom,
+  spaOriginFrom,
+  type TRequestHeaders,
+} from './request-origin.util';
 import {
   getRegistrationBlockReason,
   registrationBlockMessage,
@@ -21,9 +33,13 @@ import { isJoinableStatus } from './tournaments.model';
 
 @Injectable()
 export class TournamentPaymentsService {
+  private readonly logger = new Logger(TournamentPaymentsService.name);
+
   constructor(
     private readonly paymentRepo: TournamentTeamPaymentRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly acquiring: MonobankAcquiringService,
+    private readonly config: ConfigConnectorService,
   ) {}
 
   /** Per-team payment status for a tournament (used by admin overview and captain gating). */
@@ -83,11 +99,13 @@ export class TournamentPaymentsService {
 
   /**
    * Creates (or returns the existing) pending payment intent for the caller's
-   * team on a fee'd tournament, so the captain can be redirected to the jar.
+   * team on a fee'd tournament, so the captain can be redirected to the
+   * Monobank-hosted payment page.
    */
   async createIntentForCaptain(
     tournamentId: string,
     playerId: string,
+    headers: TRequestHeaders,
   ): Promise<TournamentPaymentIntentDto> {
     const tournament = await this.dataSource
       .getRepository(Tournament)
@@ -123,23 +141,101 @@ export class TournamentPaymentsService {
       );
     }
 
-    let payment = await this.paymentRepo.findByTournamentAndTeam(
-      tournamentId,
-      team.id,
-    );
-    if (!payment) {
-      const reference = await this.paymentRepo.generateUniqueReference();
-      payment = this.paymentRepo.create({
-        tournamentId,
-        teamId: team.id,
-        reference,
-        status: PaymentStatus.PENDING,
-        amountPaid: 0,
+    /**
+     * The payment row is locked (`SELECT ... FOR UPDATE`) for the whole
+     * transaction below — including the outbound call to Monobank — so a
+     * second concurrent request for the same team (two open tabs, a double
+     * click) blocks on the lock until the first commits, then re-reads the
+     * row and finds the invoice already there instead of minting a second
+     * one. Refunds are out of scope for this design, so an orphaned second
+     * invoice is not a self-correcting annoyance — it is a real double
+     * charge that only a manual cabinet operation can undo. Holding the
+     * lock across the HTTP round-trip is the accepted tradeoff: a slower
+     * first request rather than that failure mode.
+     */
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(TournamentTeamPayment);
+      let payment = await repo.findOne({
+        where: { tournamentId, teamId: team.id },
+        lock: { mode: 'pessimistic_write' },
       });
-      payment = await this.paymentRepo.save(payment);
-    }
+      if (!payment) {
+        const reference = await this.paymentRepo.generateUniqueReference();
+        payment = repo.create({
+          tournamentId,
+          teamId: team.id,
+          reference,
+          status: PaymentStatus.PENDING,
+          amountPaid: 0,
+        });
+        payment = await repo.save(payment);
+      }
 
-    return this.toIntentDto(payment, entryFee, tournament.paymentJarUrl);
+      if (payment.status === PaymentStatus.PAID) {
+        return this.toIntentDto(payment, entryFee);
+      }
+
+      // Reuse a live invoice so repeat clicks — or a second concurrent
+      // request that just unblocked on the lock above — do not mint another.
+      if (!payment.invoiceId || !payment.paymentPageUrl) {
+        const apiOrigin = apiOriginFrom(headers);
+        if (!this.hasHost(apiOrigin)) {
+          // apiOriginFrom falls back to a bare "http://" when neither `host`
+          // nor `x-forwarded-host` is present. Putting that on a real invoice's
+          // webHookUrl would mean Monobank's callback has nowhere to land — a
+          // payment that goes through but never settles, silently. Fail loudly
+          // here instead.
+          throw new InternalServerErrorException(
+            "Cannot derive this API's public host from the request headers — refusing to create an invoice with an unreachable webHookUrl",
+          );
+        }
+        const invoice = await this.acquiring.createInvoice({
+          amount: entryFee,
+          reference: payment.reference,
+          destination: `Вступний внесок — ${tournament.name}`,
+          redirectUrl: this.redirectUrlFor(headers, tournamentId),
+          webHookUrl: `${apiOrigin}/webhook/monobank/acquiring`,
+          validitySec: invoiceValiditySeconds(
+            new Date(),
+            tournament.registrationEndsAt,
+          ),
+        });
+        payment.invoiceId = invoice.invoiceId;
+        payment.paymentPageUrl = invoice.pageUrl;
+        payment = await repo.save(payment);
+      }
+
+      return this.toIntentDto(payment, entryFee);
+    });
+  }
+
+  /** Where Monobank returns the captain after paying: the tournament page. */
+  private redirectUrlFor(
+    headers: TRequestHeaders,
+    tournamentId: string,
+  ): string {
+    const allowed = (this.config.getEnvConfig().CORS_ORIGINS ?? '').split(',');
+    const spa = spaOriginFrom(headers, allowed);
+    if (!spa) {
+      // spaOriginFrom returns null only when CORS_ORIGINS has no usable
+      // entries — the same class of misconfiguration as the hostless api
+      // origin above. Falling back to the api origin would hand the captain
+      // a redirect that 404s right after they have paid; fail loudly here
+      // instead, before the invoice is even created.
+      throw new InternalServerErrorException(
+        'Cannot derive a SPA origin to redirect the captain to after payment — check CORS_ORIGINS',
+      );
+    }
+    return `${spa}/tournaments/${tournamentId}`;
+  }
+
+  /** True when a derived api/spa origin string carries a real host, not just a scheme. */
+  private hasHost(origin: string): boolean {
+    try {
+      return new URL(origin).host.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** The caller's own team payment for a tournament (used for polling), or null. */
@@ -160,45 +256,61 @@ export class TournamentPaymentsService {
       .getRepository(Tournament)
       .findOne({ where: { id: tournamentId } });
     const entryFee = tournament?.entryFee ?? 0;
-    return this.toIntentDto(payment, entryFee, tournament?.paymentJarUrl);
+    return this.toIntentDto(payment, entryFee);
   }
 
   private toIntentDto(
     payment: TournamentTeamPayment,
     entryFee: number,
-    jarBase?: string | null,
   ): TournamentPaymentIntentDto {
     return {
       reference: payment.reference,
       status: payment.status,
       amount: entryFee,
       amountPaid: payment.amountPaid,
-      jarUrl: this.buildJarUrl(payment.reference, entryFee, jarBase),
+      pageUrl: payment.paymentPageUrl,
     };
   }
 
   /**
-   * Composes the prefilled jar URL from the tournament's own jar link, falling
-   * back to the global MONOBANK_JAR_URL. Null when neither is configured/valid.
+   * Applies one acquiring callback. Idempotent and order-independent: Monobank
+   * retries up to three times and does not guarantee ordering, and the decision
+   * itself lives in `nextPaymentState`.
    */
-  private buildJarUrl(
-    reference: string,
-    amountKopecks: number,
-    jarBase?: string | null,
-  ): string | null {
-    const base = (
-      jarBase?.trim() ||
-      (process.env.MONOBANK_JAR_URL ?? '')
-    ).trim();
-    if (!base) return null;
-    try {
-      const url = new URL(base);
-      url.searchParams.set('a', String(Math.round(amountKopecks / 100)));
-      url.searchParams.set('t', reference);
-      return url.toString();
-    } catch {
-      return null;
+  async applyInvoiceCallback(payload: TInvoiceCallbackPayload): Promise<void> {
+    // invoiceId is the precise key; reference covers a push that predates the
+    // row storing its invoice (e.g. a retry arriving after a failure cleared it).
+    const payment =
+      (await this.paymentRepo.findByInvoiceId(payload.invoiceId)) ??
+      (payload.reference
+        ? ((await this.paymentRepo.findByReferences([payload.reference]))[0] ??
+          null)
+        : null);
+    if (!payment) {
+      // `error`, not `warn`: this callback settles with a 200 (Monobank will
+      // not retry), so this line is the only trace that acquiring money we
+      // cannot attribute to any payment row moved at all.
+      this.logger.error(
+        `Unattributable acquiring callback — status "${payload.status}" for ` +
+          `reference ${payload.reference ?? '(none)'} / invoice ${payload.invoiceId} ` +
+          `matches no tournament_team_payment row`,
+      );
+      return;
     }
+
+    const change = nextPaymentState(payment, payload, new Date());
+    if (!change) return;
+
+    payment.status = change.status;
+    payment.amountPaid = change.amountPaid;
+    payment.paidAt = change.paidAt;
+    payment.invoiceId = change.invoiceId;
+    payment.paymentPageUrl = change.paymentPageUrl;
+    await this.paymentRepo.save(payment);
+
+    this.logger.log(
+      `Payment ${payment.reference}: invoice ${payload.invoiceId} -> ${payload.status} (${change.status})`,
+    );
   }
 
   /** The caller's non-disbanded team where they are the captain, or null. */

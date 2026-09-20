@@ -70,6 +70,7 @@ jobs:
       DUELO_API_KEY: ${{ secrets.DUELO_API_KEY }}
       STARTZ_API_KEY: ${{ secrets.STARTZ_API_KEY }}
       MONOBANK_TOKEN: ${{ secrets.MONOBANK_TOKEN }}
+      MONOBANK_MERCHANT_TOKEN: ${{ secrets.MONOBANK_MERCHANT_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

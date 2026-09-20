@@ -2,6 +2,7 @@ import './config/load-env';
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigConnectorModule } from './connectors/config/config-connector.module';
 import { PlayersModule } from './players/players.module';
 import { UserRolesModule } from './user-roles/user-roles.module';
 import { TeamsModule } from './teams/teams.module';
@@ -26,6 +27,7 @@ import { DevModule } from './dev/dev.module';
       synchronize: false,
       migrations: ['dist/migrations/*.js'],
     }),
+    ConfigConnectorModule,
     PlayersModule,
     UserRolesModule,
     TeamsModule,

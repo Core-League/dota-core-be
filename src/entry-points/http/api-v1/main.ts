@@ -37,7 +37,9 @@ function buildCorsOptions(): CorsOptions {
 }
 
 async function createHttpApplication(): Promise<INestApplication> {
-  const app = await NestFactory.create(AppModule);
+  // rawBody is required by the Monobank acquiring callback: its signature is
+  // taken over the exact bytes received, which the JSON parser otherwise discards.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.enableCors(buildCorsOptions());
 

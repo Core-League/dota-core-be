@@ -1,11 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
+import { MonobankAcquiringModule } from '../connectors/monobank-acquiring/monobank-acquiring.module';
 import { Dota2Module } from '../dota2/dota2.module';
 import { QualificationModule } from '../qualification/qualification.module';
 import { PlayoffModule } from '../playoff/playoff.module';
 import { TournamentsService } from './tournaments.service';
 import { TournamentsController } from './tournaments.controller';
+import { TournamentPaymentCallbackController } from './tournament-payment-callback.controller';
 import { Tournament } from './tournaments.entity';
 import { TournamentPlayoffTeam } from './tournament-playoff-team.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
@@ -35,6 +37,7 @@ import { TeamsModule } from '../teams/teams.module';
     QualificationModule,
     PlayoffModule,
     TeamsModule,
+    MonobankAcquiringModule.register(),
   ],
   providers: [
     TournamentsService,
@@ -45,6 +48,6 @@ import { TeamsModule } from '../teams/teams.module';
     TournamentPlayoffScheduler,
     TournamentQualificationScheduler,
   ],
-  controllers: [TournamentsController],
+  controllers: [TournamentsController, TournamentPaymentCallbackController],
 })
 export class TournamentsModule {}

@@ -26,15 +26,11 @@ export class SyncController {
   @ApiOperation({
     summary: 'Backfill transactions for a period',
     description:
-      'Reconciles entry-fee payments for any account/jar. Storing and classifying ' +
-      'the statement is limited to `MONOBANK_ACCOUNT_ID(S)`, so backfilling a ' +
-      'tournament jar recovers its payments without importing its traffic into ' +
-      'the finance views — expect `synced: 0` there and read `reconciled`.',
+      'Storing and classifying the statement is limited to ' +
+      '`MONOBANK_ACCOUNT_ID(S)` — expect `synced: 0` for any other account/jar.',
   })
   @ApiCreatedResponse({ type: SyncResultDto })
-  async sync(
-    @Body() body: SyncRequestDto,
-  ): Promise<{ synced: number; reconciled: number }> {
+  async sync(@Body() body: SyncRequestDto): Promise<{ synced: number }> {
     const accountId =
       body.accountId ?? this.config.getEnvConfig().MONOBANK_ACCOUNT_ID;
     if (!accountId) {

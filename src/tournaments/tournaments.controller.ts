@@ -240,6 +240,7 @@ export class TournamentsController {
     return this.tournamentPaymentsService.createIntentForCaptain(
       id,
       req.user!.playerId,
+      req.headers,
     );
   }
 
