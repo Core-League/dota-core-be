@@ -26,6 +26,10 @@ export class TournamentTeamPaymentRepository {
     return this.repo.find({ where: { tournamentId } });
   }
 
+  findByInvoiceId(invoiceId: string): Promise<TournamentTeamPayment | null> {
+    return this.repo.findOne({ where: { invoiceId } });
+  }
+
   async hasPaid(tournamentId: string, teamId: string): Promise<boolean> {
     const count = await this.repo.count({
       where: { tournamentId, teamId, status: PaymentStatus.PAID },

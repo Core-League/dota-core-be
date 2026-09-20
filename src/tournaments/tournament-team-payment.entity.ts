@@ -40,7 +40,7 @@ export class TournamentTeamPayment {
   @JoinColumn({ name: 'teamId' })
   team: Team;
 
-  /** Unique code (e.g. CORE-7F3K9Q) prefilled into the Monobank jar comment. */
+  /** Unique code (e.g. CORE-7F3K9Q) sent as the invoice's merchantPaymInfo.reference. */
   @Column({ type: 'varchar', unique: true })
   reference: string;
 
@@ -54,6 +54,18 @@ export class TournamentTeamPayment {
   /** Id of the matched bank transaction, once reconciled. */
   @Column({ type: 'varchar', nullable: true })
   transactionId: string | null;
+
+  /**
+   * Monobank acquiring invoice currently open for this payment, and the hosted
+   * page it is paid on. Both are cleared when the invoice fails or expires, so
+   * the next intent mints a fresh one; both are null for rows that predate
+   * acquiring or have already been paid.
+   */
+  @Column({ type: 'varchar', nullable: true, unique: true })
+  invoiceId: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  paymentPageUrl: string | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   paidAt: Date | null;
