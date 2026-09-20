@@ -1,3 +1,4 @@
+import { InternalServerErrorException } from '@nestjs/common';
 import { PaymentStatus } from './tournament-team-payment.model';
 import { TournamentPaymentsService } from './tournament-payments.service';
 
@@ -19,7 +20,12 @@ describe('createIntentForCaptain invoice reuse', () => {
   const team = { id: 'team1' };
   const headers = { host: 'api.example', origin: 'https://spa.example' };
 
-  const build = (payment: Record<string, unknown>) => {
+  const build = (
+    payment: Record<string, unknown>,
+    envOverrides: Record<string, unknown> = {
+      CORS_ORIGINS: 'https://spa.example',
+    },
+  ) => {
     const acquiring = {
       createInvoice: jest.fn().mockResolvedValue({
         invoiceId: 'inv_new',
@@ -32,6 +38,24 @@ describe('createIntentForCaptain invoice reuse', () => {
       create: jest.fn(),
       generateUniqueReference: jest.fn(),
     };
+
+    // The service runs the find-or-create + invoice decision inside
+    // `dataSource.transaction`, taking a pessimistic write lock on the
+    // payment row via `manager.getRepository(...).findOne(...)`. Simulate
+    // that manager here so tests can assert the lock is actually requested,
+    // and that a row already carrying an invoiceId under that lock is reused
+    // rather than triggering another `createInvoice` call — which is what a
+    // second concurrent request sees once it unblocks after the first's
+    // transaction commits.
+    const managerRepo = {
+      findOne: jest.fn().mockResolvedValue(payment),
+      create: jest.fn((data: unknown) => data),
+      save: jest.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
+    };
+    const manager = {
+      getRepository: jest.fn().mockReturnValue(managerRepo),
+    };
+
     const dataSource = {
       getRepository: jest.fn().mockReturnValue({
         findOne: jest
@@ -39,9 +63,12 @@ describe('createIntentForCaptain invoice reuse', () => {
           .mockResolvedValueOnce(tournament)
           .mockResolvedValue(team),
       }),
+      transaction: jest
+        .fn()
+        .mockImplementation((run: (m: unknown) => unknown) => run(manager)),
     };
     const config = {
-      getEnvConfig: () => ({ CORS_ORIGINS: 'https://spa.example' }),
+      getEnvConfig: () => envOverrides,
     };
     const service = new TournamentPaymentsService(
       paymentRepo as never,
@@ -49,11 +76,11 @@ describe('createIntentForCaptain invoice reuse', () => {
       acquiring as never,
       config as never,
     );
-    return { service, acquiring, paymentRepo };
+    return { service, acquiring, paymentRepo, dataSource, managerRepo };
   };
 
-  it('reuses a live invoice instead of creating another', async () => {
-    const { service, acquiring } = build({
+  it('locks the payment row inside a transaction, then reuses a live invoice instead of creating another', async () => {
+    const { service, acquiring, dataSource, managerRepo } = build({
       reference: 'CORE-AAA111',
       status: PaymentStatus.PENDING,
       amountPaid: 0,
@@ -63,6 +90,11 @@ describe('createIntentForCaptain invoice reuse', () => {
 
     const intent = await service.createIntentForCaptain('t1', 'p1', headers);
 
+    expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+    expect(managerRepo.findOne).toHaveBeenCalledWith({
+      where: { tournamentId: 't1', teamId: 'team1' },
+      lock: { mode: 'pessimistic_write' },
+    });
     expect(acquiring.createInvoice).not.toHaveBeenCalled();
     expect(intent.pageUrl).toBe('https://pay.mbnk.biz/inv_live');
   });
@@ -122,7 +154,29 @@ describe('createIntentForCaptain invoice reuse', () => {
       service.createIntentForCaptain('t1', 'p1', {
         origin: 'https://spa.example',
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(InternalServerErrorException);
+
+    expect(acquiring.createInvoice).not.toHaveBeenCalled();
+  });
+
+  it('refuses to create an invoice when CORS_ORIGINS yields no usable SPA origin', async () => {
+    const { service, acquiring } = build(
+      {
+        reference: 'CORE-AAA111',
+        status: PaymentStatus.PENDING,
+        amountPaid: 0,
+        invoiceId: null,
+        paymentPageUrl: null,
+      },
+      { CORS_ORIGINS: '' },
+    );
+
+    // A host is present (so the api-origin guard passes), but CORS_ORIGINS
+    // has no usable entries: spaOriginFrom returns null, and redirecting the
+    // captain to the api origin instead would 404 right after they paid.
+    await expect(
+      service.createIntentForCaptain('t1', 'p1', { host: 'api.example' }),
+    ).rejects.toThrow(InternalServerErrorException);
 
     expect(acquiring.createInvoice).not.toHaveBeenCalled();
   });

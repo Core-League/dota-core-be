@@ -7,7 +7,10 @@ import { PaymentStatus } from '../tournament-team-payment.model';
  * create-intent and status endpoints so the frontend can redirect and poll.
  */
 export class TournamentPaymentIntentDto {
-  @ApiProperty({ description: 'Unique code to include in the jar comment.' })
+  @ApiProperty({
+    description:
+      'Unique code carried as the reference on the Monobank invoice.',
+  })
   reference: string;
 
   @ApiProperty({ enum: PaymentStatus, enumName: 'PaymentStatus' })

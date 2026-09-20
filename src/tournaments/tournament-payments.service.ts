@@ -136,56 +136,72 @@ export class TournamentPaymentsService {
       );
     }
 
-    let payment = await this.paymentRepo.findByTournamentAndTeam(
-      tournamentId,
-      team.id,
-    );
-    if (!payment) {
-      const reference = await this.paymentRepo.generateUniqueReference();
-      payment = this.paymentRepo.create({
-        tournamentId,
-        teamId: team.id,
-        reference,
-        status: PaymentStatus.PENDING,
-        amountPaid: 0,
+    /**
+     * The payment row is locked (`SELECT ... FOR UPDATE`) for the whole
+     * transaction below — including the outbound call to Monobank — so a
+     * second concurrent request for the same team (two open tabs, a double
+     * click) blocks on the lock until the first commits, then re-reads the
+     * row and finds the invoice already there instead of minting a second
+     * one. Refunds are out of scope for this design, so an orphaned second
+     * invoice is not a self-correcting annoyance — it is a real double
+     * charge that only a manual cabinet operation can undo. Holding the
+     * lock across the HTTP round-trip is the accepted tradeoff: a slower
+     * first request rather than that failure mode.
+     */
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(TournamentTeamPayment);
+      let payment = await repo.findOne({
+        where: { tournamentId, teamId: team.id },
+        lock: { mode: 'pessimistic_write' },
       });
-      payment = await this.paymentRepo.save(payment);
-    }
-
-    if (payment.status === PaymentStatus.PAID) {
-      return this.toIntentDto(payment, entryFee);
-    }
-
-    // Reuse a live invoice so repeat clicks do not mint one each time.
-    if (!payment.invoiceId || !payment.paymentPageUrl) {
-      const apiOrigin = apiOriginFrom(headers);
-      if (!this.hasHost(apiOrigin)) {
-        // apiOriginFrom falls back to a bare "http://" when neither `host`
-        // nor `x-forwarded-host` is present. Putting that on a real invoice's
-        // webHookUrl would mean Monobank's callback has nowhere to land — a
-        // payment that goes through but never settles, silently. Fail loudly
-        // here instead.
-        throw new InternalServerErrorException(
-          "Cannot derive this API's public host from the request headers — refusing to create an invoice with an unreachable webHookUrl",
-        );
+      if (!payment) {
+        const reference = await this.paymentRepo.generateUniqueReference();
+        payment = repo.create({
+          tournamentId,
+          teamId: team.id,
+          reference,
+          status: PaymentStatus.PENDING,
+          amountPaid: 0,
+        });
+        payment = await repo.save(payment);
       }
-      const invoice = await this.acquiring.createInvoice({
-        amount: entryFee,
-        reference: payment.reference,
-        destination: `Вступний внесок — ${tournament.name}`,
-        redirectUrl: this.redirectUrlFor(headers, tournamentId),
-        webHookUrl: `${apiOrigin}/webhook/monobank/acquiring`,
-        validitySec: invoiceValiditySeconds(
-          new Date(),
-          tournament.registrationEndsAt,
-        ),
-      });
-      payment.invoiceId = invoice.invoiceId;
-      payment.paymentPageUrl = invoice.pageUrl;
-      payment = await this.paymentRepo.save(payment);
-    }
 
-    return this.toIntentDto(payment, entryFee);
+      if (payment.status === PaymentStatus.PAID) {
+        return this.toIntentDto(payment, entryFee);
+      }
+
+      // Reuse a live invoice so repeat clicks — or a second concurrent
+      // request that just unblocked on the lock above — do not mint another.
+      if (!payment.invoiceId || !payment.paymentPageUrl) {
+        const apiOrigin = apiOriginFrom(headers);
+        if (!this.hasHost(apiOrigin)) {
+          // apiOriginFrom falls back to a bare "http://" when neither `host`
+          // nor `x-forwarded-host` is present. Putting that on a real invoice's
+          // webHookUrl would mean Monobank's callback has nowhere to land — a
+          // payment that goes through but never settles, silently. Fail loudly
+          // here instead.
+          throw new InternalServerErrorException(
+            "Cannot derive this API's public host from the request headers — refusing to create an invoice with an unreachable webHookUrl",
+          );
+        }
+        const invoice = await this.acquiring.createInvoice({
+          amount: entryFee,
+          reference: payment.reference,
+          destination: `Вступний внесок — ${tournament.name}`,
+          redirectUrl: this.redirectUrlFor(headers, tournamentId),
+          webHookUrl: `${apiOrigin}/webhook/monobank/acquiring`,
+          validitySec: invoiceValiditySeconds(
+            new Date(),
+            tournament.registrationEndsAt,
+          ),
+        });
+        payment.invoiceId = invoice.invoiceId;
+        payment.paymentPageUrl = invoice.pageUrl;
+        payment = await repo.save(payment);
+      }
+
+      return this.toIntentDto(payment, entryFee);
+    });
   }
 
   /** Where Monobank returns the captain after paying: the tournament page. */
@@ -195,9 +211,17 @@ export class TournamentPaymentsService {
   ): string {
     const allowed = (this.config.getEnvConfig().CORS_ORIGINS ?? '').split(',');
     const spa = spaOriginFrom(headers, allowed);
-    return spa
-      ? `${spa}/tournaments/${tournamentId}`
-      : `${apiOriginFrom(headers)}/tournaments/${tournamentId}`;
+    if (!spa) {
+      // spaOriginFrom returns null only when CORS_ORIGINS has no usable
+      // entries — the same class of misconfiguration as the hostless api
+      // origin above. Falling back to the api origin would hand the captain
+      // a redirect that 404s right after they have paid; fail loudly here
+      // instead, before the invoice is even created.
+      throw new InternalServerErrorException(
+        'Cannot derive a SPA origin to redirect the captain to after payment — check CORS_ORIGINS',
+      );
+    }
+    return `${spa}/tournaments/${tournamentId}`;
   }
 
   /** True when a derived api/spa origin string carries a real host, not just a scheme. */
