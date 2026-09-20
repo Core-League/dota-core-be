@@ -71,6 +71,16 @@ export function nextPaymentState(
   }
 
   if (DEAD_STATUSES.has(callback.status)) {
+    // Only clear the invoice this callback is actually about. A dead push for
+    // an id that no longer matches the row (a failure's own retry, or an
+    // `expired` following a `failure`, arriving after the captain has already
+    // re-requested and been handed a fresh invoice B) must not wipe B out from
+    // under them via the reference fallback — that reopens the exact
+    // double-charge window the payment-row lock in `createIntentForCaptain`
+    // exists to close, just through a different callback. A dead callback
+    // whose id no longer matches is a no-op.
+    if (callback.invoiceId !== current.invoiceId) return null;
+
     // The captain simply pays again; the next intent mints a fresh invoice.
     return {
       status: current.status,

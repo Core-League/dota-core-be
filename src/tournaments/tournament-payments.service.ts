@@ -287,8 +287,13 @@ export class TournamentPaymentsService {
           null)
         : null);
     if (!payment) {
-      this.logger.warn(
-        `Acquiring callback for unknown reference ${payload.reference ?? '(none)'} / invoice ${payload.invoiceId}`,
+      // `error`, not `warn`: this callback settles with a 200 (Monobank will
+      // not retry), so this line is the only trace that acquiring money we
+      // cannot attribute to any payment row moved at all.
+      this.logger.error(
+        `Unattributable acquiring callback — status "${payload.status}" for ` +
+          `reference ${payload.reference ?? '(none)'} / invoice ${payload.invoiceId} ` +
+          `matches no tournament_team_payment row`,
       );
       return;
     }

@@ -3,6 +3,22 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { TournamentPaymentCallbackController } from './tournament-payment-callback.controller';
 
+/**
+ * Produces raw bytes for a JSON payload that differ, byte-for-byte, from
+ * what `Buffer.from(JSON.stringify(body))` would produce — reversed key
+ * order plus extra whitespace. Every test below asserts `verifyCallback` was
+ * called with exactly these bytes, so a regression to re-serialising
+ * `req.body` (the hazard the whole raw-body plumbing exists to avoid) would
+ * fail the assertion instead of passing it by coincidence.
+ */
+function rawBytesFor(body: Record<string, unknown>): Buffer {
+  const entries = Object.entries(body)
+    .reverse()
+    .map(([key, value]) => `  "${key}":   ${JSON.stringify(value)}`)
+    .join(',\n');
+  return Buffer.from(`{\n${entries}\n}`);
+}
+
 describe('TournamentPaymentCallbackController', () => {
   const validBody = {
     invoiceId: 'inv_1',
@@ -12,6 +28,7 @@ describe('TournamentPaymentCallbackController', () => {
     reference: 'CORE-AAA111',
     modifiedDate: '2026-09-19T11:30:00Z',
   };
+  const validRawBody = rawBytesFor(validBody);
 
   const build = () => {
     const acquiring = { verifyCallback: jest.fn() };
@@ -36,13 +53,13 @@ describe('TournamentPaymentCallbackController', () => {
     acquiring.verifyCallback.mockResolvedValue(true);
 
     const result = await controller.receive(
-      reqWith(Buffer.from(JSON.stringify(validBody)), validBody),
+      reqWith(validRawBody, validBody),
       'good-signature',
     );
 
     expect(result).toEqual({ status: 'ok' });
     expect(acquiring.verifyCallback).toHaveBeenCalledWith(
-      Buffer.from(JSON.stringify(validBody)),
+      validRawBody,
       'good-signature',
     );
     expect(payments.applyInvoiceCallback).toHaveBeenCalledWith(
@@ -55,16 +72,10 @@ describe('TournamentPaymentCallbackController', () => {
     acquiring.verifyCallback.mockResolvedValue(false);
 
     await expect(
-      controller.receive(
-        reqWith(Buffer.from(JSON.stringify(validBody)), validBody),
-        undefined,
-      ),
+      controller.receive(reqWith(validRawBody, validBody), undefined),
     ).rejects.toThrow(ForbiddenException);
 
-    expect(acquiring.verifyCallback).toHaveBeenCalledWith(
-      Buffer.from(JSON.stringify(validBody)),
-      '',
-    );
+    expect(acquiring.verifyCallback).toHaveBeenCalledWith(validRawBody, '');
     expect(payments.applyInvoiceCallback).not.toHaveBeenCalled();
   });
 
@@ -86,7 +97,7 @@ describe('TournamentPaymentCallbackController', () => {
 
     const unmatched = { ...validBody, invoiceId: 'inv_unknown' };
     const result = await controller.receive(
-      reqWith(Buffer.from(JSON.stringify(unmatched)), unmatched),
+      reqWith(rawBytesFor(unmatched), unmatched),
       'good-signature',
     );
 
@@ -100,7 +111,7 @@ describe('TournamentPaymentCallbackController', () => {
 
     const malformed = { status: 'success' }; // missing invoiceId
     const result = await controller.receive(
-      reqWith(Buffer.from(JSON.stringify(malformed)), malformed),
+      reqWith(rawBytesFor(malformed), malformed),
       'good-signature',
     );
 

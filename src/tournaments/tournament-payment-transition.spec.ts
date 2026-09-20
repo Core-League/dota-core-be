@@ -60,7 +60,7 @@ describe('nextPaymentState', () => {
   });
 
   it.each(['failure', 'expired', 'reversed'] as const)(
-    'clears the invoice and stays PENDING on %s',
+    'clears the invoice and stays PENDING on %s when the callback names the current invoice id',
     (status) => {
       const next = nextPaymentState(pending, callback({ status }), now);
       expect(next).toEqual({
@@ -96,6 +96,54 @@ describe('nextPaymentState', () => {
     ] as const) {
       expect(nextPaymentState(paid, callback({ status }), now)).toBeNull();
     }
+  });
+
+  it('leaves the current invoice untouched when a dead callback names an old invoice id', () => {
+    // The captain's row has already moved on to invoice B (invoiceId
+    // 'inv_2') by the time a stale dead push for the old invoice A
+    // ('inv_1') arrives — e.g. an `expired` following A's own `failure`, or
+    // a Monobank retry of A's dead push. Reference lookup would otherwise
+    // find this same row and wipe out the still-payable B.
+    const movedOn: TPaymentSnapshot = {
+      ...pending,
+      invoiceId: 'inv_2',
+      paymentPageUrl: 'https://pay.mbnk.biz/inv_2',
+    };
+    for (const status of ['failure', 'expired', 'reversed'] as const) {
+      const next = nextPaymentState(
+        movedOn,
+        callback({ invoiceId: 'inv_1', status }),
+        now,
+      );
+      expect(next).toBeNull();
+    }
+  });
+
+  it('still settles a late success naming an old invoice id', () => {
+    // Unlike the dead branch, money that genuinely arrived must settle
+    // regardless of which invoice id the row currently holds.
+    const movedOn: TPaymentSnapshot = {
+      ...pending,
+      invoiceId: 'inv_2',
+      paymentPageUrl: 'https://pay.mbnk.biz/inv_2',
+    };
+    const next = nextPaymentState(
+      movedOn,
+      callback({
+        invoiceId: 'inv_1',
+        status: 'success',
+        amount: 50000,
+        finalAmount: 50000,
+      }),
+      now,
+    );
+    expect(next).toEqual({
+      status: PaymentStatus.PAID,
+      amountPaid: 50000,
+      paidAt: now,
+      invoiceId: 'inv_1',
+      paymentPageUrl: null,
+    });
   });
 
   it('ignores an unknown status rather than guessing', () => {

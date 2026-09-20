@@ -97,6 +97,32 @@ describe('TournamentPaymentsService.applyInvoiceCallback', () => {
     expect(paymentRepo.save).not.toHaveBeenCalled();
   });
 
+  it('does not wipe a live invoice B when a stale dead callback for old invoice A arrives via reference fallback', async () => {
+    // The row has already moved on to invoice B (no `invoiceId: 'inv_A'`
+    // column to find it by any more), so the callback for the dead old
+    // invoice A only reaches this row through the reference fallback.
+    const payment = {
+      reference: 'CORE-DDD444',
+      status: PaymentStatus.PENDING,
+      amountPaid: 0,
+      paidAt: null,
+      invoiceId: 'inv_B',
+      paymentPageUrl: 'https://pay.mbnk.biz/inv_B',
+    };
+    const { service, paymentRepo } = build(null);
+    paymentRepo.findByReferences.mockResolvedValue([payment]);
+
+    await service.applyInvoiceCallback(
+      callback({
+        invoiceId: 'inv_A',
+        status: 'failure',
+        reference: 'CORE-DDD444',
+      }),
+    );
+
+    expect(paymentRepo.save).not.toHaveBeenCalled();
+  });
+
   it('does not move a payment that is already PAID (terminal)', async () => {
     const payment = {
       reference: 'CORE-CCC333',
