@@ -72,6 +72,7 @@ x-common:
     - MONOBANK_ACCOUNT_IDS
     - MONOBANK_API_URL
     - MONOBANK_HTTP_TIMEOUT
+    - MONOBANK_MERCHANT_TOKEN
 
 services:
   # Same image as the apps (one build, shared tag). One-shot: runs v1 + v2
