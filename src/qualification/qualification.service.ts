@@ -22,6 +22,7 @@ import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.
 import {
   TournamentDivision,
   TournamentStatus,
+  isJoinableStatus,
 } from '../tournaments/tournaments.model';
 import {
   DIVISION_RULES,
@@ -88,10 +89,19 @@ export class QualificationService {
     this.logger.log(
       `Creating qualification for tournament ${tournament.id} with nodeGroupId=${nodeGroupId}`,
     );
+    const { qualificationStartsAt, qualificationEndsAt } = tournament;
+    // Інваріант: етап створюють лише для турнірів із кваліфікацією, а в них
+    // вікно завжди задане (`validateQualificationConfig` + DTO).
+    if (!qualificationStartsAt || !qualificationEndsAt) {
+      throw new Error(
+        `Tournament ${tournament.id} has no qualification window; ` +
+          'createForTournament must not be called for a tournament without a qualification stage',
+      );
+    }
     const q = this.qualRepo.create({
       tournament,
-      startTime: tournament.qualificationStartsAt,
-      endTime: tournament.qualificationEndsAt,
+      startTime: qualificationStartsAt,
+      endTime: qualificationEndsAt,
       nodeGroupId,
     });
     const saved = await this.qualRepo.save(q);
@@ -110,10 +120,14 @@ export class QualificationService {
   async syncQualificationWindowFromTournament(
     tournament: Tournament,
   ): Promise<void> {
+    const { qualificationStartsAt, qualificationEndsAt } = tournament;
+    // Турнір без кваліфікації не має ні вікна, ні рядка `Qualification`.
+    if (!qualificationStartsAt || !qualificationEndsAt) return;
+
     const qualification = await this.qualRepo.findByTournamentId(tournament.id);
     if (!qualification) return;
-    qualification.startTime = tournament.qualificationStartsAt;
-    qualification.endTime = tournament.qualificationEndsAt;
+    qualification.startTime = qualificationStartsAt;
+    qualification.endTime = qualificationEndsAt;
     await this.qualRepo.save(qualification);
     this.logger.log(
       `Qualification ${qualification.id}: synced window from tournament ${tournament.id}`,
@@ -159,9 +173,16 @@ export class QualificationService {
     const enforceRegistrationRules =
       !bypassEnv && !(useExplicitTeamId && isAdmin);
 
+    /**
+     * Приєднатися можна і під час реєстрації, і під час кваліфікації —
+     * вікно реєстрації свідомо може заходити в кваліфікацію. Чи відкрита
+     * реєстрація насправді, вирішують дати (перевірка нижче).
+     * Повідомлення має лишатися байт-у-байт таким, як його зіставляє фронт
+     * (`joinFriendlyHintFromApi` у Tournament.vue).
+     */
     if (
       enforceRegistrationRules &&
-      tournament.tournamentStatus !== TournamentStatus.QUALIFICATIONS
+      !isJoinableStatus(tournament.tournamentStatus)
     ) {
       throw new BadRequestException('Реєстрація на турнір закрита');
     }

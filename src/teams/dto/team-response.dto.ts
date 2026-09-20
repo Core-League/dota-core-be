@@ -31,11 +31,11 @@ export class TeamTournamentEmbeddedDto {
   @ApiProperty({ type: String, format: 'date-time' })
   registrationEndsAt: Date;
 
-  @ApiProperty({ type: String, format: 'date-time' })
-  qualificationStartsAt: Date;
+  @ApiProperty({ type: String, format: 'date-time', nullable: true })
+  qualificationStartsAt: Date | null;
 
-  @ApiProperty({ type: String, format: 'date-time' })
-  qualificationEndsAt: Date;
+  @ApiProperty({ type: String, format: 'date-time', nullable: true })
+  qualificationEndsAt: Date | null;
 
   @ApiProperty({ type: String, format: 'date-time' })
   tournamentStartsAt: Date;

@@ -12,6 +12,7 @@ import { TournamentsRepository } from './tournaments.repository';
 import { TournamentPlayoffTeamRepository } from './tournament-playoff-team.repository';
 import { TeamsService } from '../teams/teams.service';
 import { TeamResponseDto } from '../teams/dto/team-response.dto';
+import { validateQualificationConfig } from './tournament-qualification.util';
 import {
   QUALIFICATION_WINDOW_KEYS,
   TTournamentSchedule,
@@ -31,18 +32,46 @@ export class TournamentsService {
   ) {}
 
   async create(dto: CreateTournamentDto): Promise<Tournament> {
+    // Відсутній прапорець означає «з кваліфікацією» — так поводяться старі клієнти.
+    const hasQualification = dto.hasQualification !== false;
+
     const schedule: TTournamentSchedule = {
       registrationStartsAt: new Date(dto.registrationStartsAt),
       registrationEndsAt: new Date(dto.registrationEndsAt),
-      qualificationStartsAt: new Date(dto.qualificationStartsAt),
-      qualificationEndsAt: new Date(dto.qualificationEndsAt),
+      qualificationStartsAt: hasQualification
+        ? new Date(dto.qualificationStartsAt as string)
+        : null,
+      qualificationEndsAt: hasQualification
+        ? new Date(dto.qualificationEndsAt as string)
+        : null,
       tournamentStartsAt: new Date(dto.tournamentStartsAt),
       tournamentEndsAt: new Date(dto.tournamentEndsAt),
     };
     validateTournamentSchedule(schedule);
+    validateQualificationConfig({
+      hasQualification,
+      tournamentSlots: dto.tournamentSlots,
+      tournamentStatus: dto.tournamentStatus,
+    });
 
-    const entity = this.tournamentsRepo.create({ ...dto, ...schedule });
+    const entity = this.tournamentsRepo.create({
+      ...dto,
+      ...schedule,
+      hasQualification,
+    });
     const tournament = await this.tournamentsRepo.save(entity);
+
+    /**
+     * Без кваліфікації немає ні етапу в Dota2, ні рядка `Qualification`:
+     * турнір іде REGISTRATION → PLAYOFF, а сітку стартує
+     * `TournamentPlayoffScheduler` о `tournamentStartsAt`.
+     */
+    if (!hasQualification) {
+      this.logger.log(
+        `Tournament ${tournament.id}: created without a qualification stage`,
+      );
+      return tournament;
+    }
 
     this.logger.log(
       `Tournament ${tournament.id}: calling addNodeGroup for qualification stage`,
@@ -99,6 +128,29 @@ export class TournamentsService {
      */
     validateTournamentSchedule({ ...tournament, ...payload });
 
+    /**
+     * Етап зафіксований при створенні, тож турнір без кваліфікації не може
+     * відростити її вікно через PATCH: дати лишилися б без самого етапу —
+     * ні рядка `Qualification`, ні вкладки на фронті.
+     */
+    if (
+      !tournament.hasQualification &&
+      QUALIFICATION_WINDOW_KEYS.some((k) => payload[k] !== undefined)
+    ) {
+      throw new BadRequestException(
+        'Турнір без кваліфікації не має вікна кваліфікації',
+      );
+    }
+
+    validateQualificationConfig({
+      hasQualification: tournament.hasQualification,
+      tournamentSlots:
+        payload.tournamentSlots !== undefined
+          ? payload.tournamentSlots
+          : tournament.tournamentSlots,
+      tournamentStatus: payload.tournamentStatus ?? tournament.tournamentStatus,
+    });
+
     Object.assign(tournament, payload);
     const saved = await this.tournamentsRepo.save(tournament);
 
@@ -107,9 +159,9 @@ export class TournamentsService {
      * пересинхронізовуємо `Qualification` лише коли змінили саме їх. Правки
      * дат реєстрації більше не рухають дедлайн подачі матчів.
      */
-    const shouldSyncQualification = QUALIFICATION_WINDOW_KEYS.some(
-      (k) => payload[k] !== undefined,
-    );
+    const shouldSyncQualification =
+      tournament.hasQualification &&
+      QUALIFICATION_WINDOW_KEYS.some((k) => payload[k] !== undefined);
     if (shouldSyncQualification) {
       await this.qualificationService.syncQualificationWindowFromTournament(
         saved,

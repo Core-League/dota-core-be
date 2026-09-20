@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { In, LessThanOrEqual, Repository } from 'typeorm';
 import { PlayoffService } from '../playoff/playoff.service';
 import { Tournament } from './tournaments.entity';
 import { TournamentStatus } from './tournaments.model';
@@ -9,11 +9,15 @@ import { TournamentStatus } from './tournaments.model';
 /**
  * Автоматичний старт плей-оф.
  *
- * Щохвилини шукає турніри, у яких настав `tournamentStartsAt`, але вони ще в
- * статусі QUALIFICATIONS, і стартує плей-оф без участі адміна. Кожен турнір
+ * Щохвилини шукає турніри, у яких настав `tournamentStartsAt`, але вони ще не
+ * дійшли до плей-оф, і стартує сітку без участі адміна. Кожен турнір
  * обробляється незалежно; помилка на одному не блокує інші, і турнір, який не
- * стартував (напр. через збій зовнішніх сервісів), лишається в QUALIFICATIONS —
+ * стартував (напр. через збій зовнішніх сервісів), лишається у своєму статусі —
  * наступний тік спробує ще раз.
+ *
+ * REGISTRATION теж потрапляє у вибірку: зазвичай турнір переводить у
+ * QUALIFICATIONS окремий планувальник о `qualificationStartsAt`, але якщо той
+ * тік був пропущений, турнір не має зависнути до початку сітки.
  */
 @Injectable()
 export class TournamentPlayoffScheduler {
@@ -36,7 +40,10 @@ export class TournamentPlayoffScheduler {
     try {
       const due = await this.tournamentRepo.find({
         where: {
-          tournamentStatus: TournamentStatus.QUALIFICATIONS,
+          tournamentStatus: In([
+            TournamentStatus.REGISTRATION,
+            TournamentStatus.QUALIFICATIONS,
+          ]),
           tournamentStartsAt: LessThanOrEqual(new Date()),
         },
       });

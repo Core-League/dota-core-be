@@ -42,12 +42,13 @@ type TScheduleRule = {
 /**
  * Ordering rules, in the order they are reported.
  *
- * Registration is deliberately allowed to overlap qualification: teams register
- * and play their qualifier the same evening, which is how every tournament
- * created before the windows were split behaves. The only cross-window rule is
- * that qualification must be over before the playoff bracket starts — the
- * auto-start scheduler would otherwise seed a bracket while results are still
- * being submitted.
+ * Registration is deliberately allowed to overlap qualification: a team may
+ * join during either phase, so the registration window is free to run on into
+ * qualification — teams register and play their qualifier the same evening,
+ * which is how every tournament created before the windows were split behaves.
+ * The only cross-window rule is that qualification must be over before the
+ * playoff bracket starts — the auto-start scheduler would otherwise seed a
+ * bracket while results are still being submitted.
  */
 const SCHEDULE_RULES: TScheduleRule[] = [
   {
@@ -84,7 +85,13 @@ export function getScheduleViolation(
     const before = schedule[rule.before]?.getTime();
     const after = schedule[rule.after]?.getTime();
 
-    // A missing date is a DTO-validation problem, not an ordering one.
+    /**
+     * A rule whose dates are absent simply does not apply. That covers both a
+     * missing date (a DTO-validation problem, not an ordering one) and a
+     * tournament without a qualification stage, whose qualification columns are
+     * null — every qualification rule drops out on its own.
+     */
+    if (before === undefined || after === undefined) continue;
     if (!Number.isFinite(before) || !Number.isFinite(after)) continue;
 
     const ok = rule.allowEqual ? before <= after : before < after;

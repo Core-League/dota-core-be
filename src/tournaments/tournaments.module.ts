@@ -16,6 +16,7 @@ import { TournamentPlayoffTeamRepository } from './tournament-playoff-team.repos
 import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
 import { TournamentPaymentsService } from './tournament-payments.service';
 import { TournamentPlayoffScheduler } from './tournament-playoff.scheduler';
+import { TournamentQualificationScheduler } from './tournament-qualification.scheduler';
 import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsModule } from '../teams/teams.module';
 
@@ -42,6 +43,7 @@ import { TeamsModule } from '../teams/teams.module';
     TournamentTeamPaymentRepository,
     TournamentPaymentsService,
     TournamentPlayoffScheduler,
+    TournamentQualificationScheduler,
   ],
   controllers: [TournamentsController],
 })

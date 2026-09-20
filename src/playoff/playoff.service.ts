@@ -31,9 +31,7 @@ import { PlayoffLeagueFixture } from './playoff-league-fixture.entity';
 import { Playoff } from './playoff.entity';
 import { PlayoffSeries, PlayoffFinalType } from './playoff-series.entity';
 import { PlayoffTeardownService } from './playoff-teardown.service';
-
-/** Auto-started and restarted playoffs take the top N eligible teams by qualification standings. */
-const PLAYOFF_TEAM_LIMIT = 8;
+import { PLAYOFF_TEAM_LIMIT } from './playoff.constants';
 
 @Injectable()
 export class PlayoffService {
@@ -239,8 +237,8 @@ export class PlayoffService {
    * - old Challonge/Dota resources are released only after the replacement bracket is live.
    *
    * Tournament status is intentionally left as-is. `TournamentPlayoffScheduler` sweeps only
-   * `QUALIFICATIONS`, so it can never race a restart, and a crash mid-restart cannot trigger a
-   * surprise auto-start. When no playoff exists (e.g. a previous restart died mid-flight) this
+   * tournaments that have not reached `PLAYOFF` yet, so it can never race a restart, and a
+   * crash mid-restart cannot trigger a surprise auto-start. When no playoff exists (e.g. a previous restart died mid-flight) this
    * behaves as a plain start, which makes a failed restart retryable rather than terminal.
    */
   async restartPlayoff(tournamentId: string): Promise<PlayoffResponseDto> {

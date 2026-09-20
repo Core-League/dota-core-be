@@ -8,8 +8,8 @@ import {
 /**
  * Ordering rules for the three tournament windows (registration, qualification,
  * playoff). The notable non-rule is that registration may overlap qualification:
- * every tournament created before the windows were split does exactly that, so a
- * strict hand-off would have invalidated existing data.
+ * a team may join while qualification is already running, and every tournament
+ * created before the windows were split behaves exactly that way.
  */
 describe('validateTournamentSchedule', () => {
   const d = (iso: string) => new Date(iso);
@@ -110,6 +110,52 @@ describe('validateTournamentSchedule', () => {
     expect(() => validateTournamentSchedule(invalid)).toThrow(
       'Кваліфікація має завершитися до початку плей-оф',
     );
+  });
+
+  describe('without a qualification stage', () => {
+    /** `hasQualification = false` leaves both qualification columns null. */
+    const noQualification: TTournamentSchedule = {
+      ...base,
+      qualificationStartsAt: null,
+      qualificationEndsAt: null,
+    };
+
+    it('accepts a schedule with no qualification window', () => {
+      expect(getScheduleViolation(noQualification)).toBeNull();
+      expect(() => validateTournamentSchedule(noQualification)).not.toThrow();
+    });
+
+    it('still enforces the registration window', () => {
+      const invalid = {
+        ...noQualification,
+        registrationStartsAt: d('2026-09-10T00:00:00Z'),
+        registrationEndsAt: d('2026-09-01T00:00:00Z'),
+      };
+      expect(getScheduleViolation(invalid)).toBe(
+        'Кінець реєстрації має бути пізніше за початок реєстрації',
+      );
+    });
+
+    it('still enforces the playoff window', () => {
+      const invalid = {
+        ...noQualification,
+        tournamentStartsAt: d('2026-09-20T00:00:00Z'),
+        tournamentEndsAt: d('2026-09-15T00:00:00Z'),
+      };
+      expect(getScheduleViolation(invalid)).toBe(
+        'Кінець плей-оф має бути пізніше за початок плей-оф',
+      );
+    });
+
+    it('drops the qualification-before-playoff rule rather than failing it', () => {
+      // Registration runs past the bracket start, which only the (absent)
+      // qualification rule could have objected to.
+      const late = {
+        ...noQualification,
+        registrationEndsAt: d('2026-09-18T00:00:00Z'),
+      };
+      expect(getScheduleViolation(late)).toBeNull();
+    });
   });
 
   it('ignores rules whose dates are absent, leaving that to DTO validation', () => {
