@@ -28,7 +28,6 @@ import { PlayerTagModel } from '../db/models/player-tag.model';
 import { TagRepository } from './tag.repository';
 import { MmrUpdateRequestModel } from '../db/models/mmr-update-request.model';
 import { MmrUpdateRequestRepository } from './mmr-update-request.repository';
-import { TournamentPaymentRepository } from './tournament-payment.repository';
 
 /**
  * Global registry of v2 repositories. `forFeature` binds the TypeORM models so
@@ -50,7 +49,6 @@ const repos: Provider[] = [
   PlayerRepository,
   TagRepository,
   MmrUpdateRequestRepository,
-  TournamentPaymentRepository,
 ];
 
 @Global()

@@ -24,13 +24,6 @@ export class Tournament {
   @Column({ nullable: true, type: 'int' })
   entryFee: number | null;
 
-  /**
-   * Public Monobank jar link captains are redirected to for the entry fee.
-   * Set per-tournament by an admin; falls back to MONOBANK_JAR_URL when empty.
-   */
-  @Column({ nullable: true, type: 'varchar' })
-  paymentJarUrl: string | null;
-
   @Column({ type: 'enum', enum: TournamentDivision, nullable: true })
   division: TournamentDivision | null;
 

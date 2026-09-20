@@ -35,14 +35,6 @@ export class CreateTournamentDto {
   @Min(0)
   entryFee?: number | null;
 
-  @ApiPropertyOptional({
-    description:
-      'Monobank jar link captains are redirected to for the entry fee. Empty falls back to MONOBANK_JAR_URL.',
-  })
-  @IsOptional()
-  @IsString()
-  paymentJarUrl?: string | null;
-
   @ApiProperty({
     enum: TournamentDivision,
     enumName: 'TournamentDivision',
