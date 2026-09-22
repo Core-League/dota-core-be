@@ -26,9 +26,9 @@ import {
 } from '../tournaments/tournaments.model';
 import {
   DIVISION_RULES,
-  computeTeamAvgRating,
   isTeamEligibleForDivision,
 } from '../tournaments/tournament-division.util';
+import { computeTeamAvgRating } from '../teams/team-rating.util';
 import {
   getRegistrationBlockReason,
   registrationBlockMessage,
