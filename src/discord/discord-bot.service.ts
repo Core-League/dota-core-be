@@ -9,11 +9,8 @@ const CAPTAIN_ROLE_ID = '1415420108318183565';
 const STAFF_FULL_ACCESS_ROLE_ID = '1408215246589394964';
 const VIEW_JOIN_ROLE_IDS = ['1399031107835400385', '1399452821362966728'];
 
-const DIVISION_CATEGORY_IDS: Record<string, string> = {
-  DIVISION_I: '1421318941875245129',
-  DIVISION_II: '1476565539013922878',
-  DIVISION_III: '1502067359542677625',
-};
+// Every team voice channel lands in this one category.
+const TEAM_VOICE_CATEGORY_ID = '1421318941875245129';
 
 // Discord permission bit values (Discord API expects string integers)
 const MANAGE_CHANNELS_BIT = 16n; // 1 << 4
@@ -92,18 +89,12 @@ export class DiscordBotService {
     }
   }
 
-  /** Creates a voice channel inside the division category. Returns the channel ID or null on failure. */
-  async createDivisionVoiceChannel(
+  /** Creates the team's private voice channel. Returns the channel ID or null on failure. */
+  async createTeamVoiceChannel(
     teamName: string,
-    division: string,
     teamRoleId: string,
   ): Promise<string | null> {
     if (!this.ready()) return null;
-    const categoryId = DIVISION_CATEGORY_IDS[division];
-    if (!categoryId) {
-      this.logger.warn(`No category ID for division ${division}`);
-      return null;
-    }
     try {
       const res = await firstValueFrom(
         this.http.post(
@@ -111,7 +102,7 @@ export class DiscordBotService {
           {
             name: `🎤・${teamName}`,
             type: 2, // GUILD_VOICE
-            parent_id: categoryId,
+            parent_id: TEAM_VOICE_CATEGORY_ID,
             permission_overwrites: [
               // @everyone: deny VIEW_CHANNEL (channel is private)
               {
@@ -143,7 +134,7 @@ export class DiscordBotService {
       );
       return (res.data as { id: string }).id;
     } catch (e) {
-      this.logger.warn(`createDivisionVoiceChannel failed: ${this.errMsg(e)}`);
+      this.logger.warn(`createTeamVoiceChannel failed: ${this.errMsg(e)}`);
       return null;
     }
   }

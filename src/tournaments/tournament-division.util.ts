@@ -1,4 +1,5 @@
 import { TournamentDivision } from './tournaments.model';
+import { computeTeamAvgRating } from '../teams/team-rating.util';
 
 export interface DivisionRule {
   /** Ukrainian display label. */
@@ -46,14 +47,6 @@ const DIVISIONS_BY_STRENGTH: readonly TournamentDivision[] = [
   TournamentDivision.DIVISION_II,
   TournamentDivision.DIVISION_III,
 ];
-
-/** The roster's mean rating, unrounded. Null for an empty roster. */
-export function computeTeamAvgRating(
-  players: { rating: number }[],
-): number | null {
-  if (!players.length) return null;
-  return players.reduce((sum, p) => sum + p.rating, 0) / players.length;
-}
 
 /**
  * Whether a roster may enter a tournament in `division`. This — not the team's

@@ -20,10 +20,8 @@ import { Player } from '../players/player.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { Role, getRoleColorByName } from '../user-roles/role.constants';
 import { toPlayerRankDto } from '../players/dto/player-rank.dto';
-import {
-  computeTeamAvgRating,
-  resolveTeamDivision,
-} from '../tournaments/tournament-division.util';
+import { resolveTeamDivision } from '../tournaments/tournament-division.util';
+import { computeTeamAvgRating } from './team-rating.util';
 import { DiscordBotService } from '../discord/discord-bot.service';
 import { AuthService } from '../auth/auth.service';
 import { Dota2Service } from '../dota2/dota2.service';
@@ -135,20 +133,11 @@ export class TeamsService {
   }
 
   private async onTeamVerified(team: Team): Promise<void> {
-    const division = resolveTeamDivision(team.mainPlayers ?? []);
-    if (!division) {
-      this.logger.warn(
-        `Team ${team.id} verified but division could not be determined — skipping Discord setup`,
-      );
-      return;
-    }
-
     const roleId = await this.discord.createTeamRole(team.name);
     if (!roleId) return;
 
-    const channelId = await this.discord.createDivisionVoiceChannel(
+    const channelId = await this.discord.createTeamVoiceChannel(
       team.name,
-      division,
       roleId,
     );
 
@@ -176,7 +165,7 @@ export class TeamsService {
     }
 
     this.logger.log(
-      `Discord setup complete for team ${team.id}: role=${roleId} channel=${channelId ?? 'null'} division=${division}`,
+      `Discord setup complete for team ${team.id}: role=${roleId} channel=${channelId ?? 'null'}`,
     );
   }
 
