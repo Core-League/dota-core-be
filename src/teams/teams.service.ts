@@ -133,20 +133,11 @@ export class TeamsService {
   }
 
   private async onTeamVerified(team: Team): Promise<void> {
-    const division = resolveTeamDivision(team.mainPlayers ?? []);
-    if (!division) {
-      this.logger.warn(
-        `Team ${team.id} verified but division could not be determined — skipping Discord setup`,
-      );
-      return;
-    }
-
     const roleId = await this.discord.createTeamRole(team.name);
     if (!roleId) return;
 
-    const channelId = await this.discord.createDivisionVoiceChannel(
+    const channelId = await this.discord.createTeamVoiceChannel(
       team.name,
-      division,
       roleId,
     );
 
@@ -174,7 +165,7 @@ export class TeamsService {
     }
 
     this.logger.log(
-      `Discord setup complete for team ${team.id}: role=${roleId} channel=${channelId ?? 'null'} division=${division}`,
+      `Discord setup complete for team ${team.id}: role=${roleId} channel=${channelId ?? 'null'}`,
     );
   }
 
