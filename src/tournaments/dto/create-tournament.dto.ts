@@ -35,14 +35,16 @@ export class CreateTournamentDto {
   @Min(0)
   entryFee?: number | null;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     enum: TournamentDivision,
     enumName: 'TournamentDivision',
+    deprecated: true,
     description:
-      'DIVISION_I = Початковий (avg 0–3500, player cap 5500), DIVISION_II = Любительський (avg 0–7000), DIVISION_III = Аматорський (avg 7000+)',
+      'Deprecated and ignored. Tournaments are open entry; this field is removed once the frontend stops sending it.',
   })
+  @IsOptional()
   @IsEnum(TournamentDivision)
-  division: TournamentDivision;
+  division?: TournamentDivision;
 
   @ApiPropertyOptional()
   @IsOptional()
