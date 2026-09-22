@@ -20,15 +20,9 @@ import { TournamentTeamPayment } from '../tournaments/tournament-team-payment.en
 import { PaymentStatus } from '../tournaments/tournament-team-payment.model';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import {
-  TournamentDivision,
   TournamentStatus,
   isJoinableStatus,
 } from '../tournaments/tournaments.model';
-import {
-  DIVISION_RULES,
-  isTeamEligibleForDivision,
-} from '../tournaments/tournament-division.util';
-import { computeTeamAvgRating } from '../teams/team-rating.util';
 import {
   getRegistrationBlockReason,
   registrationBlockMessage,
@@ -259,46 +253,7 @@ export class QualificationService {
 
       const main = team.mainPlayers ?? [];
 
-      const unverifiedMain = main.filter((p) => !p.verifiedAt);
-      if (unverifiedMain.length > 0) {
-        throw new BadRequestException(
-          'Всі основні гравці повинні бути верифіковані',
-        );
-      }
-
-      // An empty roster is checked separately: it is not an MMR problem, and the
-      // all-players-verified check above passes vacuously on an empty list.
-      if (!main.length) {
-        throw new BadRequestException(
-          'У складі команди немає основних гравців',
-        );
-      }
-
-      if (
-        tournament.division &&
-        !isTeamEligibleForDivision(main, tournament.division)
-      ) {
-        throw new BadRequestException(
-          this.divisionRejectionMessage(main, tournament.division),
-        );
-      }
-
-      const reserved = team.reservedPlayers ?? [];
-      if (reserved.length > MAX_RESERVED_PLAYERS) {
-        throw new BadRequestException(
-          `Дозволено не більше ${MAX_RESERVED_PLAYERS} запасних гравців`,
-        );
-      }
-      for (const sub of reserved) {
-        if (!sub.verifiedAt) {
-          throw new BadRequestException(
-            `Запасний гравець ${sub.id} не верифікований`,
-          );
-        }
-        if (tournament.division) {
-          this.validateSubstitute(main, sub, tournament.division);
-        }
-      }
+      this.validateRoster(main, team.reservedPlayers ?? []);
     }
 
     /**
@@ -662,73 +617,35 @@ export class QualificationService {
   }
 
   /**
-   * Explains WHY a roster failed a division. Average-out-of-range and
-   * player-over-cap are different problems with different fixes, and a captain
-   * cannot act on an undifferentiated rejection.
+   * Roster rules for joining. Tournaments are open entry — there is no MMR
+   * bound and no per-player cap, so rating never appears here.
    */
-  private divisionRejectionMessage(
-    main: { rating: number }[],
-    division: TournamentDivision,
-  ): string {
-    const rule = DIVISION_RULES[division];
-
-    // Bound to a local so TypeScript narrows it inside the closure.
-    const cap = rule.maxPlayerRating;
-    if (cap !== null) {
-      const overCap = main
-        .map((p) => p.rating)
-        .filter((rating) => rating > cap);
-      if (overCap.length) {
-        const highest = Math.round(Math.max(...overCap));
-        return `Гравець з MMR ${highest} перевищує ліміт ${cap} для дивізіону «${rule.label}»`;
-      }
+  private validateRoster(main: Player[], reserved: Player[]): void {
+    const unverifiedMain = main.filter((p) => !p.verifiedAt);
+    if (unverifiedMain.length > 0) {
+      throw new BadRequestException(
+        'Всі основні гравці повинні бути верифіковані',
+      );
     }
 
-    const avg = computeTeamAvgRating(main);
-    const avgRounded = avg === null ? 0 : Math.round(avg);
-    return `Середній MMR команди (${avgRounded}) не підходить для дивізіону «${rule.label}»`;
-  }
+    // An empty roster is checked separately: the all-players-verified check
+    // above passes vacuously on an empty list.
+    if (!main.length) {
+      throw new BadRequestException('У складі команди немає основних гравців');
+    }
 
-  /**
-   * A sub may come in for ANY main player, so the roster must stay eligible for
-   * the tournament's division under every possible swap. Checking two extremes
-   * suffices, because eligibility decomposes:
-   *   - the average is monotonic — replacing the lowest-rated starter maximises
-   *     it, replacing the highest minimises it, and every other slot lands
-   *     between those two;
-   *   - the per-player cap needs no separate check: the sub appears in every
-   *     candidate roster (it is the one player common to all five), so
-   *     `isTeamEligibleForDivision` already tests it there on both extremes.
-   * So if both extremes are eligible, all five are.
-   *
-   * Note this validates against the TOURNAMENT's division, not against the
-   * team's division being unchanged: under play-up a sub may shift the team's
-   * resolved division while the roster still satisfies the tournament it enters.
-   */
-  private validateSubstitute(
-    mainPlayers: Player[],
-    sub: Player,
-    division: TournamentDivision,
-  ): void {
-    const ratings = mainPlayers.map((p) => p.rating).sort((a, b) => a - b);
-    if (ratings.length === 0) return;
-
-    const eligibleWithReplacementAt = (index: number) => {
-      const modified = [...ratings];
-      modified[index] = sub.rating;
-      return isTeamEligibleForDivision(
-        modified.map((rating) => ({ rating })),
-        division,
-      );
-    };
-
-    if (
-      !eligibleWithReplacementAt(0) ||
-      !eligibleWithReplacementAt(ratings.length - 1)
-    ) {
+    if (reserved.length > MAX_RESERVED_PLAYERS) {
       throw new BadRequestException(
-        `Запасний гравець ${sub.id} не підходить для дивізіону турніру`,
+        `Дозволено не більше ${MAX_RESERVED_PLAYERS} запасних гравців`,
       );
+    }
+
+    for (const sub of reserved) {
+      if (!sub.verifiedAt) {
+        throw new BadRequestException(
+          `Запасний гравець ${sub.id} не верифікований`,
+        );
+      }
     }
   }
 
