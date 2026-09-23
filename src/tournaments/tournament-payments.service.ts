@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -20,11 +19,11 @@ import { nextPaymentState } from './tournament-payment-transition';
 import { TournamentPaymentSummaryDto } from './dto/tournament-payment-summary.dto';
 import { TournamentPaymentIntentDto } from './dto/tournament-payment-intent.dto';
 import { invoiceValiditySeconds } from './invoice-validity';
+import type { TRequestHeaders } from './request-origin.util';
 import {
-  apiOriginFrom,
-  spaOriginFrom,
-  type TRequestHeaders,
-} from './request-origin.util';
+  acquiringWebHookUrlFrom,
+  tournamentRedirectUrlFrom,
+} from './acquiring-urls.util';
 import {
   getRegistrationBlockReason,
   registrationBlockMessage,
@@ -178,23 +177,20 @@ export class TournamentPaymentsService {
       // Reuse a live invoice so repeat clicks — or a second concurrent
       // request that just unblocked on the lock above — do not mint another.
       if (!payment.invoiceId || !payment.paymentPageUrl) {
-        const apiOrigin = apiOriginFrom(headers);
-        if (!this.hasHost(apiOrigin)) {
-          // apiOriginFrom falls back to a bare "http://" when neither `host`
-          // nor `x-forwarded-host` is present. Putting that on a real invoice's
-          // webHookUrl would mean Monobank's callback has nowhere to land — a
-          // payment that goes through but never settles, silently. Fail loudly
-          // here instead.
-          throw new InternalServerErrorException(
-            "Cannot derive this API's public host from the request headers — refusing to create an invoice with an unreachable webHookUrl",
-          );
-        }
+        // Both URLs come from the request, never from env, and both throw
+        // loudly when a host cannot be derived — see acquiring-urls.util.
+        const webHookUrl = acquiringWebHookUrlFrom(headers);
+        const redirectUrl = tournamentRedirectUrlFrom(
+          headers,
+          this.config.getEnvConfig().CORS_ORIGINS,
+          tournamentId,
+        );
         const invoice = await this.acquiring.createInvoice({
           amount: entryFee,
           reference: payment.reference,
           destination: `Вступний внесок — ${tournament.name}`,
-          redirectUrl: this.redirectUrlFor(headers, tournamentId),
-          webHookUrl: `${apiOrigin}/webhook/monobank/acquiring`,
+          redirectUrl,
+          webHookUrl,
           validitySec: invoiceValiditySeconds(
             new Date(),
             tournament.registrationEndsAt,
@@ -207,35 +203,6 @@ export class TournamentPaymentsService {
 
       return this.toIntentDto(payment, entryFee);
     });
-  }
-
-  /** Where Monobank returns the captain after paying: the tournament page. */
-  private redirectUrlFor(
-    headers: TRequestHeaders,
-    tournamentId: string,
-  ): string {
-    const allowed = (this.config.getEnvConfig().CORS_ORIGINS ?? '').split(',');
-    const spa = spaOriginFrom(headers, allowed);
-    if (!spa) {
-      // spaOriginFrom returns null only when CORS_ORIGINS has no usable
-      // entries — the same class of misconfiguration as the hostless api
-      // origin above. Falling back to the api origin would hand the captain
-      // a redirect that 404s right after they have paid; fail loudly here
-      // instead, before the invoice is even created.
-      throw new InternalServerErrorException(
-        'Cannot derive a SPA origin to redirect the captain to after payment — check CORS_ORIGINS',
-      );
-    }
-    return `${spa}/tournaments/${tournamentId}`;
-  }
-
-  /** True when a derived api/spa origin string carries a real host, not just a scheme. */
-  private hasHost(origin: string): boolean {
-    try {
-      return new URL(origin).host.length > 0;
-    } catch {
-      return false;
-    }
   }
 
   /** The caller's own team payment for a tournament (used for polling), or null. */
@@ -273,11 +240,14 @@ export class TournamentPaymentsService {
   }
 
   /**
-   * Applies one acquiring callback. Idempotent and order-independent: Monobank
-   * retries up to three times and does not guarantee ordering, and the decision
-   * itself lives in `nextPaymentState`.
+   * Applies one acquiring callback to an entry-fee payment. Returns false when
+   * no payment matches so the dispatcher can try donations, then log. Idempotent
+   * and order-independent: Monobank retries up to three times and does not
+   * guarantee ordering, and the decision itself lives in `nextPaymentState`.
    */
-  async applyInvoiceCallback(payload: TInvoiceCallbackPayload): Promise<void> {
+  async applyInvoiceCallback(
+    payload: TInvoiceCallbackPayload,
+  ): Promise<boolean> {
     // invoiceId is the precise key; reference covers a push that predates the
     // row storing its invoice (e.g. a retry arriving after a failure cleared it).
     const payment =
@@ -286,20 +256,10 @@ export class TournamentPaymentsService {
         ? ((await this.paymentRepo.findByReferences([payload.reference]))[0] ??
           null)
         : null);
-    if (!payment) {
-      // `error`, not `warn`: this callback settles with a 200 (Monobank will
-      // not retry), so this line is the only trace that acquiring money we
-      // cannot attribute to any payment row moved at all.
-      this.logger.error(
-        `Unattributable acquiring callback — status "${payload.status}" for ` +
-          `reference ${payload.reference ?? '(none)'} / invoice ${payload.invoiceId} ` +
-          `matches no tournament_team_payment row`,
-      );
-      return;
-    }
+    if (!payment) return false;
 
     const change = nextPaymentState(payment, payload, new Date());
-    if (!change) return;
+    if (!change) return true;
 
     payment.status = change.status;
     payment.amountPaid = change.amountPaid;
@@ -311,6 +271,7 @@ export class TournamentPaymentsService {
     this.logger.log(
       `Payment ${payment.reference}: invoice ${payload.invoiceId} -> ${payload.status} (${change.status})`,
     );
+    return true;
   }
 
   /** The caller's non-disbanded team where they are the captain, or null. */

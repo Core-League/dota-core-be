@@ -11,15 +11,21 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monobank-acquiring.service';
-import { InvoiceCallbackSchema } from '../connectors/monobank-acquiring/monobank-acquiring.types';
+import {
+  InvoiceCallbackSchema,
+  type TInvoiceCallbackPayload,
+} from '../connectors/monobank-acquiring/monobank-acquiring.types';
 import { TournamentPaymentsService } from './tournament-payments.service';
+import { TournamentDonationsService } from './tournament-donations.service';
 
 /**
  * Receiver for Monobank acquiring invoice callbacks.
  *
- * Served by v1 because v1 owns `tournament_team_payment`. Acquiring takes a
- * `webHookUrl` per invoice, so unlike the Personal API statement webhook there
- * is no registration step and no chance of pointing it at the wrong app.
+ * Served by v1 because v1 owns `tournament_team_payment` and
+ * `tournament_donation`. Acquiring takes a `webHookUrl` per invoice, so unlike
+ * the Personal API statement webhook there is no registration step and no
+ * chance of pointing it at the wrong app. Entry fees and donations share this
+ * one URL; the payload is attributed by invoiceId/reference, entry fees first.
  *
  * Answers 200 for anything it accepts — including a payload matching no known
  * payment — so Monobank stops its three retries. Only a failed signature is
@@ -35,6 +41,7 @@ export class TournamentPaymentCallbackController {
   constructor(
     private readonly acquiring: MonobankAcquiringService,
     private readonly payments: TournamentPaymentsService,
+    private readonly donations: TournamentDonationsService,
   ) {}
 
   @Post('acquiring')
@@ -66,7 +73,25 @@ export class TournamentPaymentCallbackController {
       return { status: 'ignored' };
     }
 
-    await this.payments.applyInvoiceCallback(parsed.data);
+    await this.dispatch(parsed.data);
     return { status: 'ok' };
+  }
+
+  /**
+   * Routes one verified callback: entry-fee payment (by invoiceId, then
+   * reference), else donation (same order), else the unattributable log.
+   */
+  private async dispatch(payload: TInvoiceCallbackPayload): Promise<void> {
+    if (await this.payments.applyInvoiceCallback(payload)) return;
+    if (await this.donations.applyInvoiceCallback(payload)) return;
+
+    // `error`, not `warn`: this callback settles with a 200 (Monobank will
+    // not retry), so this line is the only trace that acquiring money we
+    // cannot attribute to any row moved at all.
+    this.logger.error(
+      `Unattributable acquiring callback — status "${payload.status}" for ` +
+        `reference ${payload.reference ?? '(none)'} / invoice ${payload.invoiceId} ` +
+        `matches no tournament_team_payment or tournament_donation row`,
+    );
   }
 }

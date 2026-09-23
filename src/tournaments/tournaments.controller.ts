@@ -14,10 +14,13 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { JwtService } from '@nestjs/jwt';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -32,7 +35,11 @@ import { QualificationResponseDto } from '../qualification/dto/qualification-res
 import { TeamResponseDto } from '../teams/dto/team-response.dto';
 import { TournamentsService } from './tournaments.service';
 import { TournamentPaymentsService } from './tournament-payments.service';
+import { TournamentDonationsService } from './tournament-donations.service';
+import { playerIdFromOptionalBearer } from './optional-bearer.util';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
+import { CreateTournamentDonationDto } from './dto/create-tournament-donation.dto';
+import { TournamentDonationIntentDto } from './dto/tournament-donation-intent.dto';
 import { JoinTournamentDto } from './dto/join-tournament.dto';
 import { MarkPaymentPaidDto } from './dto/mark-payment-paid.dto';
 import { TournamentPaymentSummaryDto } from './dto/tournament-payment-summary.dto';
@@ -72,6 +79,8 @@ export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
     private readonly tournamentPaymentsService: TournamentPaymentsService,
+    private readonly tournamentDonationsService: TournamentDonationsService,
+    private readonly jwt: JwtService,
     private readonly uploadsService: UploadsService,
     private readonly qualificationService: QualificationService,
     private readonly playoffService: PlayoffService,
@@ -254,6 +263,35 @@ export class TournamentsController {
     @Req() req: RequestWithJwtActor,
   ): Promise<TournamentPaymentIntentDto | null> {
     return this.tournamentPaymentsService.getMyPayment(id, req.user!.playerId);
+  }
+
+  /**
+   * No guard on purpose: guests may donate, and the SPA's axios interceptor
+   * hard-redirects on 401, so a JwtAuthGuard would kick them off the page.
+   * A valid bearer token, if present, only attributes the donation.
+   */
+  @Post(':id/donations/intent')
+  @ApiOperation({
+    summary: 'Create a donation intent (public; no auth required)',
+    description:
+      'Mints a new Monobank invoice for a donation towards the tournament and returns its hosted payment page. Every call is a separate donation.',
+  })
+  @ApiOkResponse({ type: TournamentDonationIntentDto })
+  @ApiBadRequestResponse({
+    description: 'Amount is not an integer or is outside 1000..5000000 kopecks',
+  })
+  @ApiNotFoundResponse({ description: 'Tournament not found' })
+  createDonationIntent(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: CreateTournamentDonationDto,
+    @Req() req: RequestWithJwtActor,
+  ): Promise<TournamentDonationIntentDto> {
+    return this.tournamentDonationsService.createIntent(
+      id,
+      body.amount,
+      req.headers,
+      playerIdFromOptionalBearer(req.headers, this.jwt),
+    );
   }
 
   @Post(':id/payments/:teamId/mark-paid')

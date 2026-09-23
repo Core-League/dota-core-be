@@ -11,12 +11,15 @@ import { TournamentPaymentCallbackController } from './tournament-payment-callba
 import { Tournament } from './tournaments.entity';
 import { TournamentPlayoffTeam } from './tournament-playoff-team.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
+import { TournamentDonation } from './tournament-donation.entity';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import { TournamentsRepository } from './tournaments.repository';
 import { TournamentPlayoffTeamRepository } from './tournament-playoff-team.repository';
 import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
 import { TournamentPaymentsService } from './tournament-payments.service';
+import { TournamentDonationRepository } from './tournament-donation.repository';
+import { TournamentDonationsService } from './tournament-donations.service';
 import { TournamentPlayoffScheduler } from './tournament-playoff.scheduler';
 import { TournamentQualificationScheduler } from './tournament-qualification.scheduler';
 import { UploadsModule } from '../uploads/uploads.module';
@@ -28,6 +31,7 @@ import { TeamsModule } from '../teams/teams.module';
       Tournament,
       TournamentPlayoffTeam,
       TournamentTeamPayment,
+      TournamentDonation,
       Team,
       UserRoles,
     ]),
@@ -45,6 +49,8 @@ import { TeamsModule } from '../teams/teams.module';
     TournamentPlayoffTeamRepository,
     TournamentTeamPaymentRepository,
     TournamentPaymentsService,
+    TournamentDonationRepository,
+    TournamentDonationsService,
     TournamentPlayoffScheduler,
     TournamentQualificationScheduler,
   ],

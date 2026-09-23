@@ -85,14 +85,34 @@ describe('TournamentPaymentsService.applyInvoiceCallback', () => {
     expect(saved).toMatchObject({ status: PaymentStatus.PAID });
   });
 
-  it('acks (no-op, no throw) a signed payload matching no known payment', async () => {
+  it('reports false (no-op, no throw) for a signed payload matching no known payment', async () => {
     const { service, paymentRepo } = build(null);
 
     await expect(
       service.applyInvoiceCallback(
         callback({ invoiceId: 'inv_unknown', reference: 'CORE-NOPE' }),
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
+
+    expect(paymentRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('reports true for a matched payment even when the callback changes nothing', async () => {
+    const payment = {
+      reference: 'CORE-EEE555',
+      status: PaymentStatus.PENDING,
+      amountPaid: 0,
+      paidAt: null,
+      invoiceId: 'inv_1',
+      paymentPageUrl: 'https://pay.mbnk.biz/inv_1',
+    };
+    const { service, paymentRepo } = build(payment);
+
+    // `processing` is neither success nor dead: the row is attributed but
+    // untouched, and the dispatcher must not fall through to donations.
+    await expect(
+      service.applyInvoiceCallback(callback({ status: 'processing' })),
+    ).resolves.toBe(true);
 
     expect(paymentRepo.save).not.toHaveBeenCalled();
   });
