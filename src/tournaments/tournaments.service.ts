@@ -13,6 +13,12 @@ import { TournamentPlayoffTeamRepository } from './tournament-playoff-team.repos
 import { TeamsService } from '../teams/teams.service';
 import { TeamResponseDto } from '../teams/dto/team-response.dto';
 import { validateQualificationConfig } from './tournament-qualification.util';
+import { validateBracketConfig } from './tournament-bracket.util';
+import {
+  DEFAULT_FINAL_BEST_OF,
+  DEFAULT_TOURNAMENT_BRACKET_TYPE,
+} from './tournaments.model';
+import { PlayoffRepository } from '../playoff/playoff.repository';
 import {
   QUALIFICATION_WINDOW_KEYS,
   TTournamentSchedule,
@@ -29,6 +35,7 @@ export class TournamentsService {
     private readonly dota2: Dota2Service,
     private readonly qualificationService: QualificationService,
     private readonly teamsService: TeamsService,
+    private readonly playoffRepo: PlayoffRepository,
   ) {}
 
   async create(dto: CreateTournamentDto): Promise<Tournament> {
@@ -54,10 +61,25 @@ export class TournamentsService {
       tournamentStatus: dto.tournamentStatus,
     });
 
+    // Відсутній формат означає double elimination — єдиний формат, який знали старі клієнти.
+    const bracket = {
+      bracketType: dto.bracketType ?? DEFAULT_TOURNAMENT_BRACKET_TYPE,
+      // Відсутній прапорець означає «без матчу за третє місце» — так було до його появи.
+      hasThirdPlaceMatch: dto.hasThirdPlaceMatch ?? false,
+      // Відсутній формат фіналу означає BO3 — так грали всі фінали до появи налаштування.
+      upperBracketFinalBestOf:
+        dto.upperBracketFinalBestOf ?? DEFAULT_FINAL_BEST_OF,
+      lowerBracketFinalBestOf:
+        dto.lowerBracketFinalBestOf ?? DEFAULT_FINAL_BEST_OF,
+      grandFinalBestOf: dto.grandFinalBestOf ?? DEFAULT_FINAL_BEST_OF,
+    };
+    validateBracketConfig(bracket);
+
     const entity = this.tournamentsRepo.create({
       ...dto,
       ...schedule,
       hasQualification,
+      ...bracket,
     });
     const tournament = await this.tournamentsRepo.save(entity);
 
@@ -120,6 +142,43 @@ export class TournamentsService {
 
   async update(id: string, payload: Partial<Tournament>): Promise<Tournament> {
     const tournament = await this.findOneEntity(id);
+
+    /**
+     * Форма сітки (формат і матч за третє місце) зафіксована, щойно існує
+     * рядок `playoff` — незалежно від статусу турніру: жива сітка на Challonge
+     * має рівно одну форму, і турнір не може мовчки з нею розійтися. Те саме
+     * значення, що вже збережене, — не зміна, тож приймаємо його без перевірки.
+     */
+    const bracketFields = [
+      'bracketType',
+      'hasThirdPlaceMatch',
+      'upperBracketFinalBestOf',
+      'lowerBracketFinalBestOf',
+      'grandFinalBestOf',
+    ] as const;
+    const bracketChanged = bracketFields.some(
+      (field) =>
+        payload[field] !== undefined && payload[field] !== tournament[field],
+    );
+    if (bracketChanged && (await this.playoffRepo.existsByTournamentId(id))) {
+      throw new BadRequestException(
+        'Форму сітки не можна змінити: плей-оф уже створено. ' +
+          'Залиште поточні налаштування або перезапустіть плей-оф.',
+      );
+    }
+
+    // Перевіряємо підсумкову форму сітки: зміна лише формату не має лишити
+    // матч за третє місце на double elimination.
+    validateBracketConfig({
+      bracketType: payload.bracketType ?? tournament.bracketType,
+      hasThirdPlaceMatch:
+        payload.hasThirdPlaceMatch ?? tournament.hasThirdPlaceMatch,
+      upperBracketFinalBestOf:
+        payload.upperBracketFinalBestOf ?? tournament.upperBracketFinalBestOf,
+      lowerBracketFinalBestOf:
+        payload.lowerBracketFinalBestOf ?? tournament.lowerBracketFinalBestOf,
+      grandFinalBestOf: payload.grandFinalBestOf ?? tournament.grandFinalBestOf,
+    });
 
     /**
      * Валідуємо підсумковий розклад, а не лише прислані поля: зсув однієї дати

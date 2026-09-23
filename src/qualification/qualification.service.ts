@@ -218,43 +218,11 @@ export class QualificationService {
           );
     }
 
-    const alreadyInThisTournament = (team.tournaments ?? []).some(
-      (t) => t.id === tournament.id,
-    );
-    if (alreadyInThisTournament) {
-      throw new ConflictException('Команда вже зареєстрована на цей турнір');
-    }
-
-    /** Captains obey time-overlap restriction; admins attaching by teamId bypass it */
-    if (!useExplicitTeamId) {
-      const hasOverlappingOtherTournament = (team.tournaments ?? []).some(
-        (t) =>
-          t.id !== tournament.id &&
-          t.tournamentStartsAt.getTime() <
-            tournament.tournamentEndsAt.getTime() &&
-          t.tournamentEndsAt.getTime() >
-            tournament.tournamentStartsAt.getTime(),
-      );
-      if (hasOverlappingOtherTournament) {
-        throw new ConflictException(
-          'Команда вже бере участь у турнірі, що перетинається за часом',
-        );
-      }
-    }
-
-    if (!bypassParticipantChecks) {
-      if (!team.isVerified) {
-        throw new BadRequestException('Команда не верифікована');
-      }
-
-      if (!team.dotaTeamId) {
-        throw new BadRequestException('Команда не має Dota2 Team ID');
-      }
-
-      const main = team.mainPlayers ?? [];
-
-      this.validateRoster(main, team.reservedPlayers ?? []);
-    }
+    this.assertTeamCanJoin(tournament, team, {
+      /** Captains obey time-overlap restriction; admins attaching by teamId bypass it */
+      skipOverlapCheck: useExplicitTeamId,
+      skipParticipantChecks: bypassParticipantChecks,
+    });
 
     /**
      * Entry-fee gate: a fee'd tournament requires a PAID payment record for this
@@ -281,17 +249,40 @@ export class QualificationService {
       }
     }
 
-    if (
-      tournament.tournamentSlots !== null &&
-      tournament.tournamentSlots !== undefined
-    ) {
-      const currentCount = (tournament.teams ?? []).length;
-      if (currentCount >= tournament.tournamentSlots) {
-        throw new ConflictException('Усі місця в турнірі зайняті');
-      }
-    }
+    /**
+     * Турнір без кваліфікації не має ні рядка `Qualification`, ні етапу в
+     * Dota2 — команду просто реєструємо. Матчі кваліфікації створюємо лише
+     * коли етап існує.
+     */
+    const newMatches: QualificationMatch[] = tournament.hasQualification
+      ? await this.attachTeamToQualificationStage(tournament, team)
+      : [];
 
-    const qualification = await this.qualRepo.findByTournamentId(tournamentId);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `INSERT INTO "tournament_team" ("tournamentId", "teamId") VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [tournament.id, team.id],
+      );
+      await manager
+        .getRepository(Team)
+        .update({ id: team.id }, { isPlayingTournament: true });
+      if (newMatches.length > 0) {
+        await manager.getRepository(QualificationMatch).save(newMatches);
+      }
+    });
+  }
+
+  /**
+   * Adds the team to the tournament's Dota2 qualification stage and builds one
+   * fixture (and its unsaved `QualificationMatch` row) against every team
+   * already registered. Only for tournaments with `hasQualification`.
+   * `tournament` must carry `teams`.
+   */
+  private async attachTeamToQualificationStage(
+    tournament: Tournament,
+    team: Team,
+  ): Promise<QualificationMatch[]> {
+    const qualification = await this.qualRepo.findByTournamentId(tournament.id);
     if (!qualification) {
       throw new NotFoundException('Кваліфікацію турніру не знайдено');
     }
@@ -362,18 +353,94 @@ export class QualificationService {
       );
     }
 
-    await this.dataSource.transaction(async (manager) => {
-      await manager.query(
-        `INSERT INTO "tournament_team" ("tournamentId", "teamId") VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [tournament.id, team.id],
-      );
-      await manager
-        .getRepository(Team)
-        .update({ id: team.id }, { isPlayingTournament: true });
-      if (newMatches.length > 0) {
-        await manager.getRepository(QualificationMatch).save(newMatches);
-      }
+    return newMatches;
+  }
+
+  /**
+   * Registers a team whose entry fee has just been confirmed, acting as its
+   * captain. Called from the acquiring callback so a paid team lands in the
+   * tournament without a second click. Goes through `joinTournament` so the
+   * captain rules — and the PAID gate, now satisfied — apply unchanged.
+   */
+  async joinTournamentAsPaidTeam(
+    tournamentId: string,
+    teamId: string,
+  ): Promise<void> {
+    const team = await this.dataSource.getRepository(Team).findOne({
+      where: { id: teamId, disbandedAt: IsNull() },
+      relations: ['captain'],
     });
+    if (!team?.captain) {
+      throw new NotFoundException('Команду не знайдено');
+    }
+    await this.joinTournament(tournamentId, team.captain.id);
+  }
+
+  /**
+   * Team-level reasons a join would be refused: already registered, schedule
+   * overlap, unverified, no Dota team, invalid roster, no free slot. Throws the
+   * same HTTP errors the join endpoint always threw.
+   *
+   * Runs both on the join itself and before an entry-fee invoice is minted,
+   * so a captain cannot pay for a tournament their team would then be refused
+   * from — after payment the team is registered automatically, and a refusal
+   * at that point would mean a refund.
+   *
+   * `tournament` must carry `teams`; `team` must carry `tournaments`,
+   * `mainPlayers` and `reservedPlayers`.
+   */
+  assertTeamCanJoin(
+    tournament: Tournament,
+    team: Team,
+    options: {
+      skipOverlapCheck?: boolean;
+      skipParticipantChecks?: boolean;
+    } = {},
+  ): void {
+    const alreadyInThisTournament = (team.tournaments ?? []).some(
+      (t) => t.id === tournament.id,
+    );
+    if (alreadyInThisTournament) {
+      throw new ConflictException('Команда вже зареєстрована на цей турнір');
+    }
+
+    if (!options.skipOverlapCheck) {
+      const hasOverlappingOtherTournament = (team.tournaments ?? []).some(
+        (t) =>
+          t.id !== tournament.id &&
+          t.tournamentStartsAt.getTime() <
+            tournament.tournamentEndsAt.getTime() &&
+          t.tournamentEndsAt.getTime() >
+            tournament.tournamentStartsAt.getTime(),
+      );
+      if (hasOverlappingOtherTournament) {
+        throw new ConflictException(
+          'Команда вже бере участь у турнірі, що перетинається за часом',
+        );
+      }
+    }
+
+    if (!options.skipParticipantChecks) {
+      if (!team.isVerified) {
+        throw new BadRequestException('Команда не верифікована');
+      }
+
+      if (!team.dotaTeamId) {
+        throw new BadRequestException('Команда не має Dota2 Team ID');
+      }
+
+      this.validateRoster(team.mainPlayers ?? [], team.reservedPlayers ?? []);
+    }
+
+    if (
+      tournament.tournamentSlots !== null &&
+      tournament.tournamentSlots !== undefined
+    ) {
+      const currentCount = (tournament.teams ?? []).length;
+      if (currentCount >= tournament.tournamentSlots) {
+        throw new ConflictException('Усі місця в турнірі зайняті');
+      }
+    }
   }
 
   async leaveTournament(
@@ -413,12 +480,12 @@ export class QualificationService {
       throw new BadRequestException('Команда не бере участі у цьому турнірі');
     }
 
+    /**
+     * Турнір без кваліфікації рядка `Qualification` не має — знімати
+     * матчі нічого, лише прибираємо реєстрацію.
+     */
     const qualification = await this.qualRepo.findByTournamentId(tournamentId);
-    if (!qualification) {
-      throw new NotFoundException('Кваліфікацію турніру не знайдено');
-    }
-
-    const unplayedMatches = (qualification.matches ?? []).filter(
+    const unplayedMatches = (qualification?.matches ?? []).filter(
       (m) =>
         m.dotaMatchId === null &&
         m.teamA != null &&

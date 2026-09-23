@@ -33,6 +33,7 @@ import { PlayoffTeardownService } from './playoff-teardown.service';
     PlayoffMatchRepository,
     PlayoffTeardownService,
   ],
-  exports: [PlayoffService],
+  // PlayoffRepository is exported for the tournament update path's bracket-format lock.
+  exports: [PlayoffService, PlayoffRepository],
 })
 export class PlayoffModule {}

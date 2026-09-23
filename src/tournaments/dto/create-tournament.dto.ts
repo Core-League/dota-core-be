@@ -12,7 +12,14 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { TournamentDivision, TournamentStatus } from '../tournaments.model';
+import {
+  DEFAULT_FINAL_BEST_OF,
+  SERIES_BEST_OF_OPTIONS,
+  type SeriesBestOf,
+  TournamentBracketType,
+  TournamentDivision,
+  TournamentStatus,
+} from '../tournaments.model';
 
 export class CreateTournamentDto {
   @ApiProperty()
@@ -81,6 +88,68 @@ export class CreateTournamentDto {
   @IsOptional()
   @IsBoolean()
   hasQualification?: boolean;
+
+  @ApiPropertyOptional({
+    enum: TournamentBracketType,
+    enumName: 'TournamentBracketType',
+    default: TournamentBracketType.DOUBLE_ELIMINATION,
+    description:
+      'Формат сітки плей-оф. SINGLE_ELIMINATION — одна поразка вибиває, BO3 ' +
+      'лише у фіналі. DOUBLE_ELIMINATION — верхня та нижня сітки, BO3 у ' +
+      'фіналах верхньої й нижньої сіток і у гранд-фіналі. Без значення — ' +
+      'DOUBLE_ELIMINATION. Можна змінити, доки не стартував плей-оф.',
+  })
+  @IsOptional()
+  @IsEnum(TournamentBracketType)
+  bracketType?: TournamentBracketType;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'Чи проводиться матч за третє місце між переможеними у півфіналах. ' +
+      'Лише для SINGLE_ELIMINATION — у DOUBLE_ELIMINATION третє місце визначає ' +
+      'фінал нижньої сітки, тож true там відхиляється. Без значення — false. ' +
+      'Можна змінити, доки не стартував плей-оф.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  hasThirdPlaceMatch?: boolean;
+
+  @ApiPropertyOptional({
+    enum: SERIES_BEST_OF_OPTIONS,
+    default: DEFAULT_FINAL_BEST_OF,
+    description:
+      'Формат фіналу верхньої сітки (матч перед гранд-фіналом): 1 — BO1, ' +
+      '3 — BO3, 5 — BO5. Лише для DOUBLE_ELIMINATION — у SINGLE_ELIMINATION є ' +
+      'тільки фінал, тож значення не використовується. Без значення — 3. ' +
+      'Можна змінити, доки не стартував плей-оф.',
+  })
+  @IsOptional()
+  @IsIn(SERIES_BEST_OF_OPTIONS)
+  upperBracketFinalBestOf?: SeriesBestOf;
+
+  @ApiPropertyOptional({
+    enum: SERIES_BEST_OF_OPTIONS,
+    default: DEFAULT_FINAL_BEST_OF,
+    description:
+      'Формат фіналу нижньої сітки: 1 — BO1, 3 — BO3, 5 — BO5. Лише для ' +
+      'DOUBLE_ELIMINATION — у SINGLE_ELIMINATION значення не використовується. ' +
+      'Без значення — 3. Можна змінити, доки не стартував плей-оф.',
+  })
+  @IsOptional()
+  @IsIn(SERIES_BEST_OF_OPTIONS)
+  lowerBracketFinalBestOf?: SeriesBestOf;
+
+  @ApiPropertyOptional({
+    enum: SERIES_BEST_OF_OPTIONS,
+    default: DEFAULT_FINAL_BEST_OF,
+    description:
+      'Формат гранд-фіналу (у SINGLE_ELIMINATION — фіналу): 1 — BO1, 3 — BO3, ' +
+      '5 — BO5. Без значення — 3. Можна змінити, доки не стартував плей-оф.',
+  })
+  @IsOptional()
+  @IsIn(SERIES_BEST_OF_OPTIONS)
+  grandFinalBestOf?: SeriesBestOf;
 
   @ApiPropertyOptional({
     description:

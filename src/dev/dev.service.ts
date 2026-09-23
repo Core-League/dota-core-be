@@ -11,8 +11,11 @@ import { Player } from '../players/player.entity';
 import { PlayoffMatch } from '../playoff/playoff-match.entity';
 import { Playoff } from '../playoff/playoff.entity';
 import { QualificationMatch } from '../qualification/qualification-match.entity';
+import { getBracketFormatStrategy } from '../playoff/bracket-format.strategy';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { TournamentPlayoffTeam } from '../tournaments/tournament-playoff-team.entity';
+import { Tournament } from '../tournaments/tournaments.entity';
+import { winsNeededForBestOf } from '../tournaments/tournaments.model';
 
 @Injectable()
 export class DevService {
@@ -146,12 +149,28 @@ export class DevService {
         ? Number(activeTeams)
         : Math.trunc(Number(activeTeams));
 
-    const finalsBo3 = await this.challonge.getFinalBo3ChallongeMatchIds(
+    const tournament = await this.dataSource
+      .getRepository(Tournament)
+      .findOneOrFail({
+        where: { id: tournamentId },
+        select: {
+          id: true,
+          bracketType: true,
+          hasThirdPlaceMatch: true,
+          upperBracketFinalBestOf: true,
+          lowerBracketFinalBestOf: true,
+          grandFinalBestOf: true,
+        },
+      });
+    const finals = await this.challonge.resolveBracketFinals(
       playoff.challongeUrl,
       Number.isFinite(teamCt) ? teamCt : 0,
+      getBracketFormatStrategy(tournament),
     );
+    // Regular rounds and BO1 finals report straight away; longer series wait for a clinch.
+    const bestOf = finals.bestOfByChallongeId.get(challongeMatch.id) ?? 1;
 
-    if (!finalsBo3.has(challongeMatch.id)) {
+    if (bestOf < 3) {
       await this.challonge.reportMatchResult(
         playoff.challongeUrl,
         challongeMatch.id,
@@ -172,7 +191,10 @@ export class DevService {
         if (g.winnerId) wins.set(g.winnerId, (wins.get(g.winnerId) ?? 0) + 1);
       }
 
-      const seriesWinnerId = [...wins.entries()].find(([, w]) => w >= 2)?.[0];
+      const need = winsNeededForBestOf(bestOf);
+      const seriesWinnerId = [...wins.entries()].find(
+        ([, w]) => w >= need,
+      )?.[0];
       if (seriesWinnerId) {
         const seriesWinnerRow =
           seriesWinnerId === winnerTeamId ? winnerRow : loserRow;

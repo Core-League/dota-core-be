@@ -1,5 +1,4 @@
 import { BadRequestException } from '@nestjs/common';
-import { PLAYOFF_TEAM_LIMIT } from '../playoff/playoff.constants';
 import { TournamentStatus } from './tournaments.model';
 
 /**
@@ -17,15 +16,14 @@ export type TQualificationConfig = {
  * First broken rule, or null when the configuration is coherent.
  *
  * A tournament without a qualification stage goes straight from REGISTRATION to
- * PLAYOFF, which costs it the two things qualification would have provided:
+ * PLAYOFF, so it never has a meaningful QUALIFICATIONS status —
+ * `TournamentQualificationScheduler` skips it.
  *
- * 1. Standings to rank by. `PlayoffService.selectTopTeamsByStandings` falls back
- *    to sorting on team id once every captain has zero points, so a field larger
- *    than the bracket would be cut arbitrarily. Capping `tournamentSlots` at the
- *    bracket size means joining is already limited (see the slots check in
- *    `QualificationService.joinTournament`) and the cut can never happen.
- * 2. A meaningful QUALIFICATIONS status, which such a tournament never enters —
- *    `TournamentQualificationScheduler` skips it.
+ * `tournamentSlots` is deliberately unconstrained: it is an optional
+ * registration cap chosen by the admin, and a missing value means unlimited
+ * registration. Without qualification there are no standings to cut by, so the
+ * playoff simply seats every registered team (see
+ * `PlayoffService.deriveTopEligibleTeamIds`).
  */
 export function getQualificationConfigViolation(
   config: TQualificationConfig,
@@ -34,17 +32,6 @@ export function getQualificationConfigViolation(
 
   if (config.tournamentStatus === TournamentStatus.QUALIFICATIONS) {
     return 'Турнір без кваліфікації не може мати статус «Кваліфікація»';
-  }
-
-  const slots = config.tournamentSlots;
-  if (slots === null || slots === undefined) {
-    return (
-      'Для турніру без кваліфікації потрібно вказати слоти команд ' +
-      `(не більше ${PLAYOFF_TEAM_LIMIT})`
-    );
-  }
-  if (slots > PLAYOFF_TEAM_LIMIT) {
-    return `Без кваліфікації слотів команд не може бути більше ${PLAYOFF_TEAM_LIMIT}`;
   }
 
   return null;

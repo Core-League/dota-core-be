@@ -112,11 +112,29 @@ export const NODE_GROUP_TYPE = {
   SHOWMATCH: 7,
 } as const;
 
-/** Valve `default_node_type`: series length of the nodes in a group. */
+/**
+ * Valve `default_node_type`: series length of the nodes in a group — mirrors
+ * the "Node Type" dropdown on the league tournament page (Best of 1 / 3 / 5).
+ * BO1 and BO3 are confirmed against live leagues; BO5 follows the same
+ * ordering and should be checked on the admin page the first time it is used.
+ */
 export const DEFAULT_NODE_TYPE = {
   BO1: 1,
   BO3: 2,
+  BO5: 3,
 } as const;
+
+/** `default_node_type` for a series length; anything unknown falls back to BO1. */
+export function defaultNodeTypeForBestOf(bestOf: number): number {
+  switch (bestOf) {
+    case 5:
+      return DEFAULT_NODE_TYPE.BO5;
+    case 3:
+      return DEFAULT_NODE_TYPE.BO3;
+    default:
+      return DEFAULT_NODE_TYPE.BO1;
+  }
+}
 
 interface DotaNode {
   node_id: number;
@@ -466,23 +484,24 @@ export class Dota2Service {
 
   /**
    * Pair node under organisational parent.
-   * Both BO1 and BO3 use `node_group_type=7` (Showmatch); only
+   * Every series length uses `node_group_type=7` (Showmatch); only
    * `default_node_type` differs:
    *   BO1 → default_node_type=1
    *   BO3 → default_node_type=2
+   *   BO5 → default_node_type=3
    *
    * Showmatch is the only type that binds the added teams to the group's node,
    * which is what makes the match selectable when creating a lobby.
    *
    * @param name — Optional display label shown on the Dota 2 admin page ("Team A vs Team B").
-   * @param isBo3 — When true, creates a BO3-series slot instead of a BO1.
+   * @param bestOf — Series length of the slot (1, 3 or 5); defaults to a BO1.
    */
   async createTwoTeamFixtureNode(
     containingOrganizationalGroupId: string,
     dotaTeamIdA: string,
     dotaTeamIdB: string,
     name?: string,
-    isBo3?: boolean,
+    bestOf: number = 1,
   ): Promise<string> {
     await this.addNodeGroup({
       nodeGroupId: '',
@@ -490,7 +509,7 @@ export class Dota2Service {
       teamCount: 2,
       containingNodeGroupId: containingOrganizationalGroupId,
       phase: 0,
-      defaultNodeType: isBo3 ? DEFAULT_NODE_TYPE.BO3 : DEFAULT_NODE_TYPE.BO1,
+      defaultNodeType: defaultNodeTypeForBestOf(bestOf),
       name,
     });
     let matchNodeGroupId: string | undefined;

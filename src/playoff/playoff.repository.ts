@@ -15,6 +15,11 @@ export class PlayoffRepository {
     return this.repo.findOne({ where: { tournamentId } });
   }
 
+  /** True once a bracket exists for the tournament, whatever the tournament status. */
+  existsByTournamentId(tournamentId: string): Promise<boolean> {
+    return this.repo.exists({ where: { tournamentId } });
+  }
+
   save(playoff: Playoff): Promise<Playoff> {
     return this.repo.save(playoff);
   }

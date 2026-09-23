@@ -15,13 +15,17 @@ describe('TournamentPaymentsService.applyInvoiceCallback', () => {
       findByReferences: jest.fn().mockResolvedValue([]),
       save: jest.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
     };
+    const qualification = {
+      joinTournamentAsPaidTeam: jest.fn().mockResolvedValue(undefined),
+    };
     const service = new TournamentPaymentsService(
       paymentRepo as never,
       {} as never,
       {} as never,
       {} as never,
+      qualification as never,
     );
-    return { service, paymentRepo };
+    return { service, paymentRepo, qualification };
   };
 
   const callback = (

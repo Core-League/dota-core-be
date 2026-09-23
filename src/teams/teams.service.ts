@@ -734,6 +734,11 @@ export class TeamsService {
       tournamentStartsAt: t.tournamentStartsAt,
       tournamentEndsAt: t.tournamentEndsAt,
       tournamentStatus: t.tournamentStatus,
+      bracketType: t.bracketType,
+      hasThirdPlaceMatch: t.hasThirdPlaceMatch,
+      upperBracketFinalBestOf: t.upperBracketFinalBestOf,
+      lowerBracketFinalBestOf: t.lowerBracketFinalBestOf,
+      grandFinalBestOf: t.grandFinalBestOf,
       tournamentGridUrl: t.tournamentGridUrl ?? null,
     };
   }

@@ -1,5 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  SERIES_BEST_OF_OPTIONS,
+  type SeriesBestOf,
+  TournamentBracketType,
   TournamentDivision,
   TournamentStatus,
 } from '../../tournaments/tournaments.model';
@@ -45,6 +48,25 @@ export class TeamTournamentEmbeddedDto {
 
   @ApiProperty({ enum: TournamentStatus })
   tournamentStatus: TournamentStatus;
+
+  @ApiProperty({
+    enum: TournamentBracketType,
+    enumName: 'TournamentBracketType',
+  })
+  bracketType: TournamentBracketType;
+
+  @ApiProperty()
+  hasThirdPlaceMatch: boolean;
+
+  /** Finals series lengths (1 / 3 / 5); upper/lower only apply to double elimination. */
+  @ApiProperty({ enum: SERIES_BEST_OF_OPTIONS })
+  upperBracketFinalBestOf: SeriesBestOf;
+
+  @ApiProperty({ enum: SERIES_BEST_OF_OPTIONS })
+  lowerBracketFinalBestOf: SeriesBestOf;
+
+  @ApiProperty({ enum: SERIES_BEST_OF_OPTIONS })
+  grandFinalBestOf: SeriesBestOf;
 
   @ApiPropertyOptional({ nullable: true })
   tournamentGridUrl: string | null;

@@ -70,11 +70,15 @@ describe('createIntentForCaptain invoice reuse', () => {
     const config = {
       getEnvConfig: () => envOverrides,
     };
+    // Eligibility is asserted before any invoice work; it is the qualification
+    // service's concern and is covered by its own specs.
+    const qualification = { assertTeamCanJoin: jest.fn() };
     const service = new TournamentPaymentsService(
       paymentRepo as never,
       dataSource as never,
       acquiring as never,
       config as never,
+      qualification as never,
     );
     return { service, acquiring, paymentRepo, dataSource, managerRepo };
   };

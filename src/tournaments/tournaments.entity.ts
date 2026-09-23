@@ -5,7 +5,13 @@ import {
   ManyToMany,
   JoinTable,
 } from 'typeorm';
-import { TournamentDivision, TournamentStatus } from './tournaments.model';
+import {
+  DEFAULT_FINAL_BEST_OF,
+  type SeriesBestOf,
+  TournamentBracketType,
+  TournamentDivision,
+  TournamentStatus,
+} from './tournaments.model';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 
@@ -109,6 +115,49 @@ export class Tournament {
 
   @Column({ nullable: true })
   tournamentGridUrl: string;
+
+  /**
+   * Playoff bracket format. The playoff engine reads it from this row every
+   * time it creates or rebuilds a Challonge bracket, resolves BO3 finals or
+   * mirrors fixtures into the Dota 2 league. Locked by `TournamentsService.update`
+   * once a `playoff` row exists; the default keeps every pre-existing tournament
+   * on double elimination.
+   */
+  @Column({
+    type: 'enum',
+    enum: TournamentBracketType,
+    default: TournamentBracketType.DOUBLE_ELIMINATION,
+  })
+  bracketType: TournamentBracketType;
+
+  /**
+   * Whether the single-elimination bracket holds a third-place match between
+   * the two semifinal losers. Only meaningful with `SINGLE_ELIMINATION` — in
+   * double elimination third place is decided by the lower-bracket final, so
+   * `validateBracketConfig` rejects the flag there. Locked together with
+   * `bracketType` once a `playoff` row exists. The extra node is a regular
+   * BO1 series; the final stays the only BO3 series.
+   */
+  @Column({ type: 'boolean', default: false })
+  hasThirdPlaceMatch: boolean;
+
+  /**
+   * Series length of each finals slot: 1 (BO1), 3 (BO3) or 5 (BO5). Regular
+   * rounds are always BO1. `upperBracketFinalBestOf` / `lowerBracketFinalBestOf` only
+   * apply to `DOUBLE_ELIMINATION` — a single-elimination bracket has just the
+   * final, so they are stored but unused there. `grandFinalBestOf` is the
+   * grand final in double elimination and the final in single elimination.
+   * The defaults keep every pre-existing tournament on three BO3 finals.
+   * Locked together with `bracketType` once a `playoff` row exists.
+   */
+  @Column({ type: 'smallint', default: DEFAULT_FINAL_BEST_OF })
+  upperBracketFinalBestOf: SeriesBestOf;
+
+  @Column({ type: 'smallint', default: DEFAULT_FINAL_BEST_OF })
+  lowerBracketFinalBestOf: SeriesBestOf;
+
+  @Column({ type: 'smallint', default: DEFAULT_FINAL_BEST_OF })
+  grandFinalBestOf: SeriesBestOf;
 
   @ManyToMany(() => Team, (team) => team.tournaments)
   @JoinTable({

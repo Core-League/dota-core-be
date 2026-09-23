@@ -8,6 +8,7 @@ import {
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull } from 'typeorm';
 import { Team } from '../teams/team.entity';
+import { QualificationService } from '../qualification/qualification.service';
 import { ConfigConnectorService } from '../connectors/config/config-connector.service';
 import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monobank-acquiring.service';
 import type { TInvoiceCallbackPayload } from '../connectors/monobank-acquiring/monobank-acquiring.types';
@@ -39,6 +40,7 @@ export class TournamentPaymentsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly acquiring: MonobankAcquiringService,
     private readonly config: ConfigConnectorService,
+    private readonly qualification: QualificationService,
   ) {}
 
   /** Per-team payment status for a tournament (used by admin overview and captain gating). */
@@ -108,7 +110,7 @@ export class TournamentPaymentsService {
   ): Promise<TournamentPaymentIntentDto> {
     const tournament = await this.dataSource
       .getRepository(Tournament)
-      .findOne({ where: { id: tournamentId } });
+      .findOne({ where: { id: tournamentId }, relations: ['teams'] });
     if (!tournament) throw new NotFoundException('Турнір не знайдено');
 
     const entryFee = tournament.entryFee ?? 0;
@@ -133,12 +135,26 @@ export class TournamentPaymentsService {
       throw new BadRequestException(registrationBlockMessage(blockReason));
     }
 
-    const team = await this.findCaptainTeam(playerId);
+    const team = await this.findCaptainTeam(playerId, [
+      'captain',
+      'mainPlayers',
+      'reservedPlayers',
+      'tournaments',
+    ]);
     if (!team) {
       throw new ForbiddenException(
         'Тільки капітан команди може ініціювати оплату',
       );
     }
+
+    /**
+     * A successful payment registers the team automatically (see
+     * `applyInvoiceCallback`), so every team-level refusal the join would
+     * raise — unverified, no Dota team, bad roster, overlap, full — must
+     * surface here, before money moves. Otherwise the captain pays and is
+     * then refused, which is a refund we cannot issue from code.
+     */
+    this.qualification.assertTeamCanJoin(tournament, team);
 
     /**
      * The payment row is locked (`SELECT ... FOR UPDATE`) for the whole
@@ -271,14 +287,50 @@ export class TournamentPaymentsService {
     this.logger.log(
       `Payment ${payment.reference}: invoice ${payload.invoiceId} -> ${payload.status} (${change.status})`,
     );
+
+    // `nextPaymentState` treats PAID as terminal, so a PAID change is always
+    // the first time this payment settles — the join runs exactly once.
+    if (change.status === PaymentStatus.PAID) {
+      await this.joinPaidTeam(payment);
+    }
     return true;
   }
 
+  /**
+   * Registers the team right after its entry fee settles, so the captain is
+   * not shown a "Join" button for a tournament they have already paid for.
+   *
+   * The payment is saved before this runs and stays PAID whatever happens
+   * here: a failure (Dota API down, a roster that changed since the invoice
+   * was minted) is logged and the captain keeps the manual join as fallback,
+   * which passes the PAID gate. Never throws — the acquiring callback must
+   * still answer 200 so Monobank stops retrying a payment we did record.
+   */
+  private async joinPaidTeam(payment: TournamentTeamPayment): Promise<void> {
+    try {
+      await this.qualification.joinTournamentAsPaidTeam(
+        payment.tournamentId,
+        payment.teamId,
+      );
+      this.logger.log(
+        `Payment ${payment.reference}: team ${payment.teamId} registered for tournament ${payment.tournamentId}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Payment ${payment.reference}: team ${payment.teamId} paid but could not be registered for tournament ${payment.tournamentId} — ${message}. The captain can still join manually.`,
+      );
+    }
+  }
+
   /** The caller's non-disbanded team where they are the captain, or null. */
-  private findCaptainTeam(playerId: string): Promise<Team | null> {
+  private findCaptainTeam(
+    playerId: string,
+    relations: string[] = ['captain'],
+  ): Promise<Team | null> {
     return this.dataSource.getRepository(Team).findOne({
       where: { captain: { id: playerId }, disbandedAt: IsNull() },
-      relations: ['captain'],
+      relations,
     });
   }
 }

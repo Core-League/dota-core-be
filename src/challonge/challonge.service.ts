@@ -9,11 +9,13 @@ import { firstValueFrom } from 'rxjs';
 
 import {
   type BracketIndexedRow,
-  type ResolvedDeBo3,
+  type ResolvedFinals,
   bracketOrdinalFromChallongeMatchAttrs,
-  resolveDoubleElimFinalsFromRounds,
-  PLAYOFF_BO3_FINALS_COUNT,
 } from '../playoff/playoff-finals-bo3';
+import {
+  type BracketFormatStrategy,
+  type ChallongeBracketAttributes,
+} from '../playoff/bracket-format.strategy';
 
 interface V2TournamentResponse {
   data: {
@@ -115,9 +117,14 @@ export class ChallongeService {
     };
   }
 
+  /**
+   * Creates the bracket in the given format. `format` comes from the tournament's
+   * `bracketType` + `hasThirdPlaceMatch` via `getBracketFormatStrategy(...).challongeAttributes()`.
+   */
   async createTournament(
     name: string,
     slug: string,
+    format: ChallongeBracketAttributes,
   ): Promise<{ id: number; url: string }> {
     try {
       const resp = await firstValueFrom(
@@ -129,11 +136,8 @@ export class ChallongeService {
               attributes: {
                 name,
                 url: slug,
-                tournament_type: 'double elimination',
                 game_name: 'Dota 2',
-                double_elimination_options: {
-                  grand_finals_modifier: 'single match',
-                },
+                ...format,
               },
             },
           },
@@ -374,45 +378,38 @@ export class ChallongeService {
   }
 
   /**
-   * Identify the three BO3 finals (UBF, LBF, GF) for a DE bracket using
-   * Challonge round numbers — GF = max positive round, UBF = max−1,
-   * LBF = most negative round. Works for any power-of-two N.
+   * Identify the finals slots of a bracket from Challonge round numbers, using
+   * the resolver of the tournament's format: UBF, LBF and GF for double
+   * elimination, the single final for single elimination. Each slot carries the
+   * series length (BO1 / BO3 / BO5) the tournament configured for it. Logs the
+   * resolver diagnostics and an error when the finals count differs from what
+   * the format expects for `activeTeamCount`.
    */
-  async getDoubleElimBo3BracketResolution(
+  async resolveBracketFinals(
     url: string,
     activeTeamCount: number,
-  ): Promise<ResolvedDeBo3> {
+    format: BracketFormatStrategy,
+  ): Promise<ResolvedFinals> {
     const rawRows = await this.listMatchesIdRound(url);
     const rows = rawRows.map((r) => ({
       challongeNumericId: r.id,
       round: r.round,
     }));
-    const resolved = resolveDoubleElimFinalsFromRounds(rows, activeTeamCount);
+    const resolved = format.resolveFinals(rows, activeTeamCount);
     for (const line of resolved.diagnostics) {
       if (line.startsWith('ERROR')) this.logger.error(line);
       else if (line.startsWith('WARN')) this.logger.warn(line);
       else this.logger.log(line);
     }
-    const got = resolved.bo3ChallongeIds.size;
-    if (got !== PLAYOFF_BO3_FINALS_COUNT && activeTeamCount >= 3) {
+    const got = resolved.finalsChallongeIds.size;
+    const want = format.expectedFinalsCount(activeTeamCount);
+    if (want > 0 && got !== want) {
       this.logger.error(
-        `DE BO3 safety: expected=${PLAYOFF_BO3_FINALS_COUNT} assigned=${got} ` +
-          `ids=[${[...resolved.bo3ChallongeIds].sort((a, b) => a - b).join(',')}]`,
+        `${format.label} finals safety: expected=${want} assigned=${got} ` +
+          `ids=[${[...resolved.finalsChallongeIds].sort((a, b) => a - b).join(',')}]`,
       );
     }
     return resolved;
-  }
-
-  /** Back-compat: набір Challonge numeric id з BO3. */
-  async getFinalBo3ChallongeMatchIds(
-    url: string,
-    activeTeamCount: number,
-  ): Promise<Set<number>> {
-    const r = await this.getDoubleElimBo3BracketResolution(
-      url,
-      activeTeamCount,
-    );
-    return r.bo3ChallongeIds;
   }
 
   async reportMatchResult(

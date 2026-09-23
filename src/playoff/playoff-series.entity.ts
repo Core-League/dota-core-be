@@ -35,11 +35,15 @@ export class PlayoffSeries {
   @Column({ type: 'varchar' })
   challongeMatchId: string;
 
-  /** 1 = regular BO1 playoff round; 3 = BO3 finals series. */
+  /**
+   * Series length: 1 for a regular playoff round; 1, 3 or 5 for a finals slot,
+   * per the tournament's finals settings. Every consumer derives wins-to-clinch
+   * from this (`winsNeededForBestOf`), never from `isFinalSeries`.
+   */
   @Column({ type: 'smallint' })
   bestOf: number;
 
-  /** BO3-finals slot (Ub/LB/GF) — синхрон з `bestOf===3`. */
+  /** Finals slot (UBF / LBF / GF), whatever its `bestOf`. */
   @Column({ type: 'boolean', default: false })
   isFinalSeries: boolean;
 

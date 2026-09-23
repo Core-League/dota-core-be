@@ -7,9 +7,10 @@ import {
 import { TournamentStatus } from './tournaments.model';
 
 /**
- * A tournament may skip the qualification stage entirely. Without it there are
- * no standings to rank by, so the field must already fit the playoff bracket
- * and the tournament can never sit in the QUALIFICATIONS status.
+ * A tournament may skip the qualification stage entirely. Such a tournament can
+ * never sit in the QUALIFICATIONS status. Its slot cap stays optional: a missing
+ * value means unlimited registration, and the playoff seats every registered
+ * team.
  */
 describe('validateQualificationConfig', () => {
   const withQualification: TQualificationConfig = {
@@ -42,27 +43,20 @@ describe('validateQualificationConfig', () => {
     expect(getQualificationConfigViolation(qualifying)).toBeNull();
   });
 
-  it('accepts a no-qualification tournament whose field fits the bracket', () => {
+  it('accepts a no-qualification tournament with a slot cap', () => {
     expect(getQualificationConfigViolation(withoutQualification)).toBeNull();
   });
 
-  it('accepts a no-qualification tournament with fewer slots than the bracket', () => {
-    const small = { ...withoutQualification, tournamentSlots: 4 };
-    expect(getQualificationConfigViolation(small)).toBeNull();
-  });
-
-  it('rejects a no-qualification tournament with no slot limit', () => {
+  it('accepts a no-qualification tournament with no slot limit (unlimited)', () => {
     const unlimited = { ...withoutQualification, tournamentSlots: null };
-    expect(getQualificationConfigViolation(unlimited)).toBe(
-      'Для турніру без кваліфікації потрібно вказати слоти команд (не більше 8)',
-    );
+    expect(getQualificationConfigViolation(unlimited)).toBeNull();
+    const omitted = { ...withoutQualification, tournamentSlots: undefined };
+    expect(getQualificationConfigViolation(omitted)).toBeNull();
   });
 
-  it('rejects a no-qualification tournament with more slots than the bracket', () => {
-    const tooMany = { ...withoutQualification, tournamentSlots: 9 };
-    expect(getQualificationConfigViolation(tooMany)).toBe(
-      'Без кваліфікації слотів команд не може бути більше 8',
-    );
+  it('accepts a no-qualification tournament with more slots than eight', () => {
+    const many = { ...withoutQualification, tournamentSlots: 16 };
+    expect(getQualificationConfigViolation(many)).toBeNull();
   });
 
   it('rejects QUALIFICATIONS status when qualification is disabled', () => {
@@ -76,12 +70,15 @@ describe('validateQualificationConfig', () => {
   });
 
   it('throws a BadRequestException carrying the violation message', () => {
-    const tooMany = { ...withoutQualification, tournamentSlots: 9 };
-    expect(() => validateQualificationConfig(tooMany)).toThrow(
+    const contradictory = {
+      ...withoutQualification,
+      tournamentStatus: TournamentStatus.QUALIFICATIONS,
+    };
+    expect(() => validateQualificationConfig(contradictory)).toThrow(
       BadRequestException,
     );
-    expect(() => validateQualificationConfig(tooMany)).toThrow(
-      'Без кваліфікації слотів команд не може бути більше 8',
+    expect(() => validateQualificationConfig(contradictory)).toThrow(
+      'Турнір без кваліфікації не може мати статус «Кваліфікація»',
     );
   });
 });

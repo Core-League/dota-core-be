@@ -7,7 +7,14 @@ export class OpenPlayoffMatchTeamDto {
   @ApiProperty({ nullable: true, type: String }) logoUrl: string | null;
 }
 
-/** One bracket slot grouping (BO1 counts as series of bestOf 1); finals BO3 групуються через `seriesKind`. */
+export const PLAYOFF_SERIES_FORMATS = ['bo1', 'bo3', 'bo5'] as const;
+export type PlayoffSeriesFormat = (typeof PLAYOFF_SERIES_FORMATS)[number];
+
+/**
+ * One bracket slot grouping (a regular round is a series of bestOf 1). Finals
+ * slots are flagged by `seriesKind`; their series length comes from the
+ * tournament's finals settings and is reported in `format`.
+ */
 export class OpenPlayoffMatchDto {
   @ApiProperty() challongeMatchId: number;
   @ApiProperty() round: number;
@@ -20,20 +27,27 @@ export class OpenPlayoffMatchDto {
   @ApiProperty({ description: 'Core identifier for persisted series envelope' })
   seriesId: string;
 
-  @ApiProperty({ enum: ['bo1', 'bo3'] }) format: 'bo1' | 'bo3';
+  @ApiProperty({
+    enum: PLAYOFF_SERIES_FORMATS,
+    description:
+      'Series length of this slot. Regular rounds are always `bo1`; finals ' +
+      'slots carry the length configured on the tournament (`bo1` / `bo3` / `bo5`).',
+  })
+  format: PlayoffSeriesFormat;
 
   @ApiProperty({
-    enum: ['standard', 'finals_bo3'],
+    enum: ['standard', 'finals'],
     description:
-      '`finals_bo3` — один із BO3-finals (верхній / нижній / grand final сітки).',
+      '`finals` — one of the finals slots (upper-bracket final, lower-bracket ' +
+      'final or grand final), whatever its `format`.',
   })
-  seriesKind: 'standard' | 'finals_bo3';
+  seriesKind: 'standard' | 'finals';
 
   @ApiPropertyOptional({
     nullable: true,
     enum: ['upper_bracket_final', 'lower_bracket_final', 'grand_final'],
     description:
-      'Конкретний тип finals-серії (лише коли BO3-finals). Інакше null.',
+      'Which finals slot this is (only when `seriesKind` is `finals`). Otherwise null.',
   })
   finalSeriesType:
     | 'upper_bracket_final'
