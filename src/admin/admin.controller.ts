@@ -49,7 +49,6 @@ export class AdminController {
     private readonly dueloService: DueloService,
     private readonly dota2: Dota2Service,
   ) {}
-
   @Get('dota/leagues/:leagueId/access')
   @ApiOperation({
     summary: 'Diagnose the Dota 2 session against a league (read-only)',
