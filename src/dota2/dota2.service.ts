@@ -1,5 +1,6 @@
 import { HttpService } from '@nestjs/axios';
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -146,6 +147,37 @@ interface DotaNode {
   is_completed: boolean;
 }
 
+/**
+ * What the public league API (`IDOTA2League/GetLeagueData`) tells us about a
+ * league. Needs no session, so it can validate a league id before any admin
+ * call and cross-check the admin page scrape when that comes back empty.
+ */
+export interface DotaLeagueSummary {
+  leagueId: number;
+  name: string;
+  /** Valve `ELeagueStatus`: 3 = accepted (the only status fixtures can be created in). */
+  status: number;
+  tier: number;
+  /** Ids of every node group in the league, whatever its type or parent. */
+  nodeGroupIds: number[];
+  /** Ids of the top-level organisational groups — the "tournament" containers. */
+  topLevelOrganizationalIds: number[];
+}
+
+interface PublicLeagueData {
+  info?: {
+    league_id?: number;
+    name?: string;
+    status?: number;
+    tier?: number;
+  };
+  node_groups?: Array<{
+    node_group_id?: number;
+    node_group_type?: number;
+    parent_node_group_id?: number;
+  }>;
+}
+
 /** The node group blob Valve embeds in each group header's onclick handler. */
 interface DotaNodeGroup {
   node_group_id: number;
@@ -211,6 +243,81 @@ export class Dota2Service {
     };
   }
 
+  /**
+   * Public league record, no session needed. `null` when Valve has no league
+   * with that id (the API answers `null` for unknown ids). Throws
+   * ServiceUnavailableException when the API itself cannot be reached, so a
+   * caller can tell "no such league" from "could not check".
+   */
+  async getLeagueData(leagueId: number): Promise<DotaLeagueSummary | null> {
+    let data: PublicLeagueData | null;
+    try {
+      ({ data } = await firstValueFrom(
+        this.http.get<PublicLeagueData | null>(
+          `https://www.dota2.com/webapi/IDOTA2League/GetLeagueData/v001?league_id=${leagueId}`,
+        ),
+      ));
+    } catch (err) {
+      this.logger.warn(`GetLeagueData failed for league ${leagueId}`, err);
+      throw new ServiceUnavailableException(
+        'Dota 2 league API is not reachable right now',
+      );
+    }
+
+    const info = data?.info;
+    if (!info || typeof info.league_id !== 'number' || !info.name) return null;
+
+    const groups = data?.node_groups ?? [];
+    const nodeGroupIds = groups
+      .map((g) => g.node_group_id)
+      .filter((id): id is number => typeof id === 'number');
+    const topLevelOrganizationalIds = groups
+      .filter(
+        (g) =>
+          g.node_group_type === NODE_GROUP_TYPE.ORGANIZATIONAL &&
+          (g.parent_node_group_id ?? 0) === 0,
+      )
+      .map((g) => g.node_group_id)
+      .filter((id): id is number => typeof id === 'number');
+
+    return {
+      leagueId: info.league_id,
+      name: info.name,
+      status: info.status ?? 0,
+      tier: info.tier ?? 0,
+      nodeGroupIds,
+      topLevelOrganizationalIds,
+    };
+  }
+
+  /**
+   * Rejects a league id Valve does not know. Only the public API is used, so
+   * this works without DOTA_* session env and before anything is written.
+   * An unreachable API is logged and lets the caller proceed: the later admin
+   * calls will surface a bad id anyway, and a Valve outage must not block
+   * tournament admin work.
+   */
+  async assertLeagueExists(
+    leagueId: number,
+  ): Promise<DotaLeagueSummary | null> {
+    let league: DotaLeagueSummary | null;
+    try {
+      league = await this.getLeagueData(leagueId);
+    } catch (err) {
+      this.logger.warn(
+        `Could not verify Dota 2 league ${leagueId} (public API unreachable) — proceeding unverified`,
+        err,
+      );
+      return null;
+    }
+    if (!league) {
+      throw new BadRequestException(
+        `Ліга Dota 2 з id ${leagueId} не існує. Перевірте id на https://www.dota2.com/league/${leagueId}`,
+      );
+    }
+    return league;
+  }
+
   async addNodeGroup(
     leagueId: number,
     params: {
@@ -222,7 +329,7 @@ export class Dota2Service {
       defaultNodeType?: number;
       name?: string;
     },
-  ): Promise<void> {
+  ): Promise<unknown> {
     const body = new URLSearchParams({
       sessionid: this.sessionId,
       node_group_id: params.nodeGroupId,
@@ -261,6 +368,19 @@ export class Dota2Service {
       throw new InternalServerErrorException('Dota2 addNodeGroup failed');
     }
     this.assertValveAccepted('addNodeGroup', leagueId, data);
+    return data;
+  }
+
+  /** Short, log-safe rendering of whatever Valve answered to a POST. */
+  private describeValveReply(data: unknown): string {
+    if (data === undefined || data === null || data === '') return '<empty>';
+    const text = typeof data === 'string' ? data : JSON.stringify(data);
+    const oneLine = text.replace(/\s+/g, ' ').trim();
+    if (/<html|<!doctype/i.test(oneLine)) {
+      const title = /<title>([^<]*)<\/title>/i.exec(text)?.[1]?.trim();
+      return `an HTML page${title ? ` titled "${title}"` : ''} instead of JSON`;
+    }
+    return oneLine.length > 200 ? `${oneLine.slice(0, 200)}…` : oneLine;
   }
 
   /**
@@ -309,7 +429,7 @@ export class Dota2Service {
     name?: string,
   ): Promise<string> {
     const before = await this.listOrganizationalNodeGroups(leagueId);
-    await this.addNodeGroup(leagueId, {
+    const reply = await this.addNodeGroup(leagueId, {
       nodeGroupId: '',
       nodeGroupType: NODE_GROUP_TYPE.ORGANIZATIONAL,
       teamCount: 0,
@@ -318,27 +438,97 @@ export class Dota2Service {
       defaultNodeType: 0,
       name,
     });
-    const after = await this.listOrganizationalNodeGroups(leagueId);
 
-    let created = -1;
-    for (const id of after.ids) {
-      if (!before.ids.has(id)) created = Math.max(created, id);
-    }
+    let after = await this.listOrganizationalNodeGroups(leagueId);
+    let created = this.newestNotIn(after.ids, before.ids);
     if (created < 0) {
-      this.logger.error(
-        `League ${leagueId}: no organisational node group appeared after post_addnodegroup ` +
-          `(page title "${after.title}", ${after.ids.size} organisational group(s) on the page)`,
+      // Give the page one chance to catch up before calling it a failure.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      after = await this.listOrganizationalNodeGroups(leagueId);
+      created = this.newestNotIn(after.ids, before.ids);
+    }
+    if (created >= 0) {
+      this.logger.log(
+        `League ${leagueId}: created organisational nodeGroupId=${created}`,
       );
-      throw new InternalServerErrorException(
-        `Dota 2 league ${leagueId}: the tournament node group was not created. ` +
-          'Check that the league exists and that the DOTA_SESSION_ID account is one of its admins.',
-      );
+      return String(created);
     }
 
-    this.logger.log(
-      `League ${leagueId}: created organisational nodeGroupId=${created}`,
+    throw await this.explainMissingNodeGroup(leagueId, before, after, reply);
+  }
+
+  private newestNotIn(after: Set<number>, before: Set<number>): number {
+    let newest = -1;
+    for (const id of after) {
+      if (!before.has(id)) newest = Math.max(newest, id);
+    }
+    return newest;
+  }
+
+  /**
+   * Builds the error for "the create POST went through but no group appeared",
+   * naming the cause as precisely as the evidence allows: the page the session
+   * actually landed on, Valve's reply to the POST, and the public league
+   * record. Every fact ends up in the message itself, so the admin reading the
+   * HTTP response does not need the server log.
+   */
+  private async explainMissingNodeGroup(
+    leagueId: number,
+    before: { ids: Set<number>; title: string },
+    after: { ids: Set<number>; title: string },
+    reply: unknown,
+  ): Promise<InternalServerErrorException> {
+    const valveReply = this.describeValveReply(reply);
+    const publicLeague = await this.getLeagueData(leagueId).catch(() => null);
+
+    this.logger.error(
+      `League ${leagueId}: no organisational node group appeared after post_addnodegroup. ` +
+        `page title "${after.title}", organisational groups on page before/after: ` +
+        `${before.ids.size}/${after.ids.size}, Valve reply: ${valveReply}, ` +
+        `public API: ${
+          publicLeague
+            ? `"${publicLeague.name}" status=${publicLeague.status} nodeGroups=${publicLeague.nodeGroupIds.length}`
+            : 'league not found or API unreachable'
+        }`,
     );
-    return String(created);
+
+    // Anonymous visitors (and sessions without rights on this league) get the
+    // generic landing page instead of the league admin page.
+    const landedOnPublicPage =
+      /league signup/i.test(after.title) ||
+      (after.ids.size === 0 && !/league/i.test(after.title));
+
+    if (!publicLeague) {
+      return new InternalServerErrorException(
+        `Dota 2 league ${leagueId}: Valve's public API has no league with this id. ` +
+          'Check the id on https://www.dota2.com/league/' +
+          `${leagueId}. Valve replied to the create request with: ${valveReply}.`,
+      );
+    }
+    if (landedOnPublicPage) {
+      return new InternalServerErrorException(
+        `Dota 2 league ${leagueId} ("${publicLeague.name}"): the DOTA_* session is not accepted ` +
+          `as an admin of this league — the tournament page served the public page ` +
+          `"${after.title}" instead of the admin view. Add the Steam account that owns the ` +
+          'DOTA_OAUTH_TOKEN cookie to the league admins on dota2.com, or refresh all three ' +
+          `DOTA_* cookies from one fresh login. Valve replied to the create request with: ${valveReply}.`,
+      );
+    }
+    if (publicLeague.status !== 3) {
+      return new InternalServerErrorException(
+        `Dota 2 league ${leagueId} ("${publicLeague.name}") has status ${publicLeague.status}, ` +
+          'not 3 (accepted); Valve does not allow tournament groups on it in this state. ' +
+          `Valve replied to the create request with: ${valveReply}.`,
+      );
+    }
+    return new InternalServerErrorException(
+      `Dota 2 league ${leagueId} ("${publicLeague.name}"): the admin page loaded (title ` +
+        `"${after.title}", ${after.ids.size} organisational group(s)) but the create request was ` +
+        `ignored. Valve replied: ${valveReply}. Most often this means the sessionid cookie does ` +
+        'not belong to the same login as the DOTA_OAUTH_TOKEN (Valve rejects the request as ' +
+        'CSRF), or the account is a league admin but not the league owner, and only the owner ' +
+        'may edit the tournament structure.',
+    );
   }
 
   async addNodeGroupTeam(

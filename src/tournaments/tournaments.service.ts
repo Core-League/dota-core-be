@@ -77,6 +77,9 @@ export class TournamentsService {
     };
     validateBracketConfig(bracket);
 
+    // Публічний API Valve, без сесії: хибний id ліги відхиляємо до запису.
+    await this.dota2.assertLeagueExists(dto.dotaLeagueId);
+
     const entity = this.tournamentsRepo.create({
       ...dto,
       ...schedule,
@@ -192,6 +195,9 @@ export class TournamentsService {
       payload.dotaLeagueId !== previousLeagueId;
     const hasPlayoff =
       leagueChanged && (await this.playoffRepo.existsByTournamentId(id));
+    if (leagueChanged) {
+      await this.dota2.assertLeagueExists(payload.dotaLeagueId as number);
+    }
     if (leagueChanged && !hasPlayoff) {
       const hasQualificationStage =
         await this.qualificationService.existsForTournament(id);
