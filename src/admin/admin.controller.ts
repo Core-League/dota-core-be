@@ -2,7 +2,9 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -28,6 +30,8 @@ import {
   VerifyResult,
 } from './admin.service';
 import { DueloService } from '../duelo/duelo.service';
+import { Dota2Service } from '../dota2/dota2.service';
+import { DotaLeagueAccessDto } from './dto/dota-league-access.dto';
 import { SetPlayerRoleDto } from './dto/set-player-role.dto';
 import { AdminSetPlayerRolesDto } from './dto/admin-set-player-roles.dto';
 import { AdminPlayerRolesResultDto } from './dto/admin-player-roles-result.dto';
@@ -43,7 +47,62 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly dueloService: DueloService,
+    private readonly dota2: Dota2Service,
   ) {}
+
+  @Get('dota/leagues/:leagueId/access')
+  @ApiOperation({
+    summary: 'Diagnose the Dota 2 session against a league (read-only)',
+    description:
+      'Opens the league tournament admin page with the configured DOTA_* cookies and reports what ' +
+      'Valve served, next to the public league record. Call it for a league that used to work and ' +
+      'for the failing one: both failing means the cookies are dead; only the new one failing means ' +
+      'the logged-in Steam account has no rights on that league. Creates nothing.',
+  })
+  @ApiParam({ name: 'leagueId', type: Number, example: 20246 })
+  @ApiOkResponse({ type: DotaLeagueAccessDto })
+  async dotaLeagueAccess(
+    @Param('leagueId', ParseIntPipe) leagueId: number,
+  ): Promise<DotaLeagueAccessDto> {
+    const probe = await this.dota2.probeLeagueAccess(leagueId);
+    const league = probe.publicLeague;
+
+    let verdict: string;
+    if (!probe.sessionConfigured) {
+      verdict =
+        'DOTA_SESSION_ID / DOTA_OAUTH_TOKEN are not set — no page probe was made.';
+    } else if (!league) {
+      verdict = `Valve has no league with id ${leagueId}; check the id.`;
+    } else if (probe.adminPageReached) {
+      verdict = `The session is recognised on league ${leagueId}${
+        probe.loggedInAs ? ` as "${probe.loggedInAs}"` : ''
+      }; tournament groups can be created here.`;
+    } else if (probe.loginLinkPresent) {
+      verdict =
+        'Valve does not treat this session as logged in at all: the cookies are expired or ' +
+        'come from different logins. Log in to dota2.com once and copy dota_oauth_token, ' +
+        'dota_oauth_info and sessionid from that same session.';
+    } else {
+      verdict =
+        `The session is logged in but got the public page for league ${leagueId}: the ` +
+        'logged-in Steam account has no admin rights on this league. Add that account ' +
+        '(not necessarily yours) to the league admins on dota2.com.';
+    }
+
+    return {
+      leagueId,
+      sessionConfigured: probe.sessionConfigured,
+      publicName: league?.name ?? null,
+      publicStatus: league?.status ?? null,
+      publicNodeGroups: league?.nodeGroupIds.length ?? 0,
+      adminPageReached: probe.adminPageReached,
+      pageTitle: probe.pageTitle,
+      loginLinkPresent: probe.loginLinkPresent,
+      loggedInAs: probe.loggedInAs,
+      organizationalGroupsOnPage: probe.organizationalGroupsOnPage,
+      verdict,
+    };
+  }
 
   @Post('matches/:matchId/result')
   @ApiOperation({
@@ -51,7 +110,6 @@ export class AdminController {
     description:
       'Sets the winner directly and awards points. winnerPoints defaults to 100, loserPoints to 40. Throws 409 if the match already has a result.',
   })
-  
   @ApiParam({ name: 'matchId', type: String, format: 'uuid' })
   overrideMatchResult(
     @Param('matchId', ParseUUIDPipe) matchId: string,

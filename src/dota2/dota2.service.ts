@@ -703,7 +703,24 @@ export class Dota2Service {
   private async listOrganizationalNodeGroups(
     leagueId: number,
   ): Promise<{ ids: Set<number>; title: string }> {
-    const html = await this.fetchTournamentPage(leagueId);
+    const { ids, title } = this.inspectTournamentPage(
+      await this.fetchTournamentPage(leagueId),
+    );
+    return { ids, title };
+  }
+
+  /**
+   * Everything a page probe can read off the league tournament page in one
+   * pass: which organisational groups it shows, its title, and whether Valve
+   * treats the session as logged in (a Login link means it does not; a persona
+   * name in the header means it does).
+   */
+  private inspectTournamentPage(html: string): {
+    ids: Set<number>;
+    title: string;
+    loginLinkPresent: boolean;
+    loggedInAs: string | null;
+  } {
     const $ = cheerio.load(html);
 
     const ids = new Set<number>();
@@ -714,7 +731,69 @@ export class Dota2Service {
       if (match) ids.add(parseInt(match[1], 10));
     });
 
-    return { ids, title: $('title').text().trim() };
+    const loginLinkPresent =
+      $('a[href*="/login"], a[href*="steamcommunity.com/openid"]').length > 0;
+
+    // Valve's headers differ between properties; try the known persona slots.
+    const persona =
+      $('#account_pulldown').first().text().trim() ||
+      $('.global_header_userlink, .persona_name, #global_header .username')
+        .first()
+        .text()
+        .trim();
+
+    return {
+      ids,
+      title: $('title').text().trim(),
+      loginLinkPresent,
+      loggedInAs: persona || null,
+    };
+  }
+
+  /**
+   * Read-only probe: what does the configured session see on this league's
+   * admin page, and what does Valve say about the league publicly? Used by
+   * the admin diagnostics endpoint to tell dead cookies from missing rights.
+   */
+  async probeLeagueAccess(leagueId: number): Promise<{
+    sessionConfigured: boolean;
+    publicLeague: DotaLeagueSummary | null;
+    adminPageReached: boolean;
+    pageTitle: string | null;
+    loginLinkPresent: boolean;
+    loggedInAs: string | null;
+    organizationalGroupsOnPage: number;
+  }> {
+    const publicLeague = await this.getLeagueData(leagueId).catch(() => null);
+
+    if (!this.isLeagueApiConfigured()) {
+      return {
+        sessionConfigured: false,
+        publicLeague,
+        adminPageReached: false,
+        pageTitle: null,
+        loginLinkPresent: false,
+        loggedInAs: null,
+        organizationalGroupsOnPage: 0,
+      };
+    }
+
+    const page = this.inspectTournamentPage(
+      await this.fetchTournamentPage(leagueId),
+    );
+    const adminPageReached =
+      !/league signup/i.test(page.title) &&
+      (page.ids.size > 0 || !page.loginLinkPresent);
+
+    return {
+      sessionConfigured: true,
+      publicLeague,
+      adminPageReached,
+      pageTitle: page.title || null,
+      loginLinkPresent: page.loginLinkPresent,
+      loggedInAs: page.loggedInAs,
+      organizationalGroupsOnPage: page.ids.size,
+    };
   }
 
   /**
