@@ -51,6 +51,7 @@ export class AdminController {
     description:
       'Sets the winner directly and awards points. winnerPoints defaults to 100, loserPoints to 40. Throws 409 if the match already has a result.',
   })
+  
   @ApiParam({ name: 'matchId', type: String, format: 'uuid' })
   overrideMatchResult(
     @Param('matchId', ParseUUIDPipe) matchId: string,
