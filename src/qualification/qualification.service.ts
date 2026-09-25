@@ -76,6 +76,11 @@ export class QualificationService {
     });
   }
 
+  /** True once the tournament has a qualification stage (and so a node group in its Dota league). */
+  async existsForTournament(tournamentId: string): Promise<boolean> {
+    return this.qualRepo.existsByTournamentId(tournamentId);
+  }
+
   async createForTournament(
     tournament: Tournament,
     nodeGroupId: string,
@@ -296,6 +301,7 @@ export class QualificationService {
     );
     if (team.dotaTeamId) {
       await this.dota2.addNodeGroupTeam(
+        tournament.dotaLeagueId,
         qualification.nodeGroupId,
         team.dotaTeamId,
       );
@@ -317,6 +323,7 @@ export class QualificationService {
         `Creating match node inside NodeGroup${qualification.nodeGroupId} (team=${team.dotaTeamId} vs opponent=${opponent.dotaTeamId})`,
       );
       const matchNodeGroupId = await this.dota2.createTwoTeamFixtureNode(
+        tournament.dotaLeagueId,
         qualification.nodeGroupId,
         team.dotaTeamId,
         opponent.dotaTeamId,
@@ -344,8 +351,10 @@ export class QualificationService {
      * node. The join itself still succeeds — admins can record results by
      * hand — but the breakage must not pass unnoticed again.
      */
-    const unplayable =
-      await this.dota2.findUnplayableFixtureNodeGroups(createdNodeGroupIds);
+    const unplayable = await this.dota2.findUnplayableFixtureNodeGroups(
+      tournament.dotaLeagueId,
+      createdNodeGroupIds,
+    );
     if (unplayable.length > 0) {
       this.logger.error(
         `Dota fixtures created without teams bound to their node — these matches ` +
@@ -493,11 +502,16 @@ export class QualificationService {
         (m.teamA.id === team.id || m.teamB.id === team.id),
     );
 
-    for (const match of unplayedMatches) {
-      this.logger.log(
-        `Removing unplayed match node group ${match.nodeGroupId} for leaving team ${team.id}`,
-      );
-      await this.dota2.removeNodeGroup(match.nodeGroupId);
+    // `findByTournamentId` loads the `tournament` relation, so the league the
+    // match nodes live in is known whenever there is anything to remove.
+    if (qualification && unplayedMatches.length > 0) {
+      const leagueId = qualification.tournament.dotaLeagueId;
+      for (const match of unplayedMatches) {
+        this.logger.log(
+          `Removing unplayed match node group ${match.nodeGroupId} for leaving team ${team.id}`,
+        );
+        await this.dota2.removeNodeGroup(leagueId, match.nodeGroupId);
+      }
     }
 
     const playerIds = (team.mainPlayers ?? []).map((p) => p.id);

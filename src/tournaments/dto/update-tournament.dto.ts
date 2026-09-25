@@ -14,6 +14,10 @@ import { CreateTournamentDto } from './create-tournament.dto';
  * (`upperBracketFinalBestOf`, `lowerBracketFinalBestOf`, `grandFinalBestOf`)
  * are inherited on purpose: the bracket shape may be corrected until a playoff
  * row exists. `TournamentsService.update` rejects a change after that.
+ *
+ * `dotaLeagueId` is inherited the same way: it may be corrected until a node
+ * group has been created in the league (a `Qualification` or `playoff` row
+ * exists), since node groups cannot be moved between leagues.
  */
 export class UpdateTournamentDto extends PartialType(
   OmitType(CreateTournamentDto, ['hasQualification'] as const),

@@ -98,7 +98,7 @@ export class TournamentsService {
     this.logger.log(
       `Tournament ${tournament.id}: calling addNodeGroup for qualification stage`,
     );
-    await this.dota2.addNodeGroup({
+    await this.dota2.addNodeGroup(tournament.dotaLeagueId, {
       nodeGroupId: '',
       nodeGroupType: 1,
       teamCount: 0,
@@ -106,9 +106,11 @@ export class TournamentsService {
       phase: 2,
       defaultNodeType: 0,
     });
-    const nodeGroupId = await this.dota2.resolveOrganizationalNodeGroupId();
+    const nodeGroupId = await this.dota2.resolveOrganizationalNodeGroupId(
+      tournament.dotaLeagueId,
+    );
     this.logger.log(
-      `Qualification stage nodeGroupId=${nodeGroupId} (parsed from Dota2 page)`,
+      `Qualification stage nodeGroupId=${nodeGroupId} in league ${tournament.dotaLeagueId} (parsed from Dota2 page)`,
     );
     await this.qualificationService.createForTournament(
       tournament,
@@ -165,6 +167,27 @@ export class TournamentsService {
         'Форму сітки не можна змінити: плей-оф уже створено. ' +
           'Залиште поточні налаштування або перезапустіть плей-оф.',
       );
+    }
+
+    /**
+     * Ліга Dota 2 зафіксована, щойно в ній створено хоч одну групу турніру:
+     * етап кваліфікації (рядок `Qualification`, створюється разом із турніром)
+     * або оболонку плей-оф (рядок `playoff`). Valve не дає перенести групи
+     * між лігами, тож зміна ліги лишила б їх осиротілими в старій лізі.
+     */
+    const leagueChanged =
+      payload.dotaLeagueId !== undefined &&
+      payload.dotaLeagueId !== tournament.dotaLeagueId;
+    if (leagueChanged) {
+      const hasQualificationStage =
+        await this.qualificationService.existsForTournament(id);
+      const hasPlayoff = await this.playoffRepo.existsByTournamentId(id);
+      if (hasQualificationStage || hasPlayoff) {
+        throw new BadRequestException(
+          'Лігу Dota 2 не можна змінити: у поточній лізі вже створено групи турніру ' +
+            '(етап кваліфікації або плей-оф).',
+        );
+      }
     }
 
     // Перевіряємо підсумкову форму сітки: зміна лише формату не має лишити
@@ -263,13 +286,19 @@ export class TournamentsService {
 
       for (const match of qualification.matches ?? []) {
         this.logger.log(`Removing Dota2 match node group ${match.nodeGroupId}`);
-        await this.dota2.removeNodeGroup(match.nodeGroupId);
+        await this.dota2.removeNodeGroup(
+          tournament.dotaLeagueId,
+          match.nodeGroupId,
+        );
       }
 
       this.logger.log(
         `Removing Dota2 qualification node group ${qualification.nodeGroupId} for tournament ${id}`,
       );
-      await this.dota2.removeNodeGroup(qualification.nodeGroupId);
+      await this.dota2.removeNodeGroup(
+        tournament.dotaLeagueId,
+        qualification.nodeGroupId,
+      );
     } catch {
       this.logger.warn(
         `No qualification found for tournament ${id} — skipping Dota2 node group removal`,

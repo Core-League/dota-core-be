@@ -64,21 +64,32 @@ async function main(): Promise<void> {
   try {
     if (!dota2.isLeagueApiConfigured()) {
       throw new Error(
-        'DOTA_LEAGUE_ID / DOTA_SESSION_ID / DOTA_OAUTH_TOKEN are not all set — ' +
+        'DOTA_SESSION_ID / DOTA_OAUTH_TOKEN are not both set — ' +
           'cannot talk to the league admin API',
       );
     }
 
-    const qual = await client.query<{ id: string; nodeGroupId: string }>(
-      `SELECT id, "nodeGroupId" FROM qualification WHERE "tournamentId" = $1`,
+    const qual = await client.query<{
+      id: string;
+      nodeGroupId: string;
+      dotaLeagueId: number;
+    }>(
+      `SELECT q.id, q."nodeGroupId", t."dotaLeagueId"
+         FROM qualification q
+         JOIN tournament t ON t.id = q."tournamentId"
+        WHERE q."tournamentId" = $1`,
       [tournamentId],
     );
     if (qual.rowCount === 0) {
       throw new Error(`No qualification found for tournament ${tournamentId}`);
     }
-    const { id: qualificationId, nodeGroupId: qualNodeGroupId } = qual.rows[0];
+    const {
+      id: qualificationId,
+      nodeGroupId: qualNodeGroupId,
+      dotaLeagueId: leagueId,
+    } = qual.rows[0];
     console.log(
-      `\nQualification ${qualificationId} — parent NodeGroup${qualNodeGroupId}`,
+      `\nQualification ${qualificationId} — parent NodeGroup${qualNodeGroupId} in league ${leagueId}`,
     );
 
     const matches = await client.query<MatchRow>(
@@ -98,6 +109,7 @@ async function main(): Promise<void> {
 
     const broken = new Set(
       await dota2.findUnplayableFixtureNodeGroups(
+        leagueId,
         matches.rows.map((m) => m.nodeGroupId),
       ),
     );
@@ -153,6 +165,7 @@ async function main(): Promise<void> {
          * create then failed.
          */
         const newNodeGroupId = await dota2.createTwoTeamFixtureNode(
+          leagueId,
           qualNodeGroupId,
           aDota,
           bDota,
@@ -165,7 +178,7 @@ async function main(): Promise<void> {
         newIds.push(newNodeGroupId);
 
         try {
-          await dota2.removeNodeGroup(m.nodeGroupId);
+          await dota2.removeNodeGroup(leagueId, m.nodeGroupId);
         } catch (err) {
           console.warn(
             `  WARN could not delete the dead NodeGroup${m.nodeGroupId} ` +
@@ -184,7 +197,10 @@ async function main(): Promise<void> {
       }
     }
 
-    const stillBroken = await dota2.findUnplayableFixtureNodeGroups(newIds);
+    const stillBroken = await dota2.findUnplayableFixtureNodeGroups(
+      leagueId,
+      newIds,
+    );
     console.log(
       `\nRecreated ${newIds.length}, failed ${failed}, ` +
         `still unplayable after repair: ${stillBroken.length}` +

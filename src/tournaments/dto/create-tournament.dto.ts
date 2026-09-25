@@ -69,6 +69,18 @@ export class CreateTournamentDto {
   @Min(1)
   tournamentSlots?: number;
 
+  @ApiProperty({
+    example: 19183,
+    description:
+      'ID ліги Dota 2 (https://www.dota2.com/league/<id>), у якій створюються ' +
+      'етап кваліфікації, сітка плей-оф і всі матчі турніру. Можна змінити, ' +
+      'доки в лізі ще не створено жодної групи: для турніру з кваліфікацією — ' +
+      'лише до створення, без кваліфікації — доки не стартував плей-оф.',
+  })
+  @IsInt()
+  @Min(1)
+  dotaLeagueId: number;
+
   @ApiProperty({ description: 'Початок реєстрації команд на турнір.' })
   @IsDateString()
   registrationStartsAt: string;

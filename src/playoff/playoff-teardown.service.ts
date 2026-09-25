@@ -5,6 +5,7 @@ import { DataSource } from 'typeorm';
 import { ChallongeService } from '../challonge/challonge.service';
 import { Dota2Service } from '../dota2/dota2.service';
 import { TournamentPlayoffTeam } from '../tournaments/tournament-playoff-team.entity';
+import { Tournament } from '../tournaments/tournaments.entity';
 import { PlayoffLeagueFixture } from './playoff-league-fixture.entity';
 import { Playoff } from './playoff.entity';
 
@@ -14,6 +15,8 @@ import { Playoff } from './playoff.entity';
  */
 export interface PlayoffExternalHandles {
   challongeUrl: string | null;
+  /** League the node groups below live in; null when the tournament row is gone. */
+  dotaLeagueId: number | null;
   shellNodeGroupId: string | null;
   fixtureNodeGroupIds: string[];
 }
@@ -51,8 +54,14 @@ export class PlayoffTeardownService {
       ),
     ];
 
+    const tournament = await this.dataSource.getRepository(Tournament).findOne({
+      where: { id: playoff.tournamentId },
+      select: { id: true, dotaLeagueId: true },
+    });
+
     return {
       challongeUrl: (playoff.challongeUrl ?? '').trim() || null,
+      dotaLeagueId: tournament?.dotaLeagueId ?? null,
       shellNodeGroupId:
         (playoff.dotaPlayoffContainingNodeGroupId ?? '').trim() || null,
       fixtureNodeGroupIds,
@@ -101,10 +110,20 @@ export class PlayoffTeardownService {
       ...handles.fixtureNodeGroupIds,
       ...(handles.shellNodeGroupId ? [handles.shellNodeGroupId] : []),
     ];
+    if (nodeGroupIds.length === 0) return;
+
+    const leagueId = handles.dotaLeagueId;
+    if (leagueId === null) {
+      this.logger.warn(
+        `Old Dota league node groups ${nodeGroupIds.join(', ')} left in place: ` +
+          'tournament (and its league) no longer exists — clean up manually',
+      );
+      return;
+    }
 
     for (const nodeGroupId of nodeGroupIds) {
       try {
-        await this.dota2.removeNodeGroup(nodeGroupId);
+        await this.dota2.removeNodeGroup(leagueId, nodeGroupId);
       } catch (err) {
         this.logger.warn(
           `Failed to remove old Dota league node group ${nodeGroupId} — clean up manually`,

@@ -164,15 +164,24 @@ export class Dota2Service {
   constructor(private readonly http: HttpService) {}
 
   /**
-   * True when DOTA_* env vars are present for league POST + tournament page scrape.
-   * When false, playoff/qual fixtures skip Dota league calls (Challonge still works).
+   * True when the DOTA_* session env vars are present for league POST +
+   * tournament page scrape. When false, playoff/qual fixtures skip Dota league
+   * calls (Challonge still works).
+   *
+   * The league itself is not part of this check: every tournament-scoped call
+   * takes its `leagueId` from `Tournament.dotaLeagueId`. Only the captain
+   * league-admin calls fall back to `DOTA_LEAGUE_ID`.
    */
   isLeagueApiConfigured(): boolean {
     const oauthToken = process.env.DOTA_OAUTH_TOKEN ?? '';
-    return Boolean(this.leagueId && this.sessionId && oauthToken.length > 0);
+    return Boolean(this.sessionId && oauthToken.length > 0);
   }
 
-  private get leagueId(): string {
+  /**
+   * League whose admin list mirrors verified captains. Not tied to a
+   * tournament, so it stays an env setting; tournaments carry their own league.
+   */
+  private get defaultLeagueId(): string {
     return process.env.DOTA_LEAGUE_ID ?? '';
   }
 
@@ -187,30 +196,33 @@ export class Dota2Service {
     return process.env.DOTA_SESSION_ID ?? '';
   }
 
-  private baseUrl(path: string): string {
-    return `https://www.dota2.com/league/${this.leagueId}/${path}`;
+  private baseUrl(leagueId: number | string, path: string): string {
+    return `https://www.dota2.com/league/${leagueId}/${path}`;
   }
 
-  private commonHeaders(): Record<string, string> {
+  private commonHeaders(leagueId: number | string): Record<string, string> {
     return {
       accept: '*/*',
       'content-type': 'application/x-www-form-urlencoded',
       cookie: this.cookie,
       origin: 'https://www.dota2.com',
-      referer: `https://www.dota2.com/league/${this.leagueId}/tournament`,
+      referer: `https://www.dota2.com/league/${leagueId}/tournament`,
       'x-requested-with': 'XMLHttpRequest',
     };
   }
 
-  async addNodeGroup(params: {
-    nodeGroupId: string;
-    nodeGroupType: number;
-    teamCount: number;
-    containingNodeGroupId: string;
-    phase: number;
-    defaultNodeType?: number;
-    name?: string;
-  }): Promise<void> {
+  async addNodeGroup(
+    leagueId: number,
+    params: {
+      nodeGroupId: string;
+      nodeGroupType: number;
+      teamCount: number;
+      containingNodeGroupId: string;
+      phase: number;
+      defaultNodeType?: number;
+      name?: string;
+    },
+  ): Promise<void> {
     const body = new URLSearchParams({
       sessionid: this.sessionId,
       node_group_id: params.nodeGroupId,
@@ -237,17 +249,20 @@ export class Dota2Service {
 
     try {
       await firstValueFrom(
-        this.http.post(this.baseUrl('post_addnodegroup'), body.toString(), {
-          headers: this.commonHeaders(),
-        }),
+        this.http.post(
+          this.baseUrl(leagueId, 'post_addnodegroup'),
+          body.toString(),
+          { headers: this.commonHeaders(leagueId) },
+        ),
       );
     } catch (err) {
-      this.logger.error('addNodeGroup failed', err);
+      this.logger.error(`addNodeGroup failed (league ${leagueId})`, err);
       throw new InternalServerErrorException('Dota2 addNodeGroup failed');
     }
   }
 
   async addNodeGroupTeam(
+    leagueId: number,
     nodeGroupId: string,
     dotaTeamId: string,
   ): Promise<void> {
@@ -259,17 +274,19 @@ export class Dota2Service {
 
     try {
       await firstValueFrom(
-        this.http.post(this.baseUrl('post_addnodegroupteam'), body.toString(), {
-          headers: this.commonHeaders(),
-        }),
+        this.http.post(
+          this.baseUrl(leagueId, 'post_addnodegroupteam'),
+          body.toString(),
+          { headers: this.commonHeaders(leagueId) },
+        ),
       );
     } catch (err) {
-      this.logger.error('addNodeGroupTeam failed', err);
+      this.logger.error(`addNodeGroupTeam failed (league ${leagueId})`, err);
       throw new InternalServerErrorException('Dota2 addNodeGroupTeam failed');
     }
   }
 
-  async removeNodeGroup(nodeGroupId: string): Promise<void> {
+  async removeNodeGroup(leagueId: number, nodeGroupId: string): Promise<void> {
     const body = new URLSearchParams({
       sessionid: this.sessionId,
       node_group_id: nodeGroupId,
@@ -277,26 +294,37 @@ export class Dota2Service {
 
     try {
       await firstValueFrom(
-        this.http.post(this.baseUrl('post_removenodegroup'), body.toString(), {
-          headers: this.commonHeaders(),
-        }),
+        this.http.post(
+          this.baseUrl(leagueId, 'post_removenodegroup'),
+          body.toString(),
+          { headers: this.commonHeaders(leagueId) },
+        ),
       );
     } catch (err) {
-      this.logger.error('removeNodeGroup failed', err);
+      this.logger.error(`removeNodeGroup failed (league ${leagueId})`, err);
       throw new InternalServerErrorException('Dota2 removeNodeGroup failed');
     }
   }
 
   async addLeagueAdmin(steamId: string): Promise<void> {
+    const leagueId = this.defaultLeagueId;
+    if (!leagueId) {
+      this.logger.warn('addLeagueAdmin skipped: DOTA_LEAGUE_ID is not set');
+      return;
+    }
     const body = new URLSearchParams({
       sessionid: this.sessionId,
       profile_url: `https://steamcommunity.com/profiles/${steamId}/`,
     });
     try {
       await firstValueFrom(
-        this.http.post(this.baseUrl('post_addadmin'), body.toString(), {
-          headers: this.commonHeaders(),
-        }),
+        this.http.post(
+          this.baseUrl(leagueId, 'post_addadmin'),
+          body.toString(),
+          {
+            headers: this.commonHeaders(leagueId),
+          },
+        ),
       );
       this.logger.log(`addLeagueAdmin: ${steamId}`);
     } catch (err) {
@@ -305,6 +333,11 @@ export class Dota2Service {
   }
 
   async revokeLeagueAdmin(steamId: string): Promise<void> {
+    const leagueId = this.defaultLeagueId;
+    if (!leagueId) {
+      this.logger.warn('revokeLeagueAdmin skipped: DOTA_LEAGUE_ID is not set');
+      return;
+    }
     const accountId = String(BigInt(steamId) - 76561197960265728n);
     const body = new URLSearchParams({
       sessionid: this.sessionId,
@@ -312,9 +345,11 @@ export class Dota2Service {
     });
     try {
       await firstValueFrom(
-        this.http.post(this.baseUrl('post_revokeadmin'), body.toString(), {
-          headers: this.commonHeaders(),
-        }),
+        this.http.post(
+          this.baseUrl(leagueId, 'post_revokeadmin'),
+          body.toString(),
+          { headers: this.commonHeaders(leagueId) },
+        ),
       );
       this.logger.log(`revokeLeagueAdmin: ${steamId}`);
     } catch (err) {
@@ -324,16 +359,16 @@ export class Dota2Service {
 
   // ── HTML parsing ─────────────────────────────────────────────────────────
 
-  async fetchTournamentPage(): Promise<string> {
+  async fetchTournamentPage(leagueId: number): Promise<string> {
     try {
       const { data } = await firstValueFrom(
-        this.http.get<string>(this.baseUrl('tournament'), {
+        this.http.get<string>(this.baseUrl(leagueId, 'tournament'), {
           headers: {
             accept:
               'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'accept-language': 'en-US,en;q=0.9',
             cookie: this.cookie,
-            referer: `https://www.dota2.com/league/${this.leagueId}/tournament`,
+            referer: `https://www.dota2.com/league/${leagueId}/tournament`,
             'user-agent':
               'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
@@ -342,7 +377,7 @@ export class Dota2Service {
       );
       return data;
     } catch (err) {
-      this.logger.error('fetchTournamentPage failed', err);
+      this.logger.error(`fetchTournamentPage failed (league ${leagueId})`, err);
       throw new InternalServerErrorException(
         'Failed to fetch Dota2 tournament page',
       );
@@ -394,8 +429,8 @@ export class Dota2Service {
    * tournament page and return the highest .TypeOrganizational.NodeGroup id —
    * ids are handed out monotonically, so that is the group just created.
    */
-  async resolveOrganizationalNodeGroupId(): Promise<string> {
-    const html = await this.fetchTournamentPage();
+  async resolveOrganizationalNodeGroupId(leagueId: number): Promise<string> {
+    const html = await this.fetchTournamentPage(leagueId);
     const $ = cheerio.load(html);
 
     let newest = -1;
@@ -430,9 +465,12 @@ export class Dota2Service {
    * same league.
    */
   async resolveNewestChildNodeGroupId(
+    leagueId: number,
     containingNodeGroupId: string,
   ): Promise<string> {
-    const groups = this.parseNodeGroups(await this.fetchTournamentPage());
+    const groups = this.parseNodeGroups(
+      await this.fetchTournamentPage(leagueId),
+    );
     const parentId = parseInt(containingNodeGroupId, 10);
 
     let newest = -1;
@@ -468,11 +506,14 @@ export class Dota2Service {
    *          count as unplayable).
    */
   async findUnplayableFixtureNodeGroups(
+    leagueId: number,
     nodeGroupIds: string[],
   ): Promise<string[]> {
     if (nodeGroupIds.length === 0) return [];
 
-    const groups = this.parseNodeGroups(await this.fetchTournamentPage());
+    const groups = this.parseNodeGroups(
+      await this.fetchTournamentPage(leagueId),
+    );
     return nodeGroupIds.filter((id) => {
       const group = groups.get(parseInt(id, 10));
       if (!group) return true;
@@ -493,17 +534,19 @@ export class Dota2Service {
    * Showmatch is the only type that binds the added teams to the group's node,
    * which is what makes the match selectable when creating a lobby.
    *
+   * @param leagueId — The Dota 2 league the fixture is created in (`Tournament.dotaLeagueId`).
    * @param name — Optional display label shown on the Dota 2 admin page ("Team A vs Team B").
    * @param bestOf — Series length of the slot (1, 3 or 5); defaults to a BO1.
    */
   async createTwoTeamFixtureNode(
+    leagueId: number,
     containingOrganizationalGroupId: string,
     dotaTeamIdA: string,
     dotaTeamIdB: string,
     name?: string,
     bestOf: number = 1,
   ): Promise<string> {
-    await this.addNodeGroup({
+    await this.addNodeGroup(leagueId, {
       nodeGroupId: '',
       nodeGroupType: NODE_GROUP_TYPE.SHOWMATCH,
       teamCount: 2,
@@ -515,16 +558,17 @@ export class Dota2Service {
     let matchNodeGroupId: string | undefined;
     try {
       matchNodeGroupId = await this.resolveNewestChildNodeGroupId(
+        leagueId,
         containingOrganizationalGroupId,
       );
 
-      await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdA);
-      await this.addNodeGroupTeam(matchNodeGroupId, dotaTeamIdB);
+      await this.addNodeGroupTeam(leagueId, matchNodeGroupId, dotaTeamIdA);
+      await this.addNodeGroupTeam(leagueId, matchNodeGroupId, dotaTeamIdB);
       return matchNodeGroupId;
     } catch (err) {
       if (matchNodeGroupId) {
         try {
-          await this.removeNodeGroup(matchNodeGroupId);
+          await this.removeNodeGroup(leagueId, matchNodeGroupId);
         } catch (removeErr) {
           this.logger.warn(
             `removeNodeGroup failed for orphan fixture node ${matchNodeGroupId}`,

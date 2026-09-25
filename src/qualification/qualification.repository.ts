@@ -19,6 +19,10 @@ export class QualificationRepository {
     return this.repo.save(q);
   }
 
+  existsByTournamentId(tournamentId: string): Promise<boolean> {
+    return this.repo.exists({ where: { tournament: { id: tournamentId } } });
+  }
+
   findByTournamentId(tournamentId: string): Promise<Qualification | null> {
     return this.repo.findOne({
       where: { tournament: { id: tournamentId } },

@@ -53,6 +53,7 @@ import {
 } from '../uploads/uploads.service';
 import { PlayoffService } from '../playoff/playoff.service';
 import { PlayoffResponseDto } from '../playoff/dto/playoff-response.dto';
+import { RegenerateLeagueMatchesResultDto } from '../playoff/dto/regenerate-league-matches-result.dto';
 import { SubmitPlayoffMatchDto } from '../playoff/dto/submit-playoff-match.dto';
 import { DisqualifyTeamDto } from '../playoff/dto/disqualify-team.dto';
 import { TechLossPlayoffDto } from '../playoff/dto/tech-loss-playoff.dto';
@@ -389,6 +390,25 @@ export class TournamentsController {
   @ApiOkResponse({ type: PlayoffResponseDto })
   restartPlayoff(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.playoffService.restartPlayoff(id);
+  }
+
+  @Post(':id/playoff/regenerate-matches')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Recreate the playoff matches in the Dota 2 league',
+    description:
+      'Leaves the bracket, results and participants untouched. Removes every node group the ' +
+      'playoff previously created in the Dota 2 league named by the tournament (fixtures and the ' +
+      'organisational shell), rebuilds the shell, registers the active playoff teams under it and ' +
+      'creates one fixture per open bracket match. Finished matches are not recreated and pending ' +
+      'matches have no teams to bind yet. Safe to re-run: a failed run leaves no fixtures rather ' +
+      'than duplicates.',
+  })
+  @ApiOkResponse({ type: RegenerateLeagueMatchesResultDto })
+  @ApiNotFoundResponse({ description: 'The tournament has no playoff yet.' })
+  regeneratePlayoffLeagueMatches(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.playoffService.regenerateLeagueMatches(id);
   }
 
   @Post(':id/playoff/submit-manual')
