@@ -98,21 +98,27 @@ export class TournamentsService {
     }
 
     this.logger.log(
-      `Tournament ${tournament.id}: calling addNodeGroup for qualification stage`,
+      `Tournament ${tournament.id}: creating qualification stage in league ${tournament.dotaLeagueId}`,
     );
-    await this.dota2.addNodeGroup(tournament.dotaLeagueId, {
-      nodeGroupId: '',
-      nodeGroupType: 1,
-      teamCount: 0,
-      containingNodeGroupId: '0',
-      phase: 2,
-      defaultNodeType: 0,
-    });
-    const nodeGroupId = await this.dota2.resolveOrganizationalNodeGroupId(
-      tournament.dotaLeagueId,
-    );
+    let nodeGroupId: string;
+    try {
+      nodeGroupId = await this.dota2.createOrganizationalNodeGroup(
+        tournament.dotaLeagueId,
+      );
+    } catch (err) {
+      /**
+       * Не лишаємо турнір без етапу кваліфікації: без рядка `Qualification`
+       * команди не змогли б приєднатися. Прибираємо щойно створений турнір,
+       * щоб адмін виправив лігу (або доступ до неї) і створив його знову.
+       */
+      this.logger.error(
+        `Tournament ${tournament.id}: qualification stage not created in league ${tournament.dotaLeagueId} — rolling the tournament back`,
+      );
+      await this.tournamentsRepo.remove(tournament);
+      throw err;
+    }
     this.logger.log(
-      `Qualification stage nodeGroupId=${nodeGroupId} in league ${tournament.dotaLeagueId} (parsed from Dota2 page)`,
+      `Qualification stage nodeGroupId=${nodeGroupId} in league ${tournament.dotaLeagueId}`,
     );
     await this.qualificationService.createForTournament(
       tournament,
@@ -176,8 +182,9 @@ export class TournamentsService {
      * - доки триває кваліфікація (є рядок `Qualification`, плей-оф ще немає),
      *   зміна заборонена — етап із матчами живе в поточній лізі;
      * - коли плей-оф уже створено, зміна дозволена: дзеркало сітки
-     *   перебудовується в новій лізі одразу після збереження (див. нижче).
-     *   Група кваліфікації лишається в старій лізі як історія.
+     *   перебудовується в новій лізі перед збереженням (див. нижче), тож
+     *   недоступна ліга відхиляється без змін. Група кваліфікації лишається
+     *   в старій лізі як історія.
      */
     const previousLeagueId = tournament.dotaLeagueId;
     const leagueChanged =
@@ -239,28 +246,32 @@ export class TournamentsService {
       tournamentStatus: payload.tournamentStatus ?? tournament.tournamentStatus,
     });
 
-    Object.assign(tournament, payload);
-    const saved = await this.tournamentsRepo.save(tournament);
-
     /**
-     * Ліга змінена під час плей-оф: переносимо дзеркало сітки — прибираємо
-     * групи зі старої ліги й створюємо їх заново в новій. Ліга вже збережена,
-     * тож збій тут повертає помилку клієнту, але не відкочує зміну: повторний
-     * `POST /tournaments/:id/playoff/regenerate-matches` добудує дзеркало.
+     * Ліга змінена під час плей-оф: переносимо дзеркало сітки — створюємо
+     * контейнер у новій лізі, прибираємо групи зі старої й генеруємо матчі
+     * заново. Робимо це ДО збереження: якщо нова ліга недоступна (немає прав
+     * адміна, хибний id), контейнер не створиться, перенос зупиниться ще до
+     * будь-яких змін, а турнір лишиться в старій лізі з цілим дзеркалом.
      */
-    if (hasPlayoff) {
+    if (hasPlayoff && payload.dotaLeagueId !== undefined) {
       if (this.dota2.isLeagueApiConfigured()) {
         this.logger.log(
-          `Tournament ${id}: league changed ${previousLeagueId} -> ${saved.dotaLeagueId}, moving playoff mirror`,
+          `Tournament ${id}: league changing ${previousLeagueId} -> ${payload.dotaLeagueId}, moving playoff mirror`,
         );
-        await this.playoffService.regenerateLeagueMatches(id, previousLeagueId);
+        await this.playoffService.regenerateLeagueMatches(id, {
+          fromLeagueId: previousLeagueId,
+          toLeagueId: payload.dotaLeagueId,
+        });
       } else {
         this.logger.warn(
-          `Tournament ${id}: league changed ${previousLeagueId} -> ${saved.dotaLeagueId}, ` +
+          `Tournament ${id}: league changing ${previousLeagueId} -> ${payload.dotaLeagueId}, ` +
             'but the Dota league API is not configured — playoff mirror not moved',
         );
       }
     }
+
+    Object.assign(tournament, payload);
+    const saved = await this.tournamentsRepo.save(tournament);
 
     /**
      * Вікно подачі кваліфікаційних матчів тепер має власні колонки, тож

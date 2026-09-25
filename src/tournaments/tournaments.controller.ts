@@ -402,8 +402,9 @@ export class TournamentsController {
       'playoff previously created in the Dota 2 league named by the tournament (fixtures and the ' +
       'organisational shell), rebuilds the shell, registers the active playoff teams under it and ' +
       'creates one fixture per open bracket match. Finished matches are not recreated and pending ' +
-      'matches have no teams to bind yet. Safe to re-run: a failed run leaves no fixtures rather ' +
-      'than duplicates.',
+      'matches have no teams to bind yet. The new shell is created before anything is removed, so ' +
+      'a league the session cannot administer fails without touching the existing mirror. Safe to ' +
+      're-run: a failed run leaves an empty shell rather than duplicates.',
   })
   @ApiOkResponse({ type: RegenerateLeagueMatchesResultDto })
   @ApiNotFoundResponse({ description: 'The tournament has no playoff yet.' })

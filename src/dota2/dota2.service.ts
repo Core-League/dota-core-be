@@ -247,18 +247,98 @@ export class Dota2Service {
       elimination_dpc_points: '0',
     });
 
+    let data: unknown;
     try {
-      await firstValueFrom(
-        this.http.post(
+      ({ data } = await firstValueFrom(
+        this.http.post<unknown>(
           this.baseUrl(leagueId, 'post_addnodegroup'),
           body.toString(),
           { headers: this.commonHeaders(leagueId) },
         ),
-      );
+      ));
     } catch (err) {
       this.logger.error(`addNodeGroup failed (league ${leagueId})`, err);
       throw new InternalServerErrorException('Dota2 addNodeGroup failed');
     }
+    this.assertValveAccepted('addNodeGroup', leagueId, data);
+  }
+
+  /**
+   * Valve answers league admin POSTs with HTTP 200 whatever happened; a
+   * rejection (no admin rights on the league, unknown league, expired
+   * session) only shows as `success: false` in the JSON body. Surface it
+   * instead of letting the page scrape fail later with a vaguer message.
+   */
+  private assertValveAccepted(
+    op: string,
+    leagueId: number | string,
+    data: unknown,
+  ): void {
+    const body = typeof data === 'string' ? data : JSON.stringify(data);
+    this.logger.debug(
+      `${op} (league ${leagueId}) response: ${(body ?? '').slice(0, 300)}`,
+    );
+    const rejected =
+      data !== null &&
+      typeof data === 'object' &&
+      (data as { success?: unknown }).success === false;
+    if (rejected) {
+      this.logger.error(
+        `${op} rejected by Dota2 for league ${leagueId}: ${(body ?? '').slice(0, 300)}`,
+      );
+      throw new InternalServerErrorException(
+        `Dota 2 league ${leagueId} rejected ${op}. Check that the league exists ` +
+          'and that the DOTA_SESSION_ID account is one of its admins.',
+      );
+    }
+  }
+
+  /**
+   * Creates a top-level organisational node group (a "tournament" container
+   * on the league page) and returns its id.
+   *
+   * The create endpoint does not return the id, so the page is snapshotted
+   * before and after and the group that appeared is the one just created.
+   * Comparing snapshots, rather than taking the highest id on the page, means
+   * a silently ignored create is reported as such instead of handing back an
+   * older group — which on a league that already holds tournaments would
+   * quietly hijack a stranger's container.
+   */
+  async createOrganizationalNodeGroup(
+    leagueId: number,
+    name?: string,
+  ): Promise<string> {
+    const before = await this.listOrganizationalNodeGroups(leagueId);
+    await this.addNodeGroup(leagueId, {
+      nodeGroupId: '',
+      nodeGroupType: NODE_GROUP_TYPE.ORGANIZATIONAL,
+      teamCount: 0,
+      containingNodeGroupId: '0',
+      phase: 2,
+      defaultNodeType: 0,
+      name,
+    });
+    const after = await this.listOrganizationalNodeGroups(leagueId);
+
+    let created = -1;
+    for (const id of after.ids) {
+      if (!before.ids.has(id)) created = Math.max(created, id);
+    }
+    if (created < 0) {
+      this.logger.error(
+        `League ${leagueId}: no organisational node group appeared after post_addnodegroup ` +
+          `(page title "${after.title}", ${after.ids.size} organisational group(s) on the page)`,
+      );
+      throw new InternalServerErrorException(
+        `Dota 2 league ${leagueId}: the tournament node group was not created. ` +
+          'Check that the league exists and that the DOTA_SESSION_ID account is one of its admins.',
+      );
+    }
+
+    this.logger.log(
+      `League ${leagueId}: created organisational nodeGroupId=${created}`,
+    );
+    return String(created);
   }
 
   async addNodeGroupTeam(
@@ -392,7 +472,7 @@ export class Dota2Service {
    * `.TypeRoundRobin`, so class-based lookups miss silently.
    *
    * Organisational groups have no edit/delete controls and so are absent here —
-   * use {@link resolveOrganizationalNodeGroupId} for those.
+   * use {@link listOrganizationalNodeGroups} for those.
    */
   private parseNodeGroups(html: string): Map<number, DotaNodeGroup> {
     const $ = cheerio.load(html);
@@ -425,35 +505,26 @@ export class Dota2Service {
   }
 
   /**
-   * After calling addNodeGroup (nodeGroupType=1, organisational), fetch the
-   * tournament page and return the highest .TypeOrganizational.NodeGroup id —
-   * ids are handed out monotonically, so that is the group just created.
+   * Ids of every organisational (`.TypeOrganizational`) node group on the
+   * league tournament page, plus the page title — the title is the quickest
+   * hint whether the session landed on the admin page or on a login / "no
+   * access" page when the list comes back empty.
    */
-  async resolveOrganizationalNodeGroupId(leagueId: number): Promise<string> {
+  private async listOrganizationalNodeGroups(
+    leagueId: number,
+  ): Promise<{ ids: Set<number>; title: string }> {
     const html = await this.fetchTournamentPage(leagueId);
     const $ = cheerio.load(html);
 
-    let newest = -1;
+    const ids = new Set<number>();
     $('.TypeOrganizational.NodeGroup').each((_, el) => {
       const match = $(el)
         .attr('id')
         ?.match(/^NodeGroup(\d+)$/);
-      if (match) newest = Math.max(newest, parseInt(match[1], 10));
+      if (match) ids.add(parseInt(match[1], 10));
     });
 
-    if (newest < 0) {
-      this.logger.error(
-        'Could not find any .TypeOrganizational.NodeGroup on the Dota2 page',
-      );
-      throw new InternalServerErrorException(
-        'Could not resolve organisational NodeGroup id from Dota2 page',
-      );
-    }
-
-    this.logger.log(
-      `Resolved organisational nodeGroupId=${newest} from Dota2 page`,
-    );
-    return String(newest);
+    return { ids, title: $('title').text().trim() };
   }
 
   /**

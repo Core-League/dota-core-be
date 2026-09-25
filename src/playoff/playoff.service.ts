@@ -4,7 +4,6 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
@@ -1344,17 +1343,23 @@ export class PlayoffService {
    * no teams to bind. Series length per slot comes from the tournament's
    * finals settings, exactly as on a normal sync.
    *
-   * Ordering: old nodes are removed before new ones are created, so a failure
-   * mid-way leaves no fixtures rather than duplicates, and re-running the
-   * endpoint completes the job. Removal is best-effort: a node Valve refuses to
-   * delete is logged for manual cleanup and does not block the rebuild.
+   * Ordering: the new shell is created first, so an unreachable league (no
+   * admin rights, wrong id) fails before anything is destroyed and the old
+   * mirror stays intact. Only then are the old nodes removed and the fixtures
+   * created, so a failure mid-way leaves an empty shell rather than
+   * duplicates, and re-running the endpoint completes the job. Removal is
+   * best-effort: a node Valve refuses to delete is logged for manual cleanup
+   * and does not block the rebuild.
    *
-   * @param previousLeagueId — League the old nodes live in when the tournament
-   *   has just been moved to another league; defaults to the current one.
+   * @param opts.fromLeagueId — League the old nodes live in; defaults to the
+   *   tournament's current league.
+   * @param opts.toLeagueId — League to rebuild in; defaults to the tournament's
+   *   current league. `TournamentsService.update` passes the incoming league
+   *   here so the move is proven before the tournament row is saved.
    */
   async regenerateLeagueMatches(
     tournamentId: string,
-    previousLeagueId?: number,
+    opts: { fromLeagueId?: number; toLeagueId?: number } = {},
   ): Promise<RegenerateLeagueMatchesResultDto> {
     const playoff = await this.playoffRepo.findByTournamentId(tournamentId);
     if (!playoff) throw new NotFoundException('Плей-оф ще не створено');
@@ -1363,10 +1368,16 @@ export class PlayoffService {
         'Dota league API not configured (DOTA_SESSION_ID / DOTA_OAUTH_TOKEN)',
       );
     }
-    const leagueId = await this.loadDotaLeagueId(tournamentId);
+    const currentLeagueId = await this.loadDotaLeagueId(tournamentId);
+    const fromLeagueId = opts.fromLeagueId ?? currentLeagueId;
+    const leagueId = opts.toLeagueId ?? currentLeagueId;
 
-    // 1. Drop the previous mirror: Dota nodes first (best-effort), then our rows.
+    // 1. Prove the target league is usable: create the new shell before
+    //    touching anything. Fails loudly on a league we cannot administer.
     const handles = await this.teardown.captureExternalHandles(playoff);
+    const shell = await this.dota2.createOrganizationalNodeGroup(leagueId);
+
+    // 2. Drop the previous mirror: Dota nodes (best-effort), then our rows.
     const removedNodeGroupIds = [
       ...handles.fixtureNodeGroupIds,
       ...(handles.shellNodeGroupId ? [handles.shellNodeGroupId] : []),
@@ -1374,28 +1385,19 @@ export class PlayoffService {
     await this.teardown.releaseExternals({
       ...handles,
       challongeUrl: null,
-      dotaLeagueId: previousLeagueId ?? handles.dotaLeagueId,
+      dotaLeagueId: fromLeagueId,
     });
     const cleared = await this.discardPlayoffLeagueMirroring(playoff);
+    cleared.dotaPlayoffContainingNodeGroupId = shell;
+    const withShell = await this.playoffRepo.save(cleared);
 
-    // 2. Rebuild against the bracket as it stands now.
+    // 3. Rebuild against the bracket as it stands now: teams, then fixtures.
     const activeRows = await this.dataSource
       .getRepository(TournamentPlayoffTeam)
       .find({
         where: { tournamentId, isDisqualified: false },
         select: ['teamId'],
       });
-
-    const withShell = await this.ensureDotaOrganizationalShell(
-      cleared,
-      leagueId,
-    );
-    const shell = withShell.dotaPlayoffContainingNodeGroupId;
-    if (!shell) {
-      throw new InternalServerErrorException(
-        'Could not create the playoff node group in the Dota 2 league',
-      );
-    }
     await this.registerTeamsInPlayoffLeague(
       leagueId,
       shell,
@@ -2168,16 +2170,8 @@ export class PlayoffService {
     if (!this.dota2.isLeagueApiConfigured()) return playoff;
     if (playoff.dotaPlayoffContainingNodeGroupId) return playoff;
 
-    await this.dota2.addNodeGroup(leagueId, {
-      nodeGroupId: '',
-      nodeGroupType: 1,
-      teamCount: 0,
-      containingNodeGroupId: '0',
-      phase: 2,
-      defaultNodeType: 0,
-    });
-    const id = await this.dota2.resolveOrganizationalNodeGroupId(leagueId);
-    playoff.dotaPlayoffContainingNodeGroupId = id;
+    playoff.dotaPlayoffContainingNodeGroupId =
+      await this.dota2.createOrganizationalNodeGroup(leagueId);
     await this.playoffRepo.save(playoff);
     return playoff;
   }
