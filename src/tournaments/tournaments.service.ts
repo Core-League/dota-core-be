@@ -19,6 +19,7 @@ import {
   DEFAULT_TOURNAMENT_BRACKET_TYPE,
 } from './tournaments.model';
 import { PlayoffRepository } from '../playoff/playoff.repository';
+import { PlayoffService } from '../playoff/playoff.service';
 import {
   QUALIFICATION_WINDOW_KEYS,
   TTournamentSchedule,
@@ -36,6 +37,7 @@ export class TournamentsService {
     private readonly qualificationService: QualificationService,
     private readonly teamsService: TeamsService,
     private readonly playoffRepo: PlayoffRepository,
+    private readonly playoffService: PlayoffService,
   ) {}
 
   async create(dto: CreateTournamentDto): Promise<Tournament> {
@@ -170,22 +172,26 @@ export class TournamentsService {
     }
 
     /**
-     * Ліга Dota 2 зафіксована, щойно в ній створено хоч одну групу турніру:
-     * етап кваліфікації (рядок `Qualification`, створюється разом із турніром)
-     * або оболонку плей-оф (рядок `playoff`). Valve не дає перенести групи
-     * між лігами, тож зміна ліги лишила б їх осиротілими в старій лізі.
+     * Ліга Dota 2. Valve не дає перенести групи між лігами, тож:
+     * - доки триває кваліфікація (є рядок `Qualification`, плей-оф ще немає),
+     *   зміна заборонена — етап із матчами живе в поточній лізі;
+     * - коли плей-оф уже створено, зміна дозволена: дзеркало сітки
+     *   перебудовується в новій лізі одразу після збереження (див. нижче).
+     *   Група кваліфікації лишається в старій лізі як історія.
      */
+    const previousLeagueId = tournament.dotaLeagueId;
     const leagueChanged =
       payload.dotaLeagueId !== undefined &&
-      payload.dotaLeagueId !== tournament.dotaLeagueId;
-    if (leagueChanged) {
+      payload.dotaLeagueId !== previousLeagueId;
+    const hasPlayoff =
+      leagueChanged && (await this.playoffRepo.existsByTournamentId(id));
+    if (leagueChanged && !hasPlayoff) {
       const hasQualificationStage =
         await this.qualificationService.existsForTournament(id);
-      const hasPlayoff = await this.playoffRepo.existsByTournamentId(id);
-      if (hasQualificationStage || hasPlayoff) {
+      if (hasQualificationStage) {
         throw new BadRequestException(
-          'Лігу Dota 2 не можна змінити: у поточній лізі вже створено групи турніру ' +
-            '(етап кваліфікації або плей-оф).',
+          'Лігу Dota 2 не можна змінити, доки триває кваліфікація: її етап уже ' +
+            'створено в поточній лізі. Зміна стане доступною після старту плей-оф.',
         );
       }
     }
@@ -235,6 +241,26 @@ export class TournamentsService {
 
     Object.assign(tournament, payload);
     const saved = await this.tournamentsRepo.save(tournament);
+
+    /**
+     * Ліга змінена під час плей-оф: переносимо дзеркало сітки — прибираємо
+     * групи зі старої ліги й створюємо їх заново в новій. Ліга вже збережена,
+     * тож збій тут повертає помилку клієнту, але не відкочує зміну: повторний
+     * `POST /tournaments/:id/playoff/regenerate-matches` добудує дзеркало.
+     */
+    if (hasPlayoff) {
+      if (this.dota2.isLeagueApiConfigured()) {
+        this.logger.log(
+          `Tournament ${id}: league changed ${previousLeagueId} -> ${saved.dotaLeagueId}, moving playoff mirror`,
+        );
+        await this.playoffService.regenerateLeagueMatches(id, previousLeagueId);
+      } else {
+        this.logger.warn(
+          `Tournament ${id}: league changed ${previousLeagueId} -> ${saved.dotaLeagueId}, ` +
+            'but the Dota league API is not configured — playoff mirror not moved',
+        );
+      }
+    }
 
     /**
      * Вікно подачі кваліфікаційних матчів тепер має власні колонки, тож

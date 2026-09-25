@@ -1348,9 +1348,13 @@ export class PlayoffService {
    * mid-way leaves no fixtures rather than duplicates, and re-running the
    * endpoint completes the job. Removal is best-effort: a node Valve refuses to
    * delete is logged for manual cleanup and does not block the rebuild.
+   *
+   * @param previousLeagueId — League the old nodes live in when the tournament
+   *   has just been moved to another league; defaults to the current one.
    */
   async regenerateLeagueMatches(
     tournamentId: string,
+    previousLeagueId?: number,
   ): Promise<RegenerateLeagueMatchesResultDto> {
     const playoff = await this.playoffRepo.findByTournamentId(tournamentId);
     if (!playoff) throw new NotFoundException('Плей-оф ще не створено');
@@ -1367,7 +1371,11 @@ export class PlayoffService {
       ...handles.fixtureNodeGroupIds,
       ...(handles.shellNodeGroupId ? [handles.shellNodeGroupId] : []),
     ];
-    await this.teardown.releaseExternals({ ...handles, challongeUrl: null });
+    await this.teardown.releaseExternals({
+      ...handles,
+      challongeUrl: null,
+      dotaLeagueId: previousLeagueId ?? handles.dotaLeagueId,
+    });
     const cleared = await this.discardPlayoffLeagueMirroring(playoff);
 
     // 2. Rebuild against the bracket as it stands now.

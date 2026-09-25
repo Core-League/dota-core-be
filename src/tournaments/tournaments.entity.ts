@@ -46,9 +46,11 @@ export class Tournament {
    * Dota 2 league (`https://www.dota2.com/league/<id>`) that hosts this
    * tournament: the qualification stage, playoff shell and every fixture node
    * are created in it, and the tournament page scrape reads from it. Set by the
-   * admin on creation. `TournamentsService.update` locks it once a node group
-   * has been created in the league (a `Qualification` or `playoff` row exists),
-   * because Valve offers no way to move node groups between leagues.
+   * admin on creation. Valve offers no way to move node groups between
+   * leagues, so `TournamentsService.update` locks it while the qualification
+   * stage is live (a `Qualification` row exists and no `playoff` row yet). Once
+   * the playoff exists a change is allowed and the playoff mirror is rebuilt in
+   * the new league; the qualification group stays behind in the old one.
    */
   @Column({ type: 'int' })
   dotaLeagueId: number;
