@@ -63,9 +63,14 @@ export class PlayoffService {
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
+  /**
+   * `seedInGivenOrder`: seat the merged team list as seeds 1..N in order instead of
+   * ranking by qualification points (used by an admin restart with an explicit seeding).
+   */
   async startPlayoff(
     tournamentId: string,
     requestedTeamIds: string[] = [],
+    opts: { seedInGivenOrder?: boolean } = {},
   ): Promise<PlayoffResponseDto> {
     const tournament = await this.dataSource
       .getRepository(Tournament)
@@ -97,7 +102,9 @@ export class PlayoffService {
       );
     }
 
-    const seeds = await this.computeSeeds(tournamentId, playoffTeamIds);
+    const seeds = opts.seedInGivenOrder
+      ? playoffTeamIds.map((teamId, i) => ({ teamId, seed: i + 1 }))
+      : await this.computeSeeds(tournamentId, playoffTeamIds);
 
     const format = getBracketFormatStrategy(tournament);
     this.logger.log(
@@ -277,19 +284,40 @@ export class PlayoffService {
    * tournaments that have not reached `PLAYOFF` yet, so it can never race a restart, and a
    * crash mid-restart cannot trigger a surprise auto-start. When no playoff exists (e.g. a previous restart died mid-flight) this
    * behaves as a plain start, which makes a failed restart retryable rather than terminal.
+   *
+   * `seededTeamIds`: when non-empty, replaces the derived field — exactly these teams are seated,
+   * seeded 1..N in the given order. Each must be eligible for the tournament.
    */
-  async restartPlayoff(tournamentId: string): Promise<PlayoffResponseDto> {
+  async restartPlayoff(
+    tournamentId: string,
+    seededTeamIds: string[] = [],
+  ): Promise<PlayoffResponseDto> {
     const tournament = await this.dataSource
       .getRepository(Tournament)
       .findOne({ where: { id: tournamentId } });
     if (!tournament) throw new NotFoundException('Tournament not found');
 
-    const freshTeamIds = await this.deriveTopEligibleTeamIds(tournamentId);
+    const explicitSeeding = seededTeamIds.length > 0;
+    const freshTeamIds = explicitSeeding
+      ? [...new Set(seededTeamIds)]
+      : await this.deriveTopEligibleTeamIds(tournamentId);
     if (freshTeamIds.length < 2) {
       throw new BadRequestException(
         `Cannot restart playoff: only ${freshTeamIds.length} eligible team(s) in qualification ` +
           'standings, at least 2 required. Existing playoff left untouched.',
       );
+    }
+    if (explicitSeeding) {
+      const eligible = new Set(
+        await findEligibleQualificationTeamIds(this.dataSource, tournamentId),
+      );
+      const invalidIds = freshTeamIds.filter((id) => !eligible.has(id));
+      if (invalidIds.length) {
+        throw new BadRequestException(
+          `Teams must be registered for this tournament or present in its qualification bracket: ${invalidIds.join(', ')}. ` +
+            'Existing playoff left untouched.',
+        );
+      }
     }
 
     const existing = await this.playoffRepo.findByTournamentId(tournamentId);
@@ -299,7 +327,9 @@ export class PlayoffService {
 
     await this.teardown.wipePlayoffState(tournamentId);
 
-    const response = await this.startPlayoff(tournamentId, freshTeamIds);
+    const response = await this.startPlayoff(tournamentId, freshTeamIds, {
+      seedInGivenOrder: explicitSeeding,
+    });
 
     if (handles) await this.teardown.releaseExternals(handles);
 
