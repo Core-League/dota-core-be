@@ -27,7 +27,7 @@ type AuthedRequest = Request & { user: { playerId: string } };
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  // ── Discord ──────────────────────────────────────────────────────────────
+  // ── Discord ─────────────────────────────────────────────────────────────
 
   @Get('discord/url')
   @ApiOperation({
