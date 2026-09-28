@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
   ArrayUnique,
   IsArray,
   IsIn,
@@ -112,4 +113,19 @@ export class CreatePlayerDto {
   @ArrayUnique()
   @IsIn(TOURNAMENT_FORMATS, { each: true })
   wantToPlay?: TournamentFormat[] | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Ukrainian cities (names from GET /locations/cities?countryCode=UA) the player can travel to for LAN tournaments; ignored unless wantToPlay includes LAN',
+    type: [String],
+    nullable: true,
+    example: ['Київ', 'Львів'],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(120, { each: true })
+  lanCities?: string[] | null;
 }

@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Player } from './player.entity';
+import { Player, TournamentFormat } from './player.entity';
 import { toPlayerRankDto } from './dto/player-rank.dto';
 import { PlayerResponseDto } from './dto/player-response.dto';
 import { getRoleColorByName } from '../user-roles/role.constants';
@@ -35,6 +35,7 @@ export class PlayersService {
       countryCode: player.countryCode ?? null,
       city: player.city ?? null,
       wantToPlay: player.wantToPlay ?? null,
+      lanCities: player.lanCities ?? null,
       verifiedAt: player.verifiedAt ?? null,
       teamId: player.teamId ?? null,
       roles: (player.roles ?? []).map((r) => ({
@@ -100,6 +101,7 @@ export class PlayersService {
     if (safePayload['steamId'] === '') safePayload['steamId'] = null;
     if (safePayload['discordId'] === '') safePayload['discordId'] = null;
     await this.applyLocation(player, safePayload);
+    await this.applyLanCities(player, safePayload);
     Object.assign(player, safePayload);
     await this.playersRepo.save(player);
     const refreshed = await this.playersRepo.findOneById(id);
@@ -152,6 +154,59 @@ export class PlayersService {
       nextCity = null;
     }
     payload['city'] = nextCity;
+  }
+
+  /**
+   * LAN cities: every name must exist in the bundled Ukrainian catalog, and the
+   * list only makes sense while the player wants LAN tournaments — dropping LAN
+   * from `wantToPlay` clears it.
+   */
+  private async applyLanCities(
+    player: Player,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const hasCities = 'lanCities' in payload;
+    const hasFormats = 'wantToPlay' in payload;
+    if (!hasCities && !hasFormats) return;
+
+    const formats = (hasFormats ? payload['wantToPlay'] : player.wantToPlay) as
+      | TournamentFormat[]
+      | null
+      | undefined;
+    const wantsLan =
+      Array.isArray(formats) && formats.includes(TournamentFormat.LAN);
+
+    if (!wantsLan) {
+      payload['lanCities'] = null;
+      return;
+    }
+    if (!hasCities) return;
+
+    const raw = payload['lanCities'];
+    if (raw == null) {
+      payload['lanCities'] = null;
+      return;
+    }
+    const names = [
+      ...new Set(
+        (raw as unknown[])
+          .map((n) => (typeof n === 'string' ? n.trim() : ''))
+          .filter(Boolean),
+      ),
+    ];
+    if (!names.length) {
+      payload['lanCities'] = null;
+      return;
+    }
+
+    const catalog = new Set(await this.locationsService.getCities('UA'));
+    const unknown = names.filter((n) => !catalog.has(n));
+    if (unknown.length) {
+      throw new BadRequestException(
+        `Невідомі міста для LAN-турнірів: ${unknown.join(', ')}`,
+      );
+    }
+    payload['lanCities'] = names;
   }
 
   async remove(id: string): Promise<void> {

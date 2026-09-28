@@ -84,6 +84,15 @@ export class CurrentPlayerDto {
   })
   wantToPlay: TournamentFormat[] | null;
 
+  @ApiPropertyOptional({
+    description:
+      'Ukrainian cities the player can travel to for LAN tournaments',
+    type: [String],
+    nullable: true,
+    example: ['Київ', 'Львів'],
+  })
+  lanCities: string[] | null;
+
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   verifiedAt: Date | null;
 

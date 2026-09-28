@@ -59,6 +59,13 @@ export class Player {
   @Column({ type: 'varchar', array: true, nullable: true })
   wantToPlay: TournamentFormat[] | null;
 
+  /**
+   * Ukrainian cities the player can travel to for LAN tournaments (names from
+   * the bundled UA catalog). Only meaningful with `wantToPlay` ∋ LAN; null when unset.
+   */
+  @Column({ type: 'varchar', array: true, nullable: true })
+  lanCities: string[] | null;
+
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;
 
