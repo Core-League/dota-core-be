@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChallongeModule } from '../challonge/challonge.module';
 import { Dota2Module } from '../dota2/dota2.module';
 import { DueloModule } from '../duelo/duelo.module';
+import { MatchParticipantsModule } from '../match-participants/match-participants.module';
 import { TeamsModule } from '../teams/teams.module';
 import { PlayoffMatch } from './playoff-match.entity';
 import { PlayoffMatchRepository } from './playoff-match.repository';
@@ -26,6 +27,7 @@ import { PlayoffTeardownService } from './playoff-teardown.service';
     Dota2Module,
     DueloModule,
     TeamsModule,
+    MatchParticipantsModule,
   ],
   providers: [
     PlayoffService,

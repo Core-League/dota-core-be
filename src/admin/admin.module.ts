@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { DiscordBotModule } from '../discord/discord-bot.module';
 import { DueloModule } from '../duelo/duelo.module';
 import { Dota2Module } from '../dota2/dota2.module';
+import { MatchParticipantsModule } from '../match-participants/match-participants.module';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
@@ -17,6 +18,7 @@ import { AdminService } from './admin.service';
     DiscordBotModule,
     DueloModule,
     Dota2Module,
+    MatchParticipantsModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

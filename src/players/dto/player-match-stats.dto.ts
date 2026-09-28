@@ -13,9 +13,9 @@ export class PlayerMatchStageStatsDto {
 
 /**
  * Per-player record across this platform's tournaments (qualification +
- * playoff maps). A player is credited with a map when they are on the main
- * roster (or captain) of either team; tech losses and unfinished maps are
- * excluded.
+ * playoff maps). A player is credited with a map when the Dota match data
+ * lists them (`match_participant`); maps without participant data fall back
+ * to the current main roster / captain. Unfinished maps are excluded.
  */
 export class PlayerMatchStatsDto {
   @ApiProperty({ description: 'Maps played across all tournaments' })

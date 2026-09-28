@@ -11,6 +11,8 @@ import { firstValueFrom } from 'rxjs';
 
 export interface StratzMatchPlayer {
   steamAccountId: number;
+  isRadiant?: boolean;
+  heroId?: number;
   kills: number;
   deaths: number;
   assists: number;
@@ -963,6 +965,8 @@ export class Dota2Service {
         direTeam { id name tag }
         players {
           steamAccountId
+          isRadiant
+          heroId
           kills
           deaths
           assists
@@ -1029,11 +1033,12 @@ export class Dota2Service {
       dire_team: s.direTeam
         ? { team_id: s.direTeam.id, name: s.direTeam.name, tag: s.direTeam.tag }
         : undefined,
+      // Side / hero matter to match participants; the rest is not used downstream.
       players: (s.players ?? []).map((p) => ({
         match_id: s.id,
-        player_slot: 0,
+        player_slot: p.isRadiant === false ? 128 : 0,
         account_id: p.steamAccountId,
-        hero_id: 0,
+        hero_id: p.heroId ?? 0,
         kills: p.kills,
         deaths: p.deaths,
         assists: p.assists,
@@ -1045,7 +1050,7 @@ export class Dota2Service {
         tower_damage: p.towerDamage,
         hero_healing: p.heroHealing,
         level: 0,
-        isRadiant: false,
+        isRadiant: p.isRadiant !== false,
         win: 0,
         lose: 0,
         personaname: null,

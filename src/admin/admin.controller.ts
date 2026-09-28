@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -18,6 +19,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -36,6 +38,8 @@ import { SetPlayerRoleDto } from './dto/set-player-role.dto';
 import { AdminSetPlayerRolesDto } from './dto/admin-set-player-roles.dto';
 import { AdminPlayerRolesResultDto } from './dto/admin-player-roles-result.dto';
 import { OverrideMatchResultDto } from './dto/override-match-result.dto';
+import { MatchParticipantsService } from '../match-participants/match-participants.service';
+import { BackfillMatchParticipantsReportDto } from '../match-participants/dto/backfill-match-participants.dto';
 
 type AuthedRequest = Request & { user: { playerId: string } };
 
@@ -48,7 +52,32 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly dueloService: DueloService,
     private readonly dota2: Dota2Service,
+    private readonly matchParticipants: MatchParticipantsService,
   ) {}
+
+  @Post('match-participants/backfill')
+  @ApiOperation({
+    summary: 'Backfill who played each recorded map from OpenDota',
+    description:
+      'Idempotent and resumable. Walks finished qualification / playoff maps that have no participant ' +
+      'rows yet, oldest Dota match first, at ~1 request/s to respect the OpenDota limit. Repeat with the ' +
+      'returned lastDotaMatchId as afterDotaMatchId until remaining is 0. Failures are listed and skipped, ' +
+      'so one unparsed match cannot block the rest. Feeds GET /players/:id/match-stats.',
+  })
+  @ApiQuery({ name: 'limit', required: false, description: '1–40, default 20' })
+  @ApiQuery({ name: 'afterDotaMatchId', required: false })
+  @ApiOkResponse({ type: BackfillMatchParticipantsReportDto })
+  backfillMatchParticipants(
+    @Query('limit') limit?: string,
+    @Query('afterDotaMatchId') afterDotaMatchId?: string,
+  ): Promise<BackfillMatchParticipantsReportDto> {
+    const parsed = Number(limit);
+    return this.matchParticipants.backfill({
+      limit: Number.isFinite(parsed) && parsed > 0 ? parsed : undefined,
+      afterDotaMatchId: afterDotaMatchId ?? null,
+    });
+  }
+
   @Get('dota/leagues/:leagueId/access')
   @ApiOperation({
     summary: 'Diagnose the Dota 2 session against a league (read-only)',

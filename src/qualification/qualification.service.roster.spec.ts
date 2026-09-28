@@ -18,6 +18,7 @@ describe('QualificationService.validateRoster', () => {
     null as never,
     null as never,
     null as never,
+    null as never,
   ) as unknown as RosterSurface;
 
   const player = (rating: number, verified = true): Player =>

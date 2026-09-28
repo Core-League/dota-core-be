@@ -13,6 +13,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, IsNull } from 'typeorm';
 import { Dota2Service, OpenDotaMatch } from '../dota2/dota2.service';
 import { DueloService } from '../duelo/duelo.service';
+import { MatchParticipantsService } from '../match-participants/match-participants.service';
 import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
@@ -51,6 +52,7 @@ export class QualificationService {
     private readonly dota2: Dota2Service,
     private readonly duelo: DueloService,
     @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly matchParticipants: MatchParticipantsService,
   ) {}
 
   async getByTournamentId(
@@ -675,6 +677,20 @@ export class QualificationService {
       );
       await this.awardPoints(manager, loserMainPlayers ?? [], tournamentId, 40);
     });
+
+    // Who really played (player stats). Never fails the submission.
+    await this.matchParticipants.recordFromDota(
+      {
+        stage: 'qualification',
+        matchId: qualMatch.id,
+        tournamentId,
+        dotaMatchId,
+        teamAId: qualMatch.teamA.id,
+        teamBId: qualMatch.teamB.id,
+        winnerId: winner.id,
+      },
+      matchData,
+    );
 
     void this.duelo.sendMatchResult(matchData, 'qualification');
 

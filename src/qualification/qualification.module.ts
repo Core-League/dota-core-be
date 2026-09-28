@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Dota2Module } from '../dota2/dota2.module';
 import { DueloModule } from '../duelo/duelo.module';
+import { MatchParticipantsModule } from '../match-participants/match-participants.module';
 import { Team } from '../teams/team.entity';
 import { Tournament } from '../tournaments/tournaments.entity';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
@@ -22,6 +23,7 @@ import { QualificationService } from './qualification.service';
     ]),
     Dota2Module,
     DueloModule,
+    MatchParticipantsModule,
   ],
   providers: [
     QualificationService,

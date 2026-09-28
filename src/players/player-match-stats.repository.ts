@@ -12,30 +12,25 @@ export interface PlayerMatchRow {
 }
 
 /**
- * Read-side aggregation of a player's tournament maps. Membership is the
- * team's current main roster / captain (same rule as tournament points), so a
- * player who left a team keeps its history while they are on it and loses it
- * after. Reserves are not credited: the roster check on submission lets them
- * play, but nothing records whether they did.
+ * Read-side aggregation of a player's tournament maps.
+ *
+ * Primary source: `match_participant` — who really played, from the Dota match
+ * data (submission hook + admin backfill). Outcome is taken from the live
+ * match winner so admin overrides are reflected without rewriting rows.
+ *
+ * Fallback, only for maps that have no participant rows at all (not yet
+ * backfilled, manual entries without Dota data): the team's current main
+ * roster / captain, as tournament points do. Tech losses are forfeits and
+ * are never credited through the fallback.
  */
 @Injectable()
 export class PlayerMatchStatsRepository {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
-  /**
-   * Every finished qualification / playoff map involving one of the player's
-   * teams. Tech losses (`tech_loss_*`) are forfeits, not played maps, and are
-   * left out. Maps without a winner are still open.
-   */
   findPlayedMaps(playerId: string): Promise<PlayerMatchRow[]> {
     return this.dataSource.query(
       `
-      WITH member AS (
-        SELECT "teamId" FROM team_main_players WHERE "playerId" = $1
-        UNION
-        SELECT id AS "teamId" FROM team WHERE "captainId" = $1
-      ),
-      maps AS (
+      WITH maps AS (
         SELECT qm.id,
                'qualification'::text AS stage,
                q."tournamentId",
@@ -57,16 +52,38 @@ export class PlayerMatchStatsRepository {
         FROM playoff_match pm
         JOIN playoff p ON p.id = pm."playoffId"
         WHERE pm."winnerId" IS NOT NULL
+      ),
+      member AS (
+        SELECT "teamId" FROM team_main_players WHERE "playerId" = $1
+        UNION
+        SELECT id AS "teamId" FROM team WHERE "captainId" = $1
       )
-      SELECT DISTINCT ON (m.id)
-             m.id            AS "matchId",
-             m.stage         AS "stage",
+      SELECT m.id             AS "matchId",
+             m.stage          AS "stage",
              m."tournamentId" AS "tournamentId",
-             (m."winnerId" = mem."teamId") AS "won"
-      FROM maps m
-      JOIN member mem ON mem."teamId" IN (m."teamAId", m."teamBId")
-      WHERE m."dotaMatchId" IS NULL OR m."dotaMatchId" NOT LIKE 'tech\\_loss\\_%'
-      ORDER BY m.id
+             CASE
+               WHEN mp."teamId" IS NOT NULL THEN mp."teamId" = m."winnerId"
+               ELSE mp.won
+             END              AS "won"
+      FROM match_participant mp
+      JOIN maps m ON m.id = mp."matchId" AND m.stage = mp.stage
+      WHERE mp."playerId" = $1
+      UNION ALL
+      (
+        SELECT DISTINCT ON (m.id)
+               m.id             AS "matchId",
+               m.stage          AS "stage",
+               m."tournamentId" AS "tournamentId",
+               (m."winnerId" = mem."teamId") AS "won"
+        FROM maps m
+        JOIN member mem ON mem."teamId" IN (m."teamAId", m."teamBId")
+        WHERE NOT EXISTS (
+          SELECT 1 FROM match_participant x
+          WHERE x.stage = m.stage AND x."matchId" = m.id
+        )
+          AND (m."dotaMatchId" IS NULL OR m."dotaMatchId" NOT LIKE 'tech\\_loss\\_%')
+        ORDER BY m.id
+      )
       `,
       [playerId],
     );

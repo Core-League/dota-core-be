@@ -13,6 +13,7 @@ import { DataSource, In } from 'typeorm';
 import { ChallongeService } from '../challonge/challonge.service';
 import { Dota2Service } from '../dota2/dota2.service';
 import { DueloService } from '../duelo/duelo.service';
+import { MatchParticipantsService } from '../match-participants/match-participants.service';
 import { Team } from '../teams/team.entity';
 import { TeamsService } from '../teams/teams.service';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
@@ -65,6 +66,7 @@ export class PlayoffService {
     private readonly duelo: DueloService,
     private readonly teamsService: TeamsService,
     @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly matchParticipants: MatchParticipantsService,
   ) {}
 
   /**
@@ -403,6 +405,20 @@ export class PlayoffService {
       loserTeamId: loserRow.teamId,
       dotaMatchId,
     });
+
+    // Who really played (player stats). Never fails the submission.
+    await this.matchParticipants.recordFromDota(
+      {
+        stage: 'playoff',
+        matchId: saved.id,
+        tournamentId,
+        dotaMatchId,
+        teamAId: saved.teamAId ?? winnerRow.teamId,
+        teamBId: saved.teamBId ?? loserRow.teamId,
+        winnerId: saved.winnerId ?? winnerRow.teamId,
+      },
+      matchData,
+    );
 
     void this.duelo.sendMatchResult(matchData, 'playoff');
 
