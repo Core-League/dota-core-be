@@ -5,6 +5,15 @@
   "entryFile": "entry-points/http/api-v1/main",
   "compilerOptions": {
     "deleteOutDir": true,
-    "plugins": ["@nestjs/swagger"]
+    "plugins": [
+      "@nestjs/swagger"
+    ],
+    "assets": [
+      {
+        "include": "locations/data/**/*.json",
+        "outDir": "dist"
+      }
+    ],
+    "watchAssets": true
   }
 }
