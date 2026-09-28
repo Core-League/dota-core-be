@@ -43,7 +43,10 @@ export class SocialChannelStatDto {
 }
 
 export class AnalyticsTotalsDto {
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'Players with a rating above 0. Accounts that never set their MMR are excluded from every player-based number.',
+  })
   players: number;
 
   @ApiProperty({ description: 'Players with `verifiedAt` set.' })

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, MoreThan, Repository } from 'typeorm';
 import { Player, TournamentFormat } from '../players/player.entity';
 import {
   UK_NAMES,
@@ -85,9 +85,14 @@ export class AnalyticsService {
 
   // ─── Loaders ───────────────────────────────────────────────────────────────
 
+  /**
+   * Players with a rating of 0 never set their MMR (fresh accounts), so they are
+   * left out of every player-based number: totals, ranks, wantToPlay and cities.
+   */
   private loadPlayers(): Promise<PlayerSlice[]> {
     return this.dataSource.getRepository(Player).find({
       select: ['id', 'rating', 'city', 'wantToPlay', 'verifiedAt'],
+      where: { rating: MoreThan(0) },
     });
   }
 
