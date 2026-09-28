@@ -10,6 +10,14 @@ import { toPlayerRankDto } from './dto/player-rank.dto';
 import { PlayerResponseDto } from './dto/player-response.dto';
 import { getRoleColorByName } from '../user-roles/role.constants';
 import { PlayersRepository } from './players.repository';
+import {
+  PlayerMatchStatsRepository,
+  type PlayerMatchRow,
+} from './player-match-stats.repository';
+import {
+  PlayerMatchStageStatsDto,
+  PlayerMatchStatsDto,
+} from './dto/player-match-stats.dto';
 import { TeamsService } from '../teams/teams.service';
 import { LocationsService } from '../locations/locations.service';
 import {
@@ -26,6 +34,7 @@ export class PlayersService {
 
   constructor(
     private readonly playersRepo: PlayersRepository,
+    private readonly matchStatsRepo: PlayerMatchStatsRepository,
     private readonly teamsService: TeamsService,
     private readonly locationsService: LocationsService,
     private readonly discord: DiscordBotService,
@@ -74,6 +83,37 @@ export class PlayersService {
       throw new NotFoundException('Гравця не знайдено');
     }
     return this.toResponse(player);
+  }
+
+  /** Record across this platform's tournaments; see PlayerMatchStatsRepository for the crediting rule. */
+  async getMatchStats(id: string): Promise<PlayerMatchStatsDto> {
+    const player = await this.playersRepo.findOneById(id);
+    if (!player) {
+      throw new NotFoundException('Гравця не знайдено');
+    }
+
+    const rows = await this.matchStatsRepo.findPlayedMaps(id);
+
+    const stage = (name: PlayerMatchRow['stage']): PlayerMatchStageStatsDto => {
+      const subset = rows.filter((r) => r.stage === name);
+      const wins = subset.filter((r) => r.won).length;
+      return { total: subset.length, wins, losses: subset.length - wins };
+    };
+
+    const qualification = stage('qualification');
+    const playoff = stage('playoff');
+    const total = qualification.total + playoff.total;
+    const wins = qualification.wins + playoff.wins;
+
+    return {
+      total,
+      wins,
+      losses: total - wins,
+      winrate: total > 0 ? Math.round((wins * 100) / total) : null,
+      tournaments: new Set(rows.map((r) => r.tournamentId)).size,
+      qualification,
+      playoff,
+    };
   }
 
   async update(

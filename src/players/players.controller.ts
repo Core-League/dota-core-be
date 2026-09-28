@@ -27,6 +27,7 @@ import {
   type RequestWithJwtActor,
 } from '../auth/guards/own-player-or-admin.guard';
 import { PlayerResponseDto } from './dto/player-response.dto';
+import { PlayerMatchStatsDto } from './dto/player-match-stats.dto';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
@@ -60,6 +61,15 @@ export class PlayersController {
   @ApiOkResponse({ type: PlayerResponseDto })
   findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.playersService.findOne(id);
+  }
+
+  /** Maps played / won / lost across the platform's tournaments (public, like the profile). */
+  @Get(':id/match-stats')
+  @ApiOkResponse({ type: PlayerMatchStatsDto })
+  getMatchStats(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<PlayerMatchStatsDto> {
+    return this.playersService.getMatchStats(id);
   }
 
   @Patch(':id')
