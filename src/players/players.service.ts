@@ -13,9 +13,12 @@ import { PlayersRepository } from './players.repository';
 import { TeamsService } from '../teams/teams.service';
 import { LocationsService } from '../locations/locations.service';
 import {
+  CityRoleSyncReport,
   DiscordBotService,
-  LanRoleSyncReport,
 } from '../discord/discord-bot.service';
+
+/** LAN events happen in Ukraine: city roles and `lanCities` validation use its catalog. */
+const LAN_COUNTRY_CODE = 'UA';
 
 @Injectable()
 export class PlayersService {
@@ -110,11 +113,15 @@ export class PlayersService {
     if (safePayload['discordId'] === '') safePayload['discordId'] = null;
     await this.applyLocation(player, safePayload);
     await this.applyLanCities(player, safePayload);
-    const prevLanCities = player.lanCities ?? [];
+    const prevCityRoles = PlayersService.cityRoleNames(player);
     Object.assign(player, safePayload);
     await this.playersRepo.save(player);
-    if ('lanCities' in safePayload) {
-      this.syncLanCityRoles(player, prevLanCities);
+    if (
+      'lanCities' in safePayload ||
+      'city' in safePayload ||
+      'countryCode' in safePayload
+    ) {
+      this.syncCityRoles(player, prevCityRoles);
     }
     const refreshed = await this.playersRepo.findOneById(id);
     if (!refreshed) {
@@ -169,35 +176,55 @@ export class PlayersService {
   }
 
   /**
-   * Discord mirror of `lanCities` (one yellow role per city). Fire-and-forget:
-   * the save must not wait on Discord rate limits, and the bot service already
-   * logs and swallows its own failures.
+   * Cities that become Discord roles for a player: the LAN cities plus the home
+   * city from the location block when the player lives in Ukraine (the roles
+   * exist for Ukrainian LAN events, so a foreign home city is left out).
    */
-  private syncLanCityRoles(player: Player, prevLanCities: string[]): void {
+  static cityRoleNames(player: Player): string[] {
+    const names = new Set<string>();
+    for (const c of player.lanCities ?? []) {
+      const name = c.trim();
+      if (name) names.add(name);
+    }
+    const home = (player.city ?? '').trim();
+    if (home && player.countryCode === LAN_COUNTRY_CODE) names.add(home);
+    return [...names];
+  }
+
+  /**
+   * Discord mirror of {@link cityRoleNames} (one yellow role per city).
+   * Fire-and-forget: the save must not wait on Discord rate limits, and the bot
+   * service already logs and swallows its own failures.
+   */
+  private syncCityRoles(player: Player, prevCityRoles: string[]): void {
     if (!player.discordId) return;
     void this.discord
-      .syncLanCityRoles(player.discordId, player.lanCities ?? [], prevLanCities)
+      .syncCityRoles(
+        player.discordId,
+        PlayersService.cityRoleNames(player),
+        prevCityRoles,
+      )
       .catch((err: unknown) =>
         this.logger.warn(
-          `LAN city role sync failed for player ${player.id}`,
+          `City role sync failed for player ${player.id}`,
           err instanceof Error ? err.message : err,
         ),
       );
   }
 
   /**
-   * Re-applies every saved LAN city as a Discord role and reports what happened.
+   * Re-applies every city role (home + LAN) and reports what happened.
    * Idempotent (assigning a role the member already has is a no-op for Discord);
    * meant for the player to self-heal and for diagnosing bot permissions.
    */
-  async resyncLanCityRoles(playerId: string): Promise<LanRoleSyncReport> {
+  async resyncCityRoles(playerId: string): Promise<CityRoleSyncReport> {
     const player = await this.playersRepo.findOneById(playerId);
     if (!player) {
       throw new NotFoundException('Гравця не знайдено');
     }
-    return this.discord.syncLanCityRoles(
+    return this.discord.syncCityRoles(
       player.discordId ?? '',
-      player.lanCities ?? [],
+      PlayersService.cityRoleNames(player),
       [],
     );
   }
@@ -245,7 +272,9 @@ export class PlayersService {
       return;
     }
 
-    const catalog = new Set(await this.locationsService.getCities('UA'));
+    const catalog = new Set(
+      await this.locationsService.getCities(LAN_COUNTRY_CODE),
+    );
     const unknown = names.filter((n) => !catalog.has(n));
     if (unknown.length) {
       throw new BadRequestException(

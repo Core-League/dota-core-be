@@ -84,17 +84,18 @@ export class PlayersController {
   }
 
   /**
-   * Re-applies the caller's LAN cities as Discord roles and returns what Discord
-   * answered — the way to see why a role did not appear after saving the profile.
+   * Re-applies the caller's city roles (home city + LAN cities) in Discord and
+   * returns what Discord answered — the way to see why a role did not appear
+   * after saving the profile.
    */
   @Post('me/lan-roles/sync')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({ type: LanRoleSyncReportDto })
-  resyncLanRoles(
+  resyncCityRoles(
     @Req() req: RequestWithJwtActor,
   ): Promise<LanRoleSyncReportDto> {
-    return this.playersService.resyncLanCityRoles(req.user!.playerId);
+    return this.playersService.resyncCityRoles(req.user!.playerId);
   }
 
   @Post('me/avatar')

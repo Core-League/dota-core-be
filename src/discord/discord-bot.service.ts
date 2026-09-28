@@ -1,5 +1,5 @@
 import { HttpService } from '@nestjs/axios';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { AxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
 
@@ -53,8 +53,8 @@ interface GuildRole {
   color: number;
 }
 
-/** Outcome of one LAN-city role sync — surfaced by POST /players/me/lan-roles/sync. */
-export interface LanRoleSyncReport {
+/** Outcome of one city-role sync — surfaced by POST /players/me/lan-roles/sync. */
+export interface CityRoleSyncReport {
   /** False when DISCORD_BOT_TOKEN / DISCORD_SYNC_GUILD_ID are missing. */
   configured: boolean;
   /** Roles created in the guild during this run (by city name). */
@@ -68,7 +68,7 @@ export interface LanRoleSyncReport {
 }
 
 @Injectable()
-export class DiscordBotService {
+export class DiscordBotService implements OnModuleInit {
   private readonly logger = new Logger(DiscordBotService.name);
 
   /** name → role id, filled from the guild role list; refreshed on a miss. */
@@ -90,6 +90,53 @@ export class DiscordBotService {
 
   private ready(): boolean {
     return !!(this.token && this.guildId);
+  }
+
+  /**
+   * Boot-time sanity check: one `GET /users/@me` with the bot token, logged at
+   * `log` (accepted) or `error` (rejected). A bad DISCORD_BOT_TOKEN used to
+   * surface only as a `warn` on the first role write, easy to miss.
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.ready()) {
+      this.logger.warn(
+        'Discord bot disabled: DISCORD_BOT_TOKEN or DISCORD_SYNC_GUILD_ID is not set',
+      );
+      return;
+    }
+    try {
+      const res = await firstValueFrom(
+        this.http.get<{ id: string; username: string }>(
+          'https://discord.com/api/v10/users/@me',
+          { headers: this.headers },
+        ),
+      );
+      this.logger.log(
+        `Discord bot token accepted (bot user ${res.data.username}, guild ${this.guildId})`,
+      );
+    } catch (e) {
+      this.logger.error(
+        `Discord bot token rejected: ${this.errMsg(e)}. ${this.tokenShapeHint()}`,
+      );
+    }
+  }
+
+  /**
+   * Describes the token's *shape* without revealing it: length plus whether it
+   * carries a `Bot ` prefix or surrounding quotes — the two most common paste
+   * mistakes when the secret is entered in the GitHub Environment.
+   */
+  private tokenShapeHint(): string {
+    const raw = this.token ?? '';
+    const issues: string[] = [];
+    if (/^Bot\s/i.test(raw))
+      issues.push('has a "Bot " prefix (the code adds it)');
+    if (/^["']|["']$/.test(raw)) issues.push('is wrapped in quotes');
+    if (/\s/.test(raw)) issues.push('contains whitespace');
+    if (raw.length < 50) issues.push('is shorter than a bot token (~70 chars)');
+    return issues.length
+      ? `Token ${issues.join(', ')} — length ${raw.length}.`
+      : `Token length ${raw.length} looks normal; it was likely reset in the Developer Portal or is not this application's bot token.`;
   }
 
   /** Creates a Discord role for the team. Returns the role ID or null on failure. */
@@ -225,17 +272,17 @@ export class DiscordBotService {
   }
 
   /**
-   * Mirrors a player's LAN cities onto guild roles named after the city
-   * (Ukrainian name, yellow). Every current city gets its role (created on
-   * first use); cities dropped since `prevCities` lose it. Roles themselves are
-   * never deleted — other players may still hold them.
+   * Mirrors a player's cities (home city + LAN cities) onto guild roles named
+   * after the city (Ukrainian name, yellow). Every current city gets its role
+   * (created on first use); cities dropped since `prevCities` lose it. Roles
+   * themselves are never deleted — other players may still hold them.
    */
-  async syncLanCityRoles(
+  async syncCityRoles(
     discordId: string,
     nextCities: readonly string[],
     prevCities: readonly string[],
-  ): Promise<LanRoleSyncReport> {
-    const report: LanRoleSyncReport = {
+  ): Promise<CityRoleSyncReport> {
+    const report: CityRoleSyncReport = {
       configured: this.ready(),
       created: [],
       assigned: [],
@@ -261,6 +308,12 @@ export class DiscordBotService {
     const roles = await this.listGuildRoles();
     if (!roles.length && this.lastError) {
       report.errors.push(`list roles: ${this.lastError}`);
+      if (this.lastError.startsWith('HTTP 401')) {
+        report.errors.push(
+          `DISCORD_BOT_TOKEN is rejected by Discord. ${this.tokenShapeHint()}`,
+        );
+        return report;
+      }
     }
 
     // Every current city is (re)assigned, not only the newly added ones: PUT on
@@ -320,7 +373,7 @@ export class DiscordBotService {
 
     if (report.errors.length) {
       this.logger.warn(
-        `LAN city roles for ${discordId}: ${report.errors.join('; ')}`,
+        `City roles for ${discordId}: ${report.errors.join('; ')}`,
       );
     }
     return report;
