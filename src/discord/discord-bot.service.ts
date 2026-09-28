@@ -65,6 +65,8 @@ export interface CityRoleSyncReport {
   removed: string[];
   /** Human-readable failures, e.g. `assign "Львів": HTTP 403 Missing Permissions (50013)`. */
   errors: string[];
+  /** Duplicate city roles (same name, our colour) deleted during this run, keeping the oldest. */
+  deletedDuplicates: string[];
 }
 
 @Injectable()
@@ -73,6 +75,19 @@ export class DiscordBotService implements OnModuleInit {
 
   /** name → role id, filled from the guild role list; refreshed on a miss. */
   private readonly roleIdByName = new Map<string, string>();
+
+  /**
+   * One sync at a time per member. A profile save triggers the server-side
+   * sync and, right after, the client's report call; without this both list
+   * the roles before either has created the new one — and each creates it.
+   */
+  private readonly memberSyncTail = new Map<string, Promise<unknown>>();
+
+  /** Concurrent creates of the same role name (two players, same new city) share one request. */
+  private readonly roleCreateInFlight = new Map<
+    string,
+    Promise<string | null>
+  >();
 
   constructor(private readonly http: HttpService) {}
 
@@ -228,7 +243,13 @@ export class DiscordBotService implements OnModuleInit {
       );
       const roles = Array.isArray(res.data) ? res.data : [];
       this.roleIdByName.clear();
-      for (const r of roles) this.roleIdByName.set(r.name, r.id);
+      for (const r of roles) {
+        // Duplicate names: keep the oldest role (smallest snowflake) as canonical.
+        const known = this.roleIdByName.get(r.name);
+        if (!known || BigInt(r.id) < BigInt(known)) {
+          this.roleIdByName.set(r.name, r.id);
+        }
+      }
       return roles;
     } catch (e) {
       this.lastError = this.errMsg(e);
@@ -282,12 +303,34 @@ export class DiscordBotService implements OnModuleInit {
     nextCities: readonly string[],
     prevCities: readonly string[],
   ): Promise<CityRoleSyncReport> {
+    const previous = this.memberSyncTail.get(discordId) ?? Promise.resolve();
+    const run = previous
+      .catch(() => undefined)
+      .then(() =>
+        this.syncCityRolesExclusive(discordId, nextCities, prevCities),
+      );
+    this.memberSyncTail.set(discordId, run);
+    try {
+      return await run;
+    } finally {
+      if (this.memberSyncTail.get(discordId) === run) {
+        this.memberSyncTail.delete(discordId);
+      }
+    }
+  }
+
+  private async syncCityRolesExclusive(
+    discordId: string,
+    nextCities: readonly string[],
+    prevCities: readonly string[],
+  ): Promise<CityRoleSyncReport> {
     const report: CityRoleSyncReport = {
       configured: this.ready(),
       created: [],
       assigned: [],
       removed: [],
       errors: [],
+      deletedDuplicates: [],
     };
     if (!report.configured) {
       report.errors.push(
@@ -306,6 +349,7 @@ export class DiscordBotService implements OnModuleInit {
 
     // Refresh the role list once per run so name lookups are exact and current.
     const roles = await this.listGuildRoles();
+    report.deletedDuplicates = await this.deleteDuplicateCityRoles(roles, next);
     if (!roles.length && this.lastError) {
       report.errors.push(`list roles: ${this.lastError}`);
       if (this.lastError.startsWith('HTTP 401')) {
@@ -322,26 +366,13 @@ export class DiscordBotService implements OnModuleInit {
     for (const city of next) {
       let roleId = this.roleIdByName.get(city) ?? null;
       if (!roleId) {
-        try {
-          const res = await firstValueFrom(
-            this.http.post<GuildRole>(
-              `${base}/roles`,
-              {
-                name: city,
-                color: LAN_CITY_ROLE_COLOR,
-                permissions: '0',
-                mentionable: false,
-              },
-              { headers: this.headers },
-            ),
-          );
-          roleId = res.data.id;
-          this.roleIdByName.set(city, roleId);
-          report.created.push(city);
-        } catch (e) {
-          report.errors.push(`create "${city}": ${this.errMsg(e)}`);
+        const created = await this.createCityRoleOnce(city);
+        if (!created.id) {
+          report.errors.push(`create "${city}": ${created.error}`);
           continue;
         }
+        roleId = created.id;
+        if (created.fresh) report.created.push(city);
       }
       try {
         await firstValueFrom(
@@ -377,6 +408,88 @@ export class DiscordBotService implements OnModuleInit {
       );
     }
     return report;
+  }
+
+  /**
+   * Creates the yellow city role, but only once per name at a time: a second
+   * caller arriving while the first request is in flight awaits the same
+   * promise instead of issuing its own POST.
+   */
+  private async createCityRoleOnce(
+    city: string,
+  ): Promise<{ id: string | null; fresh: boolean; error?: string }> {
+    const inFlight = this.roleCreateInFlight.get(city);
+    if (inFlight) {
+      const id = await inFlight;
+      return { id, fresh: false, error: id ? undefined : 'creation failed' };
+    }
+    let error: string | undefined;
+    const request = (async () => {
+      try {
+        const res = await firstValueFrom(
+          this.http.post<GuildRole>(
+            `https://discord.com/api/v10/guilds/${this.guildId}/roles`,
+            {
+              name: city,
+              color: LAN_CITY_ROLE_COLOR,
+              permissions: '0',
+              mentionable: false,
+            },
+            { headers: this.headers },
+          ),
+        );
+        this.roleIdByName.set(city, res.data.id);
+        return res.data.id;
+      } catch (e) {
+        error = this.errMsg(e);
+        return null;
+      }
+    })();
+    this.roleCreateInFlight.set(city, request);
+    try {
+      const id = await request;
+      return { id, fresh: id !== null, error };
+    } finally {
+      this.roleCreateInFlight.delete(city);
+    }
+  }
+
+  /**
+   * Removes duplicate city roles left behind by earlier concurrent syncs: same
+   * name, our yellow colour, more than one — the oldest stays (it is the one
+   * `roleIdByName` points at), the rest are deleted. Roles in other colours
+   * are never touched, so a human-made role that happens to share a city name
+   * is safe. Limited to the cities in this run to keep the pass cheap.
+   */
+  private async deleteDuplicateCityRoles(
+    roles: GuildRole[],
+    cities: ReadonlySet<string>,
+  ): Promise<string[]> {
+    const deleted: string[] = [];
+    for (const city of cities) {
+      const same = roles.filter(
+        (r) => r.name === city && r.color === LAN_CITY_ROLE_COLOR,
+      );
+      if (same.length < 2) continue;
+      const keep = this.roleIdByName.get(city);
+      for (const dup of same) {
+        if (dup.id === keep) continue;
+        try {
+          await firstValueFrom(
+            this.http.delete(
+              `https://discord.com/api/v10/guilds/${this.guildId}/roles/${dup.id}`,
+              { headers: this.headers },
+            ),
+          );
+          deleted.push(city);
+        } catch (e) {
+          this.logger.warn(
+            `delete duplicate role "${city}" (${dup.id}) failed: ${this.errMsg(e)}`,
+          );
+        }
+      }
+    }
+    return deleted;
   }
 
   async updateRoleColor(roleId: string, color: number): Promise<void> {

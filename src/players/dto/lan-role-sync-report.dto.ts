@@ -22,4 +22,11 @@ export class LanRoleSyncReportDto {
     example: ['assign "Львів": HTTP 403 Missing Permissions (50013)'],
   })
   errors: string[];
+
+  @ApiProperty({
+    type: [String],
+    description:
+      'Duplicate city roles (same name, bot colour) deleted this run, oldest kept',
+  })
+  deletedDuplicates: string[];
 }
