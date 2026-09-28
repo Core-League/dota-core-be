@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Player, TournamentFormat } from './player.entity';
@@ -11,13 +12,17 @@ import { getRoleColorByName } from '../user-roles/role.constants';
 import { PlayersRepository } from './players.repository';
 import { TeamsService } from '../teams/teams.service';
 import { LocationsService } from '../locations/locations.service';
+import { DiscordBotService } from '../discord/discord-bot.service';
 
 @Injectable()
 export class PlayersService {
+  private readonly logger = new Logger(PlayersService.name);
+
   constructor(
     private readonly playersRepo: PlayersRepository,
     private readonly teamsService: TeamsService,
     private readonly locationsService: LocationsService,
+    private readonly discord: DiscordBotService,
   ) {}
 
   private toResponse(player: Player): PlayerResponseDto {
@@ -102,8 +107,12 @@ export class PlayersService {
     if (safePayload['discordId'] === '') safePayload['discordId'] = null;
     await this.applyLocation(player, safePayload);
     await this.applyLanCities(player, safePayload);
+    const prevLanCities = player.lanCities ?? [];
     Object.assign(player, safePayload);
     await this.playersRepo.save(player);
+    if ('lanCities' in safePayload) {
+      this.syncLanCityRoles(player, prevLanCities);
+    }
     const refreshed = await this.playersRepo.findOneById(id);
     if (!refreshed) {
       throw new NotFoundException('Гравця не знайдено');
@@ -154,6 +163,23 @@ export class PlayersService {
       nextCity = null;
     }
     payload['city'] = nextCity;
+  }
+
+  /**
+   * Discord mirror of `lanCities` (one yellow role per city). Fire-and-forget:
+   * the save must not wait on Discord rate limits, and the bot service already
+   * logs and swallows its own failures.
+   */
+  private syncLanCityRoles(player: Player, prevLanCities: string[]): void {
+    if (!player.discordId) return;
+    void this.discord
+      .syncLanCityRoles(player.discordId, player.lanCities ?? [], prevLanCities)
+      .catch((err: unknown) =>
+        this.logger.warn(
+          `LAN city role sync failed for player ${player.id}`,
+          err instanceof Error ? err.message : err,
+        ),
+      );
   }
 
   /**

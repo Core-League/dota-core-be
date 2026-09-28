@@ -44,9 +44,21 @@ const STAFF_CHANNEL_ALLOW = String(
 // Moderator roles: can see and join but not speak by default
 const VIEW_JOIN_ALLOW = String(VIEW_CHANNEL_BIT + CONNECT_BIT); // '1049600'
 
+/** Discord's preset "Yellow" — colour of every LAN-city role. */
+export const LAN_CITY_ROLE_COLOR = 0xfee75c;
+
+interface GuildRole {
+  id: string;
+  name: string;
+  color: number;
+}
+
 @Injectable()
 export class DiscordBotService {
   private readonly logger = new Logger(DiscordBotService.name);
+
+  /** name → role id, filled from the guild role list; refreshed on a miss. */
+  private readonly roleIdByName = new Map<string, string>();
 
   constructor(private readonly http: HttpService) {}
 
@@ -136,6 +148,87 @@ export class DiscordBotService {
     } catch (e) {
       this.logger.warn(`createTeamVoiceChannel failed: ${this.errMsg(e)}`);
       return null;
+    }
+  }
+
+  /** All guild roles; also refreshes the name → id cache. Empty on failure. */
+  async listGuildRoles(): Promise<GuildRole[]> {
+    if (!this.ready()) return [];
+    try {
+      const res = await firstValueFrom(
+        this.http.get<GuildRole[]>(
+          `https://discord.com/api/v10/guilds/${this.guildId}/roles`,
+          { headers: this.headers },
+        ),
+      );
+      const roles = Array.isArray(res.data) ? res.data : [];
+      this.roleIdByName.clear();
+      for (const r of roles) this.roleIdByName.set(r.name, r.id);
+      return roles;
+    } catch (e) {
+      this.logger.warn(`listGuildRoles failed: ${this.errMsg(e)}`);
+      return [];
+    }
+  }
+
+  /** Role id for an exact name, or null when the guild has no such role. */
+  async findRoleIdByName(name: string): Promise<string | null> {
+    if (!this.ready()) return null;
+    const cached = this.roleIdByName.get(name);
+    if (cached) return cached;
+    await this.listGuildRoles();
+    return this.roleIdByName.get(name) ?? null;
+  }
+
+  /**
+   * Role id for an exact name, creating the role (with `color`) when the guild
+   * does not have one yet. Null only when Discord is unavailable.
+   */
+  async ensureRoleByName(name: string, color: number): Promise<string | null> {
+    const existing = await this.findRoleIdByName(name);
+    if (existing) return existing;
+    if (!this.ready()) return null;
+    try {
+      const res = await firstValueFrom(
+        this.http.post<GuildRole>(
+          `https://discord.com/api/v10/guilds/${this.guildId}/roles`,
+          { name, color, permissions: '0', mentionable: false },
+          { headers: this.headers },
+        ),
+      );
+      const id = res.data.id;
+      this.roleIdByName.set(name, id);
+      return id;
+    } catch (e) {
+      this.logger.warn(`ensureRoleByName "${name}" failed: ${this.errMsg(e)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Mirrors a player's LAN cities onto guild roles named after the city
+   * (Ukrainian name, yellow). Cities added get their role (created on first
+   * use); cities dropped lose it. Roles themselves are never deleted — other
+   * players may still hold them.
+   */
+  async syncLanCityRoles(
+    discordId: string,
+    nextCities: readonly string[],
+    prevCities: readonly string[],
+  ): Promise<void> {
+    if (!this.ready() || !discordId) return;
+    const next = new Set(nextCities.map((c) => c.trim()).filter(Boolean));
+    const prev = new Set(prevCities.map((c) => c.trim()).filter(Boolean));
+
+    for (const city of next) {
+      if (prev.has(city)) continue;
+      const roleId = await this.ensureRoleByName(city, LAN_CITY_ROLE_COLOR);
+      if (roleId) await this.addMemberRole(discordId, roleId);
+    }
+    for (const city of prev) {
+      if (next.has(city)) continue;
+      const roleId = await this.findRoleIdByName(city);
+      if (roleId) await this.removeMemberRole(discordId, roleId);
     }
   }
 

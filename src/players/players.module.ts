@@ -8,6 +8,7 @@ import { PlayersRepository } from './players.repository';
 import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsModule } from '../teams/teams.module';
 import { LocationsModule } from '../locations/locations.module';
+import { DiscordBotModule } from '../discord/discord-bot.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { LocationsModule } from '../locations/locations.module';
     UploadsModule,
     TeamsModule,
     LocationsModule,
+    DiscordBotModule,
   ],
   providers: [PlayersService, PlayersRepository],
   controllers: [PlayersController],
