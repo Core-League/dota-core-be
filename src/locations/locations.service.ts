@@ -20,6 +20,13 @@ export const EXCLUDED_COUNTRY_CODES: ReadonlySet<string> = new Set([
 
 const COUNTRIES_NOW_BASE_URL =
   process.env.LOCATIONS_API_URL ?? 'https://countriesnow.space/api/v0.1';
+/** OpenStreetMap Overpass endpoint — source of localized (`name:uk`) city names. */
+const OVERPASS_URL =
+  process.env.LOCATIONS_OVERPASS_URL ??
+  'https://overpass-api.de/api/interpreter';
+/** Overpass fair-use asks for an identifying UA; big countries take tens of seconds. */
+const OVERPASS_USER_AGENT = 'dota-core-be/1.0 (profile location picker)';
+const OVERPASS_TIMEOUT_MS = 65_000;
 /** Country list changes ~never; cities per country are re-fetched after this window. */
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -40,10 +47,23 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
+interface OverpassElement {
+  tags?: Record<string, string>;
+}
+
+interface OverpassResponse {
+  elements?: OverpassElement[];
+}
+
 /**
- * Thin proxy over countriesnow.space (free, keyless) that owns the exclusion
- * rule and caches both catalogs in memory. The upstream cities endpoint wants
- * the *English name*, so the country catalog is the bridge from an ISO code.
+ * Location catalogs for the profile picker. Owns the exclusion rule and caches
+ * everything in memory (24h).
+ *
+ * - Countries: countriesnow.space (free, keyless), filtered and sorted.
+ * - Cities: OpenStreetMap Overpass first — it carries Ukrainian names
+ *   (`name:uk`) for cities and towns of every country, which is what the UI
+ *   shows. If Overpass is down or times out (very large countries), we fall
+ *   back to countriesnow's English list so the picker still works.
  */
 @Injectable()
 export class LocationsService {
@@ -89,7 +109,7 @@ export class LocationsService {
     const cached = this.citiesCache.get(code);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-    const cities = await this.fetchCities(country.name);
+    const cities = await this.fetchCities(country);
     this.citiesCache.set(code, {
       value: cities,
       expiresAt: Date.now() + CACHE_TTL_MS,
@@ -157,7 +177,69 @@ export class LocationsService {
     return countries;
   }
 
-  private async fetchCities(countryName: string): Promise<string[]> {
+  /** Overpass (Ukrainian names) with an English fallback; see class docs. */
+  private async fetchCities(country: CountryDto): Promise<string[]> {
+    try {
+      const localized = await this.fetchCitiesFromOverpass(country.code);
+      if (localized.length) return localized;
+      this.logger.warn(
+        `Overpass returned no places for ${country.code}; using English list`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Overpass failed for ${country.code}; using English list`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+    return this.fetchCitiesFromCountriesNow(country.name);
+  }
+
+  /**
+   * Cities + towns (`place=city|town`) inside the country's admin boundary.
+   * Villages are left out on purpose — for large countries they push the
+   * payload past what Overpass will serve in one request.
+   */
+  private async fetchCitiesFromOverpass(
+    countryCode: string,
+  ): Promise<string[]> {
+    const query = [
+      `[out:json][timeout:60];`,
+      `area["ISO3166-1"="${countryCode}"]["admin_level"="2"]->.a;`,
+      `node[place~"^(city|town)$"](area.a);`,
+      `out tags;`,
+    ].join('');
+
+    const { data } = await firstValueFrom(
+      this.http.post<OverpassResponse>(
+        OVERPASS_URL,
+        new URLSearchParams({ data: query }).toString(),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': OVERPASS_USER_AGENT,
+          },
+          timeout: OVERPASS_TIMEOUT_MS,
+        },
+      ),
+    );
+
+    const unique = new Set<string>();
+    for (const el of data?.elements ?? []) {
+      const tags = el.tags ?? {};
+      const name = (
+        tags['name:uk'] ??
+        tags['name'] ??
+        tags['name:en'] ??
+        ''
+      ).trim();
+      if (name) unique.add(name);
+    }
+    return [...unique].sort((a, b) => a.localeCompare(b, 'uk'));
+  }
+
+  private async fetchCitiesFromCountriesNow(
+    countryName: string,
+  ): Promise<string[]> {
     let cities: string[];
     try {
       const { data } = await firstValueFrom(
