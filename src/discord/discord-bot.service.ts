@@ -295,8 +295,10 @@ export class DiscordBotService implements OnModuleInit {
   /**
    * Mirrors a player's cities (home city + LAN cities) onto guild roles named
    * after the city (Ukrainian name, yellow). Every current city gets its role
-   * (created on first use); cities dropped since `prevCities` lose it. Roles
-   * themselves are never deleted — other players may still hold them.
+   * (created on first use); cities dropped since `prevCities` lose it. The
+   * member is updated with a single bulk `PATCH` of the full role list. City
+   * roles themselves are never deleted (only exact duplicates) — other players
+   * may still hold them.
    */
   async syncCityRoles(
     discordId: string,
@@ -360,9 +362,10 @@ export class DiscordBotService implements OnModuleInit {
       }
     }
 
-    // Every current city is (re)assigned, not only the newly added ones: PUT on
-    // a role the member already holds is a no-op for Discord, and this heals
-    // players whose cities were saved before the bot sync existed.
+    // Resolve (creating on first use) the role id of every current city. Every
+    // city is included, not only the newly added ones, which heals players whose
+    // cities were saved before the bot sync existed.
+    const nextRoleIds = new Map<string, string>();
     for (const city of next) {
       let roleId = this.roleIdByName.get(city) ?? null;
       if (!roleId) {
@@ -374,31 +377,62 @@ export class DiscordBotService implements OnModuleInit {
         roleId = created.id;
         if (created.fresh) report.created.push(city);
       }
-      try {
-        await firstValueFrom(
-          this.http.put(`${base}/members/${discordId}/roles/${roleId}`, null, {
-            headers: this.headers,
-          }),
-        );
-        report.assigned.push(city);
-      } catch (e) {
-        report.errors.push(`assign "${city}": ${this.errMsg(e)}`);
-      }
+      nextRoleIds.set(city, roleId);
     }
 
+    // The member's current roles: lets us send ONE bulk update with the full
+    // desired list instead of one PUT/DELETE per city, which is what tripped
+    // Discord's per-member rate limit.
+    let currentRoleIds: string[];
+    try {
+      const member = await this.withRateLimitRetry(() =>
+        firstValueFrom(
+          this.http.get<{ roles: string[] }>(`${base}/members/${discordId}`, {
+            headers: this.headers,
+          }),
+        ),
+      );
+      currentRoleIds = Array.isArray(member.data.roles)
+        ? member.data.roles
+        : [];
+    } catch (e) {
+      report.errors.push(`read member: ${this.errMsg(e)}`);
+      this.logger.warn(
+        `City roles for ${discordId}: ${report.errors.join('; ')}`,
+      );
+      return report;
+    }
+
+    const current = new Set(currentRoleIds);
+    const desired = new Set(currentRoleIds);
     for (const city of prev) {
       if (next.has(city)) continue;
       const roleId = this.roleIdByName.get(city);
-      if (!roleId) continue;
+      if (roleId && desired.delete(roleId)) report.removed.push(city);
+    }
+    for (const [city, roleId] of nextRoleIds) {
+      desired.add(roleId);
+      report.assigned.push(city);
+    }
+
+    const changed =
+      desired.size !== current.size ||
+      [...desired].some((id) => !current.has(id));
+    if (changed) {
       try {
-        await firstValueFrom(
-          this.http.delete(`${base}/members/${discordId}/roles/${roleId}`, {
-            headers: this.headers,
-          }),
+        await this.withRateLimitRetry(() =>
+          firstValueFrom(
+            this.http.patch(
+              `${base}/members/${discordId}`,
+              { roles: [...desired] },
+              { headers: this.headers },
+            ),
+          ),
         );
-        report.removed.push(city);
       } catch (e) {
-        report.errors.push(`remove "${city}": ${this.errMsg(e)}`);
+        report.errors.push(`update member roles: ${this.errMsg(e)}`);
+        report.assigned = [];
+        report.removed = [];
       }
     }
 
@@ -408,6 +442,26 @@ export class DiscordBotService implements OnModuleInit {
       );
     }
     return report;
+  }
+
+  /**
+   * Runs one Discord request, honouring `retry_after` on 429 (up to `attempts`
+   * tries). Anything other than a 429 is rethrown immediately.
+   */
+  private async withRateLimitRetry<T>(
+    request: () => Promise<T>,
+    attempts = 3,
+  ): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await request();
+      } catch (e) {
+        const retryMs = this.retryAfterMs(e);
+        if (retryMs === null || attempt >= attempts) throw e;
+        this.logger.warn(`Discord rate limited, retrying in ${retryMs}ms`);
+        await new Promise((r) => setTimeout(r, retryMs));
+      }
+    }
   }
 
   /**
@@ -426,16 +480,18 @@ export class DiscordBotService implements OnModuleInit {
     let error: string | undefined;
     const request = (async () => {
       try {
-        const res = await firstValueFrom(
-          this.http.post<GuildRole>(
-            `https://discord.com/api/v10/guilds/${this.guildId}/roles`,
-            {
-              name: city,
-              color: LAN_CITY_ROLE_COLOR,
-              permissions: '0',
-              mentionable: false,
-            },
-            { headers: this.headers },
+        const res = await this.withRateLimitRetry(() =>
+          firstValueFrom(
+            this.http.post<GuildRole>(
+              `https://discord.com/api/v10/guilds/${this.guildId}/roles`,
+              {
+                name: city,
+                color: LAN_CITY_ROLE_COLOR,
+                permissions: '0',
+                mentionable: false,
+              },
+              { headers: this.headers },
+            ),
           ),
         );
         this.roleIdByName.set(city, res.data.id);
@@ -475,10 +531,12 @@ export class DiscordBotService implements OnModuleInit {
       for (const dup of same) {
         if (dup.id === keep) continue;
         try {
-          await firstValueFrom(
-            this.http.delete(
-              `https://discord.com/api/v10/guilds/${this.guildId}/roles/${dup.id}`,
-              { headers: this.headers },
+          await this.withRateLimitRetry(() =>
+            firstValueFrom(
+              this.http.delete(
+                `https://discord.com/api/v10/guilds/${this.guildId}/roles/${dup.id}`,
+                { headers: this.headers },
+              ),
             ),
           );
           deleted.push(city);
