@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -9,12 +10,14 @@ import { PlayerResponseDto } from './dto/player-response.dto';
 import { getRoleColorByName } from '../user-roles/role.constants';
 import { PlayersRepository } from './players.repository';
 import { TeamsService } from '../teams/teams.service';
+import { LocationsService } from '../locations/locations.service';
 
 @Injectable()
 export class PlayersService {
   constructor(
     private readonly playersRepo: PlayersRepository,
     private readonly teamsService: TeamsService,
+    private readonly locationsService: LocationsService,
   ) {}
 
   private toResponse(player: Player): PlayerResponseDto {
@@ -29,6 +32,9 @@ export class PlayersService {
       rating: player.rating,
       rank: toPlayerRankDto(player.rating),
       positions: player.positions ?? null,
+      countryCode: player.countryCode ?? null,
+      city: player.city ?? null,
+      wantToPlay: player.wantToPlay ?? null,
       verifiedAt: player.verifiedAt ?? null,
       teamId: player.teamId ?? null,
       roles: (player.roles ?? []).map((r) => ({
@@ -93,6 +99,7 @@ export class PlayersService {
     // Unique nullable columns must be null (not empty string) to satisfy the DB constraint
     if (safePayload['steamId'] === '') safePayload['steamId'] = null;
     if (safePayload['discordId'] === '') safePayload['discordId'] = null;
+    await this.applyLocation(player, safePayload);
     Object.assign(player, safePayload);
     await this.playersRepo.save(player);
     const refreshed = await this.playersRepo.findOneById(id);
@@ -100,6 +107,51 @@ export class PlayersService {
       throw new NotFoundException('Гравця не знайдено');
     }
     return this.toResponse(refreshed);
+  }
+
+  /**
+   * Location rules: the country must come from the allowed catalog (never
+   * RU/BY/IR), a city only makes sense with a country, and changing the
+   * country drops a city that was not re-sent alongside it.
+   */
+  private async applyLocation(
+    player: Player,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const hasCountry = 'countryCode' in payload;
+    const hasCity = 'city' in payload;
+    if (!hasCountry && !hasCity) return;
+
+    let nextCountry: string | null = player.countryCode ?? null;
+    if (hasCountry) {
+      const raw = payload['countryCode'];
+      nextCountry =
+        typeof raw === 'string' && raw.trim() !== ''
+          ? LocationsService.normalizeCountryCode(raw)
+          : null;
+      if (nextCountry) {
+        const country = await this.locationsService.findCountry(nextCountry);
+        if (!country) {
+          throw new BadRequestException(
+            'Обрану країну неможливо вказати в профілі',
+          );
+        }
+      }
+      payload['countryCode'] = nextCountry;
+    }
+
+    let nextCity: string | null = player.city ?? null;
+    if (hasCity) {
+      const raw = payload['city'];
+      nextCity =
+        typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+    }
+    if (!nextCountry) {
+      nextCity = null;
+    } else if (hasCountry && nextCountry !== player.countryCode && !hasCity) {
+      nextCity = null;
+    }
+    payload['city'] = nextCity;
   }
 
   async remove(id: string): Promise<void> {

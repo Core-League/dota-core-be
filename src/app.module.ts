@@ -12,6 +12,7 @@ import { HealthController } from './health.controller';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
 import { DevModule } from './dev/dev.module';
+import { LocationsModule } from './locations/locations.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { DevModule } from './dev/dev.module';
     AuthModule,
     AdminModule,
     DevModule,
+    LocationsModule,
   ],
   controllers: [HealthController],
 })

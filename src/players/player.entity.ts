@@ -4,6 +4,17 @@ import { UserRoles } from '../user-roles/user-roles.entity';
 /** Dota map / role position (1–5). */
 export type PlayerPosition = 1 | 2 | 3 | 4 | 5;
 
+/** Tournament formats a player is willing to attend. */
+export enum TournamentFormat {
+  ONLINE = 'ONLINE',
+  LAN = 'LAN',
+}
+
+export const TOURNAMENT_FORMATS: TournamentFormat[] = [
+  TournamentFormat.ONLINE,
+  TournamentFormat.LAN,
+];
+
 @Entity()
 export class Player {
   @PrimaryGeneratedColumn('uuid')
@@ -35,6 +46,18 @@ export class Player {
   /** Lane / roles (1–5); null when unset, empty array when explicitly none. */
   @Column({ type: 'smallint', array: true, nullable: true })
   positions: PlayerPosition[] | null;
+
+  /** ISO 3166-1 alpha-2 country code (upper-case); null when unset. */
+  @Column({ type: 'varchar', length: 2, nullable: true })
+  countryCode: string | null;
+
+  /** City name as returned by the locations catalog; null when unset. */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  city: string | null;
+
+  /** Tournament formats the player wants to attend; null when unset, empty when explicitly none. */
+  @Column({ type: 'varchar', array: true, nullable: true })
+  wantToPlay: TournamentFormat[] | null;
 
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;

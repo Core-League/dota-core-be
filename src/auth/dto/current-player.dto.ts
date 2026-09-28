@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PlayerRankDto } from '../../players/dto/player-rank.dto';
-import type { PlayerPosition } from '../../players/player.entity';
+import {
+  TournamentFormat,
+  type PlayerPosition,
+} from '../../players/player.entity';
 
 export class CurrentPlayerRoleDto {
   @ApiProperty()
@@ -62,6 +65,24 @@ export class CurrentPlayerDto {
     nullable: true,
   })
   positions: PlayerPosition[] | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'ISO 3166-1 alpha-2 country code',
+    example: 'UA',
+  })
+  countryCode: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'Kyiv' })
+  city: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Tournament formats the player wants to attend',
+    enum: TournamentFormat,
+    isArray: true,
+    nullable: true,
+  })
+  wantToPlay: TournamentFormat[] | null;
 
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   verifiedAt: Date | null;
