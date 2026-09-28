@@ -30,6 +30,7 @@ import { PlayerResponseDto } from './dto/player-response.dto';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
+import { LanRoleSyncReportDto } from './dto/lan-role-sync-report.dto';
 import {
   createDiskStorage,
   imageFileFilter,
@@ -80,6 +81,20 @@ export class PlayersController {
   @ApiBearerAuth()
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.playersService.remove(id);
+  }
+
+  /**
+   * Re-applies the caller's LAN cities as Discord roles and returns what Discord
+   * answered — the way to see why a role did not appear after saving the profile.
+   */
+  @Post('me/lan-roles/sync')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: LanRoleSyncReportDto })
+  resyncLanRoles(
+    @Req() req: RequestWithJwtActor,
+  ): Promise<LanRoleSyncReportDto> {
+    return this.playersService.resyncLanCityRoles(req.user!.playerId);
   }
 
   @Post('me/avatar')

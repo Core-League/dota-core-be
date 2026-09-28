@@ -12,7 +12,10 @@ import { getRoleColorByName } from '../user-roles/role.constants';
 import { PlayersRepository } from './players.repository';
 import { TeamsService } from '../teams/teams.service';
 import { LocationsService } from '../locations/locations.service';
-import { DiscordBotService } from '../discord/discord-bot.service';
+import {
+  DiscordBotService,
+  LanRoleSyncReport,
+} from '../discord/discord-bot.service';
 
 @Injectable()
 export class PlayersService {
@@ -180,6 +183,23 @@ export class PlayersService {
           err instanceof Error ? err.message : err,
         ),
       );
+  }
+
+  /**
+   * Re-applies every saved LAN city as a Discord role and reports what happened.
+   * Idempotent (assigning a role the member already has is a no-op for Discord);
+   * meant for the player to self-heal and for diagnosing bot permissions.
+   */
+  async resyncLanCityRoles(playerId: string): Promise<LanRoleSyncReport> {
+    const player = await this.playersRepo.findOneById(playerId);
+    if (!player) {
+      throw new NotFoundException('Гравця не знайдено');
+    }
+    return this.discord.syncLanCityRoles(
+      player.discordId ?? '',
+      player.lanCities ?? [],
+      [],
+    );
   }
 
   /**

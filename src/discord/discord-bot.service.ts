@@ -53,6 +53,20 @@ interface GuildRole {
   color: number;
 }
 
+/** Outcome of one LAN-city role sync — surfaced by POST /players/me/lan-roles/sync. */
+export interface LanRoleSyncReport {
+  /** False when DISCORD_BOT_TOKEN / DISCORD_SYNC_GUILD_ID are missing. */
+  configured: boolean;
+  /** Roles created in the guild during this run (by city name). */
+  created: string[];
+  /** Roles now on the member (by city name). */
+  assigned: string[];
+  /** Roles taken off the member (by city name). */
+  removed: string[];
+  /** Human-readable failures, e.g. `assign "Львів": HTTP 403 Missing Permissions (50013)`. */
+  errors: string[];
+}
+
 @Injectable()
 export class DiscordBotService {
   private readonly logger = new Logger(DiscordBotService.name);
@@ -151,9 +165,13 @@ export class DiscordBotService {
     }
   }
 
+  /** Last Discord error text from listGuildRoles, for the sync report. */
+  private lastError: string | null = null;
+
   /** All guild roles; also refreshes the name → id cache. Empty on failure. */
   async listGuildRoles(): Promise<GuildRole[]> {
     if (!this.ready()) return [];
+    this.lastError = null;
     try {
       const res = await firstValueFrom(
         this.http.get<GuildRole[]>(
@@ -166,7 +184,8 @@ export class DiscordBotService {
       for (const r of roles) this.roleIdByName.set(r.name, r.id);
       return roles;
     } catch (e) {
-      this.logger.warn(`listGuildRoles failed: ${this.errMsg(e)}`);
+      this.lastError = this.errMsg(e);
+      this.logger.warn(`listGuildRoles failed: ${this.lastError}`);
       return [];
     }
   }
@@ -215,21 +234,94 @@ export class DiscordBotService {
     discordId: string,
     nextCities: readonly string[],
     prevCities: readonly string[],
-  ): Promise<void> {
-    if (!this.ready() || !discordId) return;
+  ): Promise<LanRoleSyncReport> {
+    const report: LanRoleSyncReport = {
+      configured: this.ready(),
+      created: [],
+      assigned: [],
+      removed: [],
+      errors: [],
+    };
+    if (!report.configured) {
+      report.errors.push(
+        'Discord bot is not configured (DISCORD_BOT_TOKEN / DISCORD_SYNC_GUILD_ID)',
+      );
+      return report;
+    }
+    if (!discordId) {
+      report.errors.push('Player has no linked Discord account');
+      return report;
+    }
+
     const next = new Set(nextCities.map((c) => c.trim()).filter(Boolean));
     const prev = new Set(prevCities.map((c) => c.trim()).filter(Boolean));
+    const base = `https://discord.com/api/v10/guilds/${this.guildId}`;
+
+    // Refresh the role list once per run so name lookups are exact and current.
+    const roles = await this.listGuildRoles();
+    if (!roles.length && this.lastError) {
+      report.errors.push(`list roles: ${this.lastError}`);
+    }
 
     for (const city of next) {
       if (prev.has(city)) continue;
-      const roleId = await this.ensureRoleByName(city, LAN_CITY_ROLE_COLOR);
-      if (roleId) await this.addMemberRole(discordId, roleId);
+      let roleId = this.roleIdByName.get(city) ?? null;
+      if (!roleId) {
+        try {
+          const res = await firstValueFrom(
+            this.http.post<GuildRole>(
+              `${base}/roles`,
+              {
+                name: city,
+                color: LAN_CITY_ROLE_COLOR,
+                permissions: '0',
+                mentionable: false,
+              },
+              { headers: this.headers },
+            ),
+          );
+          roleId = res.data.id;
+          this.roleIdByName.set(city, roleId);
+          report.created.push(city);
+        } catch (e) {
+          report.errors.push(`create "${city}": ${this.errMsg(e)}`);
+          continue;
+        }
+      }
+      try {
+        await firstValueFrom(
+          this.http.put(`${base}/members/${discordId}/roles/${roleId}`, null, {
+            headers: this.headers,
+          }),
+        );
+        report.assigned.push(city);
+      } catch (e) {
+        report.errors.push(`assign "${city}": ${this.errMsg(e)}`);
+      }
     }
+
     for (const city of prev) {
       if (next.has(city)) continue;
-      const roleId = await this.findRoleIdByName(city);
-      if (roleId) await this.removeMemberRole(discordId, roleId);
+      const roleId = this.roleIdByName.get(city);
+      if (!roleId) continue;
+      try {
+        await firstValueFrom(
+          this.http.delete(`${base}/members/${discordId}/roles/${roleId}`, {
+            headers: this.headers,
+          }),
+        );
+        report.removed.push(city);
+      } catch (e) {
+        report.errors.push(`remove "${city}": ${this.errMsg(e)}`);
+      }
     }
+
+    if (report.errors.length) {
+      this.logger.warn(
+        `LAN city roles for ${discordId}: ${report.errors.join('; ')}`,
+      );
+    }
+    return report;
   }
 
   async updateRoleColor(roleId: string, color: number): Promise<void> {
@@ -381,8 +473,14 @@ export class DiscordBotService {
     }
   }
 
+  /** `HTTP <status> <Discord message> (<Discord code>)` when Discord answered, else the transport error. */
   private errMsg(e: unknown): string {
-    const err = e as AxiosError;
-    return `HTTP ${err.response?.status ?? 'unknown'}`;
+    const err = e as AxiosError<{ message?: string; code?: number }>;
+    if (!err.response) return err.message || 'network error';
+    const body = err.response.data;
+    const detail = body?.message
+      ? ` ${body.message}${body.code != null ? ` (${body.code})` : ''}`
+      : '';
+    return `HTTP ${err.response.status}${detail}`;
   }
 }
