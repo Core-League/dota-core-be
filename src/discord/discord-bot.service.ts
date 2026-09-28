@@ -226,9 +226,9 @@ export class DiscordBotService {
 
   /**
    * Mirrors a player's LAN cities onto guild roles named after the city
-   * (Ukrainian name, yellow). Cities added get their role (created on first
-   * use); cities dropped lose it. Roles themselves are never deleted — other
-   * players may still hold them.
+   * (Ukrainian name, yellow). Every current city gets its role (created on
+   * first use); cities dropped since `prevCities` lose it. Roles themselves are
+   * never deleted — other players may still hold them.
    */
   async syncLanCityRoles(
     discordId: string,
@@ -263,8 +263,10 @@ export class DiscordBotService {
       report.errors.push(`list roles: ${this.lastError}`);
     }
 
+    // Every current city is (re)assigned, not only the newly added ones: PUT on
+    // a role the member already holds is a no-op for Discord, and this heals
+    // players whose cities were saved before the bot sync existed.
     for (const city of next) {
-      if (prev.has(city)) continue;
       let roleId = this.roleIdByName.get(city) ?? null;
       if (!roleId) {
         try {
