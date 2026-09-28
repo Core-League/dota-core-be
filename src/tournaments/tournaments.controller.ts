@@ -385,11 +385,15 @@ export class TournamentsController {
       'Destroys all playoff results, series and disqualifications, re-derives participants from ' +
       'current qualification standings, then rebuilds the Challonge bracket and Dota league ' +
       'mirror. End state matches starting the playoff for the first time. If no playoff exists ' +
-      'yet, this starts one. Irreversible.',
+      'yet, this starts one. Irreversible. Optional `teamIds` seats exactly those teams, seeded ' +
+      '1..N in the given order, instead of deriving the field from standings.',
   })
   @ApiOkResponse({ type: PlayoffResponseDto })
-  restartPlayoff(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.playoffService.restartPlayoff(id);
+  restartPlayoff(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: PlayoffTeamsDto,
+  ) {
+    return this.playoffService.restartPlayoff(id, body?.teamIds ?? []);
   }
 
   @Post(':id/playoff/regenerate-matches')
