@@ -25,7 +25,11 @@ import {
 import { PlayoffMatch } from './playoff-match.entity';
 import { PlayoffMatchRepository } from './playoff-match.repository';
 import { PlayoffRepository } from './playoff.repository';
-import { PlayoffResponseDto } from './dto/playoff-response.dto';
+import {
+  PlayoffPlacementDto,
+  PlayoffResponseDto,
+} from './dto/playoff-response.dto';
+import { derivePlayoffPlacementIds } from './playoff-placements';
 import {
   RegeneratedLeagueFixtureDto,
   RegenerateLeagueMatchesResultDto,
@@ -1102,13 +1106,61 @@ export class PlayoffService {
       ],
     });
     const teams = rows.map((r) => this.teamsService.toTeamResponse(r.team));
+    const placements = await this.buildPlacements(tournamentId, format);
     return {
       embedUrl,
       bracketType: format.bracketType,
       hasThirdPlaceMatch: format.hasThirdPlaceMatch,
       finalsBestOf: format.effectiveFinalsBestOf(),
       teams,
+      placements,
     };
+  }
+
+  /**
+   * Final standings from `playoff_series` alone (see `derivePlayoffPlacementIds`).
+   * Teams are looked up by id rather than through the active roster so a team
+   * disqualified after the final still keeps the place it actually earned.
+   */
+  private async buildPlacements(
+    tournamentId: string,
+    format: BracketFormatStrategy,
+  ): Promise<PlayoffPlacementDto[]> {
+    const playoff = await this.playoffRepo.findByTournamentId(tournamentId);
+    if (!playoff) return [];
+
+    const seriesRows = await this.dataSource.getRepository(PlayoffSeries).find({
+      where: { playoffId: playoff.id },
+      select: {
+        id: true,
+        finalType: true,
+        teamAId: true,
+        teamBId: true,
+        seriesWinnerId: true,
+      },
+    });
+    const ids = derivePlayoffPlacementIds(seriesRows, {
+      bracketType: format.bracketType,
+      hasThirdPlaceMatch: format.hasThirdPlaceMatch,
+    });
+    if (ids.length === 0) return [];
+
+    const teams = await this.dataSource.getRepository(Team).find({
+      where: { id: In(ids.map((p) => p.teamId)) },
+      select: { id: true, name: true, logoUrl: true },
+    });
+    const byId = new Map(teams.map((t) => [t.id, t]));
+
+    return ids.flatMap((p): PlayoffPlacementDto[] => {
+      const team = byId.get(p.teamId);
+      if (!team) return [];
+      return [
+        {
+          place: p.place,
+          team: { id: team.id, name: team.name, logoUrl: team.logoUrl ?? null },
+        },
+      ];
+    });
   }
 
   /**

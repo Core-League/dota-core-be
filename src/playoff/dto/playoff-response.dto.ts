@@ -23,6 +23,21 @@ export class PlayoffFinalsBestOfDto {
   grandFinal: SeriesBestOf;
 }
 
+export class PlayoffPlacementTeamDto {
+  @ApiProperty() id: string;
+  @ApiProperty() name: string;
+  @ApiProperty({ nullable: true, type: String }) logoUrl: string | null;
+}
+
+/** One final standing (1 = champion). */
+export class PlayoffPlacementDto {
+  @ApiProperty({ enum: [1, 2, 3] })
+  place: 1 | 2 | 3;
+
+  @ApiProperty({ type: PlayoffPlacementTeamDto })
+  team: PlayoffPlacementTeamDto;
+}
+
 export class PlayoffResponseDto {
   @ApiProperty()
   embedUrl: string;
@@ -44,4 +59,13 @@ export class PlayoffResponseDto {
 
   @ApiProperty({ type: [TeamResponseDto] })
   teams: TeamResponseDto[];
+
+  /**
+   * Final standings (1st–3rd), derived from persisted series only — no
+   * Challonge call. Empty until the grand final is resolved. Third place is
+   * the lower-bracket-final loser (double elimination) or the third-place
+   * match winner (single elimination with such a match); otherwise omitted.
+   */
+  @ApiProperty({ type: [PlayoffPlacementDto] })
+  placements: PlayoffPlacementDto[];
 }
