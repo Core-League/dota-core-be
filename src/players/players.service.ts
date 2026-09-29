@@ -18,21 +18,6 @@ import {
   PlayerMatchStageStatsDto,
   PlayerMatchStatsDto,
 } from './dto/player-match-stats.dto';
-import {
-  PlayerAchievementsRepository,
-  type PlacementSeriesWithTournamentRow,
-  type PlayerTeamCreditRow,
-} from './player-achievements.repository';
-import {
-  PlayerAchievementDto,
-  PlayerAchievementKind,
-  PlayerAchievementsDto,
-  PlayerAchievementTournamentDto,
-} from './dto/player-achievements.dto';
-import {
-  derivePlayoffPlacementIds,
-  type PlayoffPlace,
-} from '../playoff/playoff-placements';
 import { TeamsService } from '../teams/teams.service';
 import { LocationsService } from '../locations/locations.service';
 import {
@@ -50,7 +35,6 @@ export class PlayersService {
   constructor(
     private readonly playersRepo: PlayersRepository,
     private readonly matchStatsRepo: PlayerMatchStatsRepository,
-    private readonly achievementsRepo: PlayerAchievementsRepository,
     private readonly teamsService: TeamsService,
     private readonly locationsService: LocationsService,
     private readonly discord: DiscordBotService,
@@ -130,124 +114,6 @@ export class PlayersService {
       qualification,
       playoff,
     };
-  }
-
-  /**
-   * Profile trophies, computed on request. Placements (1st–3rd) are read from
-   * decided playoffs; the "most …" trophies compare the player with the
-   * platform-wide maximum and are shared by everyone tied at the top. A zero
-   * record never earns anything, so a fresh platform shows no trophies.
-   */
-  async getAchievements(id: string): Promise<PlayerAchievementsDto> {
-    const player = await this.playersRepo.findOneById(id);
-    if (!player) {
-      throw new NotFoundException('Гравця не знайдено');
-    }
-
-    const [series, credits, matchRecord, ratingRecord] = await Promise.all([
-      this.achievementsRepo.findDecidedPlayoffSeries(),
-      this.achievementsRepo.findPlayerTeamCredits(id),
-      this.achievementsRepo.findMatchRecord(id),
-      this.achievementsRepo.findRatingRecord(id),
-    ]);
-
-    const achievements: PlayerAchievementDto[] = [];
-
-    const placements = this.collectPlacements(series, credits);
-    const placementKinds: Record<PlayoffPlace, PlayerAchievementKind> = {
-      1: PlayerAchievementKind.TOURNAMENT_FIRST_PLACE,
-      2: PlayerAchievementKind.TOURNAMENT_SECOND_PLACE,
-      3: PlayerAchievementKind.TOURNAMENT_THIRD_PLACE,
-    };
-    for (const place of [1, 2, 3] as PlayoffPlace[]) {
-      const tournaments = placements.get(place) ?? [];
-      if (tournaments.length === 0) continue;
-      achievements.push({
-        kind: placementKinds[place],
-        count: tournaments.length,
-        value: null,
-        tournaments,
-      });
-    }
-
-    const record = (
-      kind: PlayerAchievementKind,
-      value: number | null,
-      max: number | null,
-    ) => {
-      if (value == null || max == null || value <= 0 || value < max) return;
-      achievements.push({ kind, count: 1, value, tournaments: [] });
-    };
-    record(
-      PlayerAchievementKind.MOST_MATCHES_PLAYED,
-      matchRecord.played,
-      matchRecord.maxPlayed,
-    );
-    record(
-      PlayerAchievementKind.MOST_MATCHES_WON,
-      matchRecord.won,
-      matchRecord.maxWon,
-    );
-    record(
-      PlayerAchievementKind.MOST_MATCHES_LOST,
-      matchRecord.lost,
-      matchRecord.maxLost,
-    );
-    record(
-      PlayerAchievementKind.HIGHEST_RATING,
-      ratingRecord.rating,
-      ratingRecord.maxRating,
-    );
-
-    return { achievements };
-  }
-
-  /**
-   * Tournaments where a team the player is credited through finished 1st, 2nd
-   * or 3rd. Series rows arrive for every decided playoff at once and are grouped
-   * per tournament here, so placements are derived with the same pure function
-   * the playoff page uses.
-   */
-  private collectPlacements(
-    series: PlacementSeriesWithTournamentRow[],
-    credits: PlayerTeamCreditRow[],
-  ): Map<PlayoffPlace, PlayerAchievementTournamentDto[]> {
-    const currentTeams = new Set(
-      credits.filter((c) => c.tournamentId == null).map((c) => c.teamId),
-    );
-    const playedFor = new Map<string, Set<string>>();
-    for (const c of credits) {
-      if (c.tournamentId == null) continue;
-      const set = playedFor.get(c.tournamentId) ?? new Set<string>();
-      set.add(c.teamId);
-      playedFor.set(c.tournamentId, set);
-    }
-    const isCredited = (tournamentId: string, teamId: string) =>
-      currentTeams.has(teamId) ||
-      (playedFor.get(tournamentId)?.has(teamId) ?? false);
-
-    const byTournament = new Map<string, PlacementSeriesWithTournamentRow[]>();
-    for (const row of series) {
-      const rows = byTournament.get(row.tournamentId) ?? [];
-      rows.push(row);
-      byTournament.set(row.tournamentId, rows);
-    }
-
-    const result = new Map<PlayoffPlace, PlayerAchievementTournamentDto[]>();
-    for (const [tournamentId, rows] of byTournament) {
-      const { tournamentName, bracketType, hasThirdPlaceMatch } = rows[0];
-      const ids = derivePlayoffPlacementIds(rows, {
-        bracketType,
-        hasThirdPlaceMatch,
-      });
-      for (const p of ids) {
-        if (!isCredited(tournamentId, p.teamId)) continue;
-        const list = result.get(p.place) ?? [];
-        list.push({ id: tournamentId, name: tournamentName });
-        result.set(p.place, list);
-      }
-    }
-    return result;
   }
 
   async update(

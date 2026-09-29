@@ -29,6 +29,7 @@ import {
 import { PlayerResponseDto } from './dto/player-response.dto';
 import { PlayerMatchStatsDto } from './dto/player-match-stats.dto';
 import { PlayerAchievementsDto } from './dto/player-achievements.dto';
+import { PlayerAchievementsService } from './player-achievements.service';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
@@ -44,6 +45,7 @@ import {
 export class PlayersController {
   constructor(
     private readonly playersService: PlayersService,
+    private readonly achievementsService: PlayerAchievementsService,
     private readonly uploadsService: UploadsService,
   ) {}
 
@@ -79,7 +81,7 @@ export class PlayersController {
   getAchievements(
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<PlayerAchievementsDto> {
-    return this.playersService.getAchievements(id);
+    return this.achievementsService.getForPlayer(id);
   }
 
   @Patch(':id')

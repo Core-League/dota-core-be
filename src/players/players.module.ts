@@ -7,6 +7,7 @@ import { Player } from './player.entity';
 import { PlayersRepository } from './players.repository';
 import { PlayerMatchStatsRepository } from './player-match-stats.repository';
 import { PlayerAchievementsRepository } from './player-achievements.repository';
+import { PlayerAchievementsService } from './player-achievements.service';
 import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsModule } from '../teams/teams.module';
 import { LocationsModule } from '../locations/locations.module';
@@ -26,7 +27,10 @@ import { DiscordBotModule } from '../discord/discord-bot.module';
     PlayersRepository,
     PlayerMatchStatsRepository,
     PlayerAchievementsRepository,
+    PlayerAchievementsService,
   ],
   controllers: [PlayersController],
+  // The analytics board reuses the trophy computation instead of re-deriving it.
+  exports: [PlayerAchievementsService],
 })
 export class PlayersModule {}

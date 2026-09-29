@@ -16,6 +16,8 @@ import {
 } from '@nestjs/swagger';
 import { AdminGuard } from '../admin/guards/admin.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PlatformAchievementsDto } from '../players/dto/player-achievements.dto';
+import { PlayerAchievementsService } from '../players/player-achievements.service';
 import { SocialChannel } from './analytics.model';
 import { AnalyticsService } from './analytics.service';
 import {
@@ -29,7 +31,23 @@ import { UpdateSocialFollowersDto } from './dto/update-social-followers.dto';
 @UseGuards(JwtAuthGuard, AdminGuard)
 @Controller('admin/analytics')
 export class AnalyticsController {
-  constructor(private readonly analytics: AnalyticsService) {}
+  constructor(
+    private readonly analytics: AnalyticsService,
+    private readonly achievements: PlayerAchievementsService,
+  ) {}
+
+  @Get('achievements')
+  @ApiOperation({
+    summary: 'Platform trophy board',
+    description:
+      'Every achievement kind the platform awards with the players holding it, best holder first. ' +
+      'Kinds nobody has earned yet come back with an empty holder list. Same crediting rules as ' +
+      'GET /players/:id/achievements.',
+  })
+  @ApiOkResponse({ type: PlatformAchievementsDto })
+  getAchievements(): Promise<PlatformAchievementsDto> {
+    return this.achievements.getPlatform();
+  }
 
   @Get('overview')
   @ApiOperation({
