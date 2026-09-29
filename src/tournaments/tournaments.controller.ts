@@ -60,6 +60,12 @@ import { TechLossPlayoffDto } from '../playoff/dto/tech-loss-playoff.dto';
 import { OpenPlayoffMatchDto } from '../playoff/dto/open-playoff-match.dto';
 import { PlayoffMatch } from '../playoff/playoff-match.entity';
 import { ManualPlayoffSeriesGameDto } from '../playoff/dto/manual-playoff-series-game.dto';
+import { TournamentManualMatchesService } from './tournament-manual-matches.service';
+import {
+  LinkManualMatchDto,
+  LinkManualMatchResultDto,
+  ManualMatchDto,
+} from './dto/manual-match.dto';
 
 const IMAGE_INTERCEPTOR_OPTIONS = {
   fileFilter: imageFileFilter,
@@ -85,6 +91,7 @@ export class TournamentsController {
     private readonly uploadsService: UploadsService,
     private readonly qualificationService: QualificationService,
     private readonly playoffService: PlayoffService,
+    private readonly manualMatches: TournamentManualMatchesService,
   ) {}
 
   @Post()
@@ -480,6 +487,38 @@ export class TournamentsController {
     @Body() body: TechLossPlayoffDto,
   ) {
     return this.playoffService.techLossMatch(id, body);
+  }
+
+  @Get(':id/manual-matches')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Maps whose result was entered manually (no real Dota match id)',
+    description:
+      'Qualification and playoff maps with a winner but a synthetic or missing dotaMatchId ' +
+      '(tech loss, manual entry). Link the real id with POST …/manual-matches/link.',
+  })
+  @ApiOkResponse({ type: [ManualMatchDto] })
+  listManualMatches(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.manualMatches.listManualMatches(id);
+  }
+
+  @Post(':id/manual-matches/link')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Attach a real Dota 2 match id to a manually recorded map',
+    description:
+      'Fetches the match from OpenDota, rejects it when its winner contradicts the recorded one ' +
+      '(where the teams can be identified), stores dotaMatchId, records participants for player ' +
+      'statistics and forwards the match to Duelo. Points and the bracket are left untouched.',
+  })
+  @ApiOkResponse({ type: LinkManualMatchResultDto })
+  linkManualMatch(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: LinkManualMatchDto,
+  ) {
+    return this.manualMatches.linkDotaMatch(id, body);
   }
 
   @Get(':id/playoff')

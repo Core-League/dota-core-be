@@ -24,6 +24,9 @@ import { TournamentPlayoffScheduler } from './tournament-playoff.scheduler';
 import { TournamentQualificationScheduler } from './tournament-qualification.scheduler';
 import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsModule } from '../teams/teams.module';
+import { DueloModule } from '../duelo/duelo.module';
+import { MatchParticipantsModule } from '../match-participants/match-participants.module';
+import { TournamentManualMatchesService } from './tournament-manual-matches.service';
 
 @Module({
   imports: [
@@ -41,6 +44,8 @@ import { TeamsModule } from '../teams/teams.module';
     QualificationModule,
     PlayoffModule,
     TeamsModule,
+    DueloModule,
+    MatchParticipantsModule,
     MonobankAcquiringModule.register(),
   ],
   providers: [
@@ -53,6 +58,7 @@ import { TeamsModule } from '../teams/teams.module';
     TournamentDonationsService,
     TournamentPlayoffScheduler,
     TournamentQualificationScheduler,
+    TournamentManualMatchesService,
   ],
   controllers: [TournamentsController, TournamentPaymentCallbackController],
 })
