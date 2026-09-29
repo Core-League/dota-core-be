@@ -101,7 +101,17 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
     }
     await this.bootstrapAccountsIfEmpty();
     await this.reload();
-    await this.recoverOrphans();
+    // Orphan recovery must never take the whole worker down: a schema drift
+    // or a DB blip here would otherwise restart the process in a loop and no
+    // bot would ever come online. Log it; the duels stay for admin review.
+    try {
+      await this.recoverOrphans();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `orphan recovery failed, bots start anyway: ${message}`,
+      );
+    }
     this.logger.log(`Pool started with ${this.workers.size} bot(s)`);
   }
 
