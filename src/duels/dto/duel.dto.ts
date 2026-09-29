@@ -40,6 +40,21 @@ export class DuelLobbyPlayerDto {
   side: 'radiant' | 'dire' | 'unassigned' | null;
 }
 
+/** Hero assigned to a player of the duel (drawn at random when they were paired). */
+export class DuelHeroDto {
+  @ApiProperty()
+  playerId: string;
+
+  @ApiProperty({ description: 'Valve hero id' })
+  heroId: number;
+
+  @ApiProperty({ description: 'Valve internal name, e.g. npc_dota_hero_axe' })
+  name: string;
+
+  @ApiProperty({ description: 'Display name, e.g. Axe' })
+  localizedName: string;
+}
+
 export class DuelStatsPlayerDto {
   @ApiPropertyOptional({ nullable: true })
   playerId: string | null;
@@ -151,6 +166,14 @@ export class DuelDto {
       'Only for the two participants while the lobby is open; null for everyone else',
   })
   lobbyPassword: string | null;
+
+  @ApiPropertyOptional({
+    type: [DuelHeroDto],
+    nullable: true,
+    description:
+      'Random hero per player, drawn at pairing time; picking another hero forfeits the duel',
+  })
+  heroes: DuelHeroDto[] | null;
 
   @ApiPropertyOptional({ type: [DuelLobbyPlayerDto], nullable: true })
   lobbyPlayers: DuelLobbyPlayerDto[] | null;

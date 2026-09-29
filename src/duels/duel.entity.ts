@@ -13,6 +13,7 @@ import {
   DuelState,
   type DuelCancelReason,
   type DuelFailReason,
+  type DuelHeroPick,
   type DuelLobbyPlayer,
   type DuelStats,
 } from './duel.constants';
@@ -71,6 +72,10 @@ export class Duel {
   /** Valve `server_region` (3 = EU West). */
   @Column({ type: 'integer', default: 3 })
   region: number;
+
+  /** Random heroes drawn at pairing time — one per player, both must pick theirs. */
+  @Column({ type: 'jsonb', nullable: true })
+  heroes: DuelHeroPick[] | null;
 
   /** Presence of the two invited players in the lobby, refreshed by the bot on change. */
   @Column({ type: 'jsonb', nullable: true })

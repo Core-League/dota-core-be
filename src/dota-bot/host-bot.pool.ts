@@ -10,6 +10,7 @@ import {
   DUEL_DEFAULT_REGION,
   DUEL_GAME_TIMEOUT_SECONDS,
   DUEL_JOIN_TIMEOUT_SECONDS,
+  DUEL_DEFAULT_GAME_MODE,
   DUEL_LOBBY_NAME_DEFAULT,
   DuelFailReason,
 } from '../duels/duel.constants';
@@ -70,6 +71,7 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
         'HOSTBOT_GAME_TIMEOUT',
         DUEL_GAME_TIMEOUT_SECONDS,
       ),
+      gameMode: envInt('HOSTBOT_GAME_MODE', DUEL_DEFAULT_GAME_MODE),
       tickMs: 3_000,
       statsPollMs: 15_000,
     };
@@ -210,7 +212,8 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
           this.logger.log(
             `Stopping bot #${id} (${worker.account.accountName}): ${account ? 'credentials changed' : 'removed/disabled'}`,
           );
-          await worker.stop();
+          // Removed / disabled / re-credentialed: this bot will not come back, so leave its lobby.
+          await worker.stop({ leaveLobby: true });
           this.workers.delete(id);
         }
       }

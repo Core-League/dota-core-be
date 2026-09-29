@@ -10,7 +10,14 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'node:crypto';
-import { DataSource, EntityManager, In, LessThan, Repository } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  In,
+  IsNull,
+  LessThan,
+  Repository,
+} from 'typeorm';
 import { Player } from '../players/player.entity';
 import {
   DUEL_ACCEPT_WINDOW_SECONDS,
@@ -34,12 +41,14 @@ import {
   type DuelStats,
 } from './duel.constants';
 import { Duel } from './duel.entity';
+import { heroById, pickRandomHeroes } from './dota-heroes';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
 import { HostBotsService } from './host-bots.service';
 import {
   DuelBotsStatusDto,
   DuelDto,
+  DuelHeroDto,
   DuelLeaderboardDto,
   DuelPlayerDto,
   DuelPlayerProfileDto,
@@ -54,6 +63,8 @@ const RECENT_DUELS_LIMIT = 10;
 export interface DuelGcResult {
   dotaMatchId: string | null;
   matchOutcome: number;
+  /** Hero each player actually played (from the lobby / scoreboard), when known. */
+  heroesPlayed?: Array<{ playerId: string; heroId: number }>;
 }
 
 /**
@@ -110,6 +121,16 @@ export class DuelsService {
     };
   }
 
+  private toHeroDto(pick: { playerId: string; heroId: number }): DuelHeroDto {
+    const hero = heroById(pick.heroId);
+    return {
+      playerId: pick.playerId,
+      heroId: pick.heroId,
+      name: hero?.name ?? `npc_dota_hero_${pick.heroId}`,
+      localizedName: hero?.localizedName ?? `Hero #${pick.heroId}`,
+    };
+  }
+
   private isLobbyOpen(state: DuelState): boolean {
     return (
       state === DuelState.LOBBY_CREATING ||
@@ -147,6 +168,7 @@ export class DuelsService {
       player2Rating: duel.player2Rating,
       lobbyName: duel.lobbyName,
       lobbyPassword: showPassword ? duel.lobbyPassword : null,
+      heroes: duel.heroes ? duel.heroes.map((h) => this.toHeroDto(h)) : null,
       lobbyPlayers: duel.lobbyPlayers,
       radiantPlayerId: duel.radiantPlayerId,
       direPlayerId: duel.direPlayerId,
@@ -589,6 +611,10 @@ export class DuelsService {
             Date.now() + DUEL_ACCEPT_WINDOW_SECONDS * 1000,
           ),
           acceptedPlayerIds: [],
+          heroes: pickRandomHeroes(2).map((hero, ix) => ({
+            playerId: ix === 0 ? p1.playerId : p2.playerId,
+            heroId: hero.id,
+          })),
           player1Id: p1.playerId,
           player2Id: p2.playerId,
           player1Rating: p1.rating,
@@ -705,6 +731,14 @@ export class DuelsService {
     );
   }
 
+  /** Valve match id becomes known at launch; stored early so a restarted worker can still resolve the game. */
+  async saveMatchId(duelId: string, dotaMatchId: string): Promise<void> {
+    await this.duels.update(
+      { id: duelId, dotaMatchId: IsNull() },
+      { dotaMatchId },
+    );
+  }
+
   async saveStats(duelId: string, stats: DuelStats): Promise<void> {
     await this.duels.update({ id: duelId }, { stats });
   }
@@ -726,18 +760,35 @@ export class DuelsService {
       duel.dotaMatchId = result.dotaMatchId;
       duel.matchOutcome = result.matchOutcome;
 
-      const winnerId =
+      let winnerId =
         result.matchOutcome === MATCH_OUTCOME_RADIANT
           ? duel.radiantPlayerId
           : result.matchOutcome === MATCH_OUTCOME_DIRE
             ? duel.direPlayerId
             : null;
-      const loserId =
+      let loserId =
         winnerId == null
           ? null
           : winnerId === duel.radiantPlayerId
             ? duel.direPlayerId
             : duel.radiantPlayerId;
+
+      // Random-hero rule: whoever ignored their drawn hero forfeits, whatever
+      // the scoreboard says. Both ignored it → admins decide.
+      const violators = this.heroViolators(duel, result.heroesPlayed);
+      if (violators.length === 2) {
+        duel.state = DuelState.FAILED;
+        duel.failReason = DuelFailReason.WRONG_HEROES;
+        duel.adminReviewRequired = true;
+        duel.finishedAt = new Date();
+        duel.error = 'both players picked a different hero';
+        return em.save(duel);
+      }
+      if (violators.length === 1) {
+        loserId = violators[0];
+        winnerId = loserId === duel.player1Id ? duel.player2Id : duel.player1Id;
+        duel.error = `forfeit: ${loserId} picked a different hero`;
+      }
 
       if (!winnerId || !loserId) {
         duel.state = DuelState.FAILED;
@@ -750,6 +801,21 @@ export class DuelsService {
       await this.applyWinLoss(em, duel, winnerId, loserId, null);
       return em.save(duel);
     });
+  }
+
+  /** Players who played a hero other than the one drawn for them (needs both lists). */
+  private heroViolators(
+    duel: Duel,
+    played: DuelGcResult['heroesPlayed'],
+  ): string[] {
+    if (!duel.heroes?.length || !played?.length) return [];
+    const actual = new Map(played.map((p) => [p.playerId, p.heroId]));
+    return duel.heroes
+      .filter((h) => {
+        const heroId = actual.get(h.playerId);
+        return heroId != null && heroId > 0 && heroId !== h.heroId;
+      })
+      .map((h) => h.playerId);
   }
 
   private async applyWinLoss(
@@ -786,7 +852,7 @@ export class DuelsService {
     duel.finishedAt = duel.finishedAt ?? now;
     duel.adminReviewRequired = false;
     duel.resolvedByAdminId = adminId;
-    duel.error = null;
+    if (!duel.error?.startsWith('forfeit:')) duel.error = null;
   }
 
   /**

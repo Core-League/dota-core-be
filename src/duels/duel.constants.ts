@@ -60,6 +60,14 @@ export enum DuelFailReason {
   LOBBY_LOST = 'lobby_lost',
   GAME_TIMEOUT = 'game_timeout',
   UNDETERMINED_OUTCOME = 'undetermined_outcome',
+  /** Both players ignored their assigned heroes — an admin decides. */
+  WRONG_HEROES = 'wrong_heroes',
+}
+
+/** Hero drawn for a player of a duel; the player must pick exactly this hero. */
+export interface DuelHeroPick {
+  playerId: string;
+  heroId: number;
 }
 
 export type DuelLobbySide = 'radiant' | 'dire' | 'unassigned';
@@ -130,3 +138,14 @@ export const DUEL_DEFAULT_REGION = 3; // EU West
 export const DUEL_JOIN_TIMEOUT_SECONDS = 300;
 export const DUEL_GAME_TIMEOUT_SECONDS = 90 * 60;
 export const DUEL_LOBBY_NAME_DEFAULT = 'Core League 1v1';
+/**
+ * Dota game mode of the hosted lobby (`DOTA_GameMode`): 21 = 1v1 Solo Mid.
+ * Dota has no "random heroes" switch for this mode, so the league draws a
+ * random hero per player at pairing time (`duel.heroes`) and the bot checks
+ * the picked heroes at the end of the game. Env override: `HOSTBOT_GAME_MODE`.
+ */
+export const DUEL_DEFAULT_GAME_MODE = 21;
+/** After the game launched, how long a vanished lobby may stay missing before we give up on the GC. */
+export const DUEL_LOBBY_LOST_GRACE_SECONDS = 120;
+/** POSTGAME without `match_outcome`: wait this long for the GC to fill it in. */
+export const DUEL_POSTGAME_OUTCOME_WAIT_SECONDS = 60;

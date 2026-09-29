@@ -74,6 +74,7 @@ export const LobbyState = {
 } as const;
 
 export const DOTA_GAMEMODE_1V1MID = 21;
+export const DOTA_GAMEMODE_AR = 5;
 export const LOBBY_VISIBILITY_UNLISTED = 2;
 export const ESE_SOURCE2 = 1;
 

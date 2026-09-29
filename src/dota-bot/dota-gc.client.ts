@@ -30,6 +30,8 @@ export interface CreateLobbyOptions {
   gameName: string;
   passKey: string;
   serverRegion: number;
+  /** `DOTA_GameMode`; defaults to 1v1 Solo Mid. */
+  gameMode?: number;
 }
 
 interface SoObject {
@@ -315,7 +317,7 @@ export class DotaGcClient extends EventEmitter {
     const details = {
       game_name: opts.gameName.slice(0, 63),
       server_region: opts.serverRegion,
-      game_mode: DOTA_GAMEMODE_1V1MID,
+      game_mode: opts.gameMode ?? DOTA_GAMEMODE_1V1MID,
       allow_cheats: false,
       fill_with_bots: false,
       allow_spectating: true,

@@ -62,6 +62,7 @@ jobs:
       HOSTBOT_REGION: ${{ vars.HOSTBOT_REGION }}
       HOSTBOT_JOIN_TIMEOUT: ${{ vars.HOSTBOT_JOIN_TIMEOUT }}
       HOSTBOT_GAME_TIMEOUT: ${{ vars.HOSTBOT_GAME_TIMEOUT }}
+      HOSTBOT_GAME_MODE: ${{ vars.HOSTBOT_GAME_MODE }}
       DB_PASS: ${{ secrets.DB_PASS }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
       DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}

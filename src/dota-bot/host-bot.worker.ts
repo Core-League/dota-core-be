@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import {
+  DUEL_LOBBY_LOST_GRACE_SECONDS,
+  DUEL_POSTGAME_OUTCOME_WAIT_SECONDS,
   DuelCancelReason,
   DuelFailReason,
   DuelState,
@@ -28,6 +30,8 @@ import type {
 
 export interface HostBotWorkerConfig {
   lobbyName: string;
+  /** `DOTA_GameMode` of the hosted lobby (5 All Random, 21 1v1 Solo Mid). */
+  gameMode: number;
   joinTimeoutSeconds: number;
   gameTimeoutSeconds: number;
   tickMs: number;
@@ -67,6 +71,12 @@ class DuelCtx {
   lastServerId: string | null = null;
   lastStats: RealtimeStatsRaw | null = null;
   lastCreateAt = 0;
+  /** Valve match id once the GC assigned one (at launch). */
+  lastMatchId: string | null = null;
+  /** When the lobby object disappeared after launch; null while we still see it. */
+  lobbyLostAt: number | null = null;
+  /** When we first saw POSTGAME (outcome may lag behind the state). */
+  postgameAt: number | null = null;
 
   constructor(duel: Duel, joinTimeoutSeconds: number) {
     if (!duel.player1?.steamId || !duel.player2?.steamId) {
@@ -93,6 +103,7 @@ class DuelCtx {
     this.password = duel.lobbyPassword;
     this.region = duel.region;
     this.lobbyId = duel.lobbyId;
+    this.lastMatchId = duel.dotaMatchId;
     this.joinDeadline = this.startedAt + joinTimeoutSeconds * 1000;
   }
 
@@ -167,18 +178,28 @@ export class HostBotWorker {
     );
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Stops the worker. The lobby is kept by default: a process restart (deploy)
+   * must not throw away a running game — the bot stays a member and the
+   * restarted worker re-adopts it from the GC cache. Pass `leaveLobby` when
+   * the bot is being removed for good.
+   */
+  async stop(opts: { leaveLobby?: boolean } = {}): Promise<void> {
     this.stopping = true;
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.reloginTimer) clearTimeout(this.reloginTimer);
     this.stopStatsPolling();
     this.tickTimer = null;
-    if (this.ctx && this.gc?.lobby) {
+    if (opts.leaveLobby && this.ctx && this.gc?.lobby) {
       try {
         this.gc.leaveLobby();
       } catch {
         /* best effort */
       }
+    } else if (this.ctx) {
+      this.logger.log(
+        `Stopping mid-duel ${this.ctx.id} — staying in the lobby for re-adoption`,
+      );
     }
     this.gc?.logOff();
     this.gc = null;
@@ -366,6 +387,14 @@ export class HostBotWorker {
           `Duel ${duel.id} was mid-creation — releasing it back to PENDING`,
         );
         await this.deps.duels.releaseClaim(duel.id);
+      } else if (
+        duel.state === DuelState.LIVE &&
+        duel.dotaMatchId &&
+        (await this.resolveFromWebApi(duel.id, duel.dotaMatchId))
+      ) {
+        this.logger.log(
+          `Duel ${duel.id}: lobby gone after restart, result recovered from the Web API`,
+        );
       } else {
         this.logger.error(
           `Duel ${duel.id}: lobby ${duel.lobbyId} is gone after restart — FAILED`,
@@ -438,6 +467,7 @@ export class HostBotWorker {
       gameName: this.config.lobbyName,
       passKey: ctx.password,
       serverRegion: ctx.region,
+      gameMode: this.config.gameMode,
     });
   }
 
@@ -473,11 +503,30 @@ export class HostBotWorker {
     const lobby = gc.lobby;
     if (!lobby) {
       if (ctx.launched && !ctx.finished) {
-        if (now - ctx.startedAt > 30_000) {
-          this.logger.error(`Lobby vanished mid-game — FAILED (lobby_lost)`);
-          await this.deps.duels.failDuel(ctx.id, DuelFailReason.LOBBY_LOST);
-          await this.finish();
+        // A GC hiccup drops the SO cache for a moment; the lobby usually comes
+        // back. Only after the grace period do we try Valve's Web API for the
+        // result, and only if that has nothing do we give up.
+        if (ctx.lobbyLostAt == null) {
+          ctx.lobbyLostAt = now;
+          this.logger.warn(
+            `Lobby vanished after launch — waiting up to ${DUEL_LOBBY_LOST_GRACE_SECONDS}s for it to come back`,
+          );
+          return;
         }
+        if (now - ctx.lobbyLostAt < DUEL_LOBBY_LOST_GRACE_SECONDS * 1000) {
+          return;
+        }
+        if (
+          ctx.lastMatchId &&
+          (await this.resolveFromWebApi(ctx.id, ctx.lastMatchId))
+        ) {
+          ctx.finished = true;
+          await this.finish();
+          return;
+        }
+        this.logger.error(`Lobby vanished mid-game — FAILED (lobby_lost)`);
+        await this.deps.duels.failDuel(ctx.id, DuelFailReason.LOBBY_LOST);
+        await this.finish();
         return;
       }
       if (
@@ -582,6 +631,19 @@ export class HostBotWorker {
       return;
     }
 
+    if (ctx.lobbyLostAt != null) {
+      this.logger.log('Lobby is back');
+      ctx.lobbyLostAt = null;
+    }
+    if (
+      lobby.match_id &&
+      lobby.match_id !== '0' &&
+      lobby.match_id !== ctx.lastMatchId
+    ) {
+      ctx.lastMatchId = lobby.match_id;
+      await this.deps.duels.saveMatchId(ctx.id, lobby.match_id);
+    }
+
     // 6) game hung
     if (
       ctx.launched &&
@@ -598,11 +660,41 @@ export class HostBotWorker {
       return;
     }
 
-    // 7) result
+    // 7) result — POSTGAME may arrive a beat before match_outcome is filled in
     if (ctx.launched && !ctx.finished && lobby.state === LobbyState.POSTGAME) {
+      const outcome = lobby.match_outcome ?? 0;
+      if (outcome === 0) {
+        ctx.postgameAt ??= now;
+        if (now - ctx.postgameAt < DUEL_POSTGAME_OUTCOME_WAIT_SECONDS * 1000) {
+          return;
+        }
+        this.logger.warn(
+          `POSTGAME without match_outcome for ${DUEL_POSTGAME_OUTCOME_WAIT_SECONDS}s — asking the Web API`,
+        );
+      }
       ctx.finished = true;
       await this.reportResult(ctx, lobby);
     }
+  }
+
+  /**
+   * Last resort when the GC lobby is gone: `GetMatchDetails` by match id.
+   * Applies the result and returns true, or returns false when Valve has no
+   * outcome (yet) — the caller then fails the duel for admin review.
+   */
+  private async resolveFromWebApi(
+    duelId: string,
+    matchId: string,
+  ): Promise<boolean> {
+    if (!this.deps.stats.enabled) return false;
+    const outcome = await this.deps.stats.fetchMatchOutcome(matchId);
+    if (outcome == null) return false;
+    this.logger.log(`Web API ✅ match_id=${matchId} outcome=${outcome}`);
+    await this.deps.duels.applyGcResult(duelId, {
+      dotaMatchId: matchId,
+      matchOutcome: outcome,
+    });
+    return true;
   }
 
   private async broadcastRoster(
@@ -634,14 +726,33 @@ export class HostBotWorker {
 
   private async reportResult(ctx: DuelCtx, lobby: GcLobby): Promise<void> {
     const matchId =
-      lobby.match_id && lobby.match_id !== '0' ? lobby.match_id : null;
-    const outcome = lobby.match_outcome ?? 0;
+      lobby.match_id && lobby.match_id !== '0'
+        ? lobby.match_id
+        : ctx.lastMatchId;
+    let outcome = lobby.match_outcome ?? 0;
+    if (outcome === 0 && matchId && this.deps.stats.enabled) {
+      outcome = (await this.deps.stats.fetchMatchOutcome(matchId)) ?? 0;
+    }
     this.logger.log(`POSTGAME ✅ match_id=${matchId} outcome=${outcome}`);
     this.stopStatsPolling();
+
+    // Heroes actually played: the lobby members carry hero_id after the pick.
+    const heroesPlayed = (lobby.all_members ?? [])
+      .map((m) => ({
+        playerId: ctx.playerIdOf(accountIdOf(m.id)),
+        heroId: m.hero_id ?? 0,
+      }))
+      .filter((h): h is { playerId: string; heroId: number } => !!h.playerId);
+    if (heroesPlayed.length) {
+      this.logger.log(
+        `heroes played: ${heroesPlayed.map((h) => `${h.playerId}=${h.heroId}`).join(', ')}`,
+      );
+    }
 
     await this.deps.duels.applyGcResult(ctx.id, {
       dotaMatchId: matchId,
       matchOutcome: outcome,
+      heroesPlayed,
     });
 
     // Final scoreboard: the server may live a few more seconds after the game.

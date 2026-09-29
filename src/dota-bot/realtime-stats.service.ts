@@ -6,6 +6,8 @@ import { accountIdOf } from './dota-gc.protocol';
 
 const URL =
   'https://api.steampowered.com/IDOTA2MatchStats_570/GetRealtimeStats/v1/';
+const MATCH_DETAILS_URL =
+  'https://api.steampowered.com/IDOTA2Match_570/GetMatchDetails/v1/';
 
 /** Raw `GetRealtimeStats` payload; field names vary between Valve builds. */
 export interface RealtimeStatsRaw {
@@ -71,6 +73,44 @@ export class RealtimeStatsService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`GetRealtimeStats(${serverSteamId}) failed: ${message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Final outcome of a finished match by id (`GetMatchDetails`), used when the
+   * GC lobby vanished before POSTGAME reached us. Returns Valve's
+   * `EMatchOutcome` (2 Radiant, 3 Dire) or null when Valve has nothing yet.
+   */
+  async fetchMatchOutcome(matchId: string): Promise<number | null> {
+    const key = process.env.STEAM_API_KEY?.trim();
+    if (!key) return null;
+    try {
+      const res = await firstValueFrom(
+        this.http.get<{ result?: { radiant_win?: boolean; error?: string } }>(
+          MATCH_DETAILS_URL,
+          {
+            params: { key, match_id: matchId },
+            timeout: 10_000,
+            validateStatus: () => true,
+          },
+        ),
+      );
+      const result = res.data?.result;
+      if (
+        res.status !== 200 ||
+        !result ||
+        typeof result.radiant_win !== 'boolean'
+      ) {
+        this.logger.warn(
+          `GetMatchDetails(${matchId}): ${res.status} ${result?.error ?? 'no radiant_win'}`,
+        );
+        return null;
+      }
+      return result.radiant_win ? 2 : 3;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`GetMatchDetails(${matchId}) failed: ${message}`);
       return null;
     }
   }
