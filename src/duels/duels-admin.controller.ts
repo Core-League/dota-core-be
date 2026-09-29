@@ -32,6 +32,7 @@ import {
   UpdateHostBotDto,
 } from './dto/duel-admin.dto';
 import { DuelDto, DuelRatingDto } from './dto/duel.dto';
+import { AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
 import { DuelsService } from './duels.service';
 import { HostBotsService } from './host-bots.service';
 
@@ -68,6 +69,26 @@ export class DuelsAdminController {
   @ApiOkResponse({ type: HostBotDto })
   createBot(@Body() body: CreateHostBotDto): Promise<HostBotDto> {
     return this.hostBots.create(body);
+  }
+
+  @Post('bots/reload')
+  @ApiOperation({
+    summary: 'Restart every enabled bot',
+    description:
+      'The worker logs the bots out and in again within ~30 s; bots that gave up after a login error retry. ' +
+      'A bot hosting a game restarts once it is free. Returns how many bots were flagged.',
+  })
+  @ApiOkResponse({ type: Number })
+  reloadBots(): Promise<number> {
+    return this.hostBots.requestReload();
+  }
+
+  @Post('bots/:id/reload')
+  @ApiOperation({ summary: 'Restart one bot' })
+  @ApiParam({ name: 'id', type: Number })
+  @ApiOkResponse({ type: Number })
+  reloadBot(@Param('id', ParseIntPipe) id: number): Promise<number> {
+    return this.hostBots.requestReload(id);
   }
 
   @Patch('bots/:id')
@@ -109,6 +130,17 @@ export class DuelsAdminController {
   @ApiOkResponse({ type: DuelDto, isArray: true })
   list(@Query() query: AdminListDuelsQueryDto): Promise<DuelDto[]> {
     return this.duels.adminList(query.state, query.limit ?? 50);
+  }
+
+  @Delete()
+  @ApiOperation({
+    summary: 'Delete every 1v1 duel and reset the ladder',
+    description:
+      'Removes all duels, all rating lines and the queue. Irreversible. Bots leave their lobbies on the next tick.',
+  })
+  @ApiOkResponse({ type: AdminPurgeDuelsResultDto })
+  purgeAll(@Req() req: AuthedRequest): Promise<AdminPurgeDuelsResultDto> {
+    return this.duels.adminPurgeAll(req.user.playerId);
   }
 
   @Post(':id/cancel')

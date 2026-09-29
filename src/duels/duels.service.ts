@@ -44,7 +44,9 @@ import { Duel } from './duel.entity';
 import { heroById, pickRandomHeroes } from './dota-heroes';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
+import { HostBot } from './host-bot.entity';
 import { HostBotsService } from './host-bots.service';
+import { AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
 import {
   DuelBotsStatusDto,
   DuelDto,
@@ -1109,6 +1111,35 @@ export class DuelsService {
       `Duel ${duelId} resolved by admin ${adminId}: winner=${winnerId ?? 'void'}`,
     );
     return this.getDuel(duelId, null);
+  }
+
+  /**
+   * Full ladder reset: every duel, rating line and queue entry goes away and
+   * host bots forget their current duel. Workers notice the missing duel on
+   * their next tick and leave the lobby. Irreversible — admin only.
+   */
+  async adminPurgeAll(adminId: string): Promise<AdminPurgeDuelsResultDto> {
+    const result = await this.dataSource.transaction(async (em) => {
+      const queue =
+        (await em.createQueryBuilder().delete().from(DuelQueueEntry).execute())
+          .affected ?? 0;
+      const duels =
+        (await em.createQueryBuilder().delete().from(Duel).execute())
+          .affected ?? 0;
+      const ratings =
+        (await em.createQueryBuilder().delete().from(DuelRating).execute())
+          .affected ?? 0;
+      await em
+        .createQueryBuilder()
+        .update(HostBot)
+        .set({ currentDuelId: null })
+        .execute();
+      return { duels, ratings, queue };
+    });
+    this.logger.warn(
+      `Ladder purged by admin ${adminId}: ${result.duels} duels, ${result.ratings} ratings, ${result.queue} queue entries`,
+    );
+    return result;
   }
 
   async adminSetRating(

@@ -27,6 +27,8 @@ export interface HostBotAccount {
   accountName: string;
   password: string;
   region: number;
+  /** Epoch ms of the last admin restart request; 0 when none. */
+  reloadRequestedAt: number;
 }
 
 /**
@@ -117,6 +119,26 @@ export class HostBotsService {
     return this.toDto(await this.repo.save(bot));
   }
 
+  /**
+   * Ask the worker to log the bot(s) out and in again — also revives bots that
+   * gave up after a login error. Takes effect on the worker's next reload
+   * pass (≤ 30 s). A bot hosting a game is restarted only after it is free.
+   */
+  async requestReload(id?: number): Promise<number> {
+    const qb = this.repo
+      .createQueryBuilder()
+      .update(HostBot)
+      .set({ reloadRequestedAt: () => 'now()', lastError: null });
+    if (id != null) {
+      const bot = await this.repo.findOne({ where: { id } });
+      if (!bot) throw new NotFoundException('Host bot not found');
+      qb.where('id = :id', { id });
+    } else {
+      qb.where('enabled = true');
+    }
+    return (await qb.execute()).affected ?? 0;
+  }
+
   async remove(id: number): Promise<void> {
     const bot = await this.repo.findOne({ where: { id } });
     if (!bot) throw new NotFoundException('Host bot not found');
@@ -145,6 +167,7 @@ export class HostBotsService {
         accountName: row.accountName,
         password: decryptHostBotPassword(row.passwordEnc),
         region: row.region,
+        reloadRequestedAt: row.reloadRequestedAt?.getTime() ?? 0,
       });
     }
     return out;

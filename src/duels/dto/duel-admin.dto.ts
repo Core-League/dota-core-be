@@ -1,4 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+/** What `DELETE /admin/duels` removed. */
+export class AdminPurgeDuelsResultDto {
+  @ApiProperty({ description: 'Duel rows deleted' })
+  duels: number;
+
+  @ApiProperty({
+    description: 'Rating lines deleted (everyone starts from 0 again)',
+  })
+  ratings: number;
+
+  @ApiProperty({ description: 'Queue entries deleted' })
+  queue: number;
+}
 import {
   IsBoolean,
   IsEnum,

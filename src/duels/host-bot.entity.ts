@@ -47,6 +47,10 @@ export class HostBot {
   @Column({ type: 'boolean', default: true })
   enabled: boolean;
 
+  /** Admin asked for a restart; the worker restarts the bot when this is newer than its start. */
+  @Column({ type: 'timestamptz', nullable: true })
+  reloadRequestedAt: Date | null;
+
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 }

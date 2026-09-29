@@ -208,6 +208,18 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
           account &&
           (account.password !== worker.account.password ||
             account.accountName !== worker.account.accountName);
+        const reloadAsked =
+          account &&
+          account.reloadRequestedAt > worker.startedAt &&
+          !worker.isHosting;
+        if (reloadAsked) {
+          this.logger.log(
+            `Restarting bot #${id} (${worker.account.accountName}) on admin request`,
+          );
+          await worker.stop({ leaveLobby: true });
+          this.workers.delete(id);
+          continue;
+        }
         if (!account || changed) {
           this.logger.log(
             `Stopping bot #${id} (${worker.account.accountName}): ${account ? 'credentials changed' : 'removed/disabled'}`,

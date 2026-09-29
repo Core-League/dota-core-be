@@ -136,6 +136,7 @@ export class HostBotWorker {
   private stopping = false;
   private ticking = false;
   private gaveUp = false;
+  private startedAtMs = 0;
 
   constructor(
     readonly account: HostBotAccount,
@@ -147,6 +148,15 @@ export class HostBotWorker {
 
   get id(): number {
     return this.account.id;
+  }
+
+  /** When `start()` last ran (epoch ms); admin reload requests newer than this restart the bot. */
+  get startedAt(): number {
+    return this.startedAtMs;
+  }
+
+  get isHosting(): boolean {
+    return this.ctx != null;
   }
 
   get gcReady(): boolean {
@@ -171,6 +181,7 @@ export class HostBotWorker {
   start(): void {
     this.stopping = false;
     this.gaveUp = false;
+    this.startedAtMs = Date.now();
     this.connect();
     this.tickTimer = setInterval(
       () => void this.safeTick(),
