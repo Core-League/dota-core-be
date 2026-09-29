@@ -28,6 +28,7 @@ import {
 } from '../auth/guards/own-player-or-admin.guard';
 import { PlayerResponseDto } from './dto/player-response.dto';
 import { PlayerMatchStatsDto } from './dto/player-match-stats.dto';
+import { PlayerAchievementsDto } from './dto/player-achievements.dto';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { UpdatePlayerDto } from './dto/update-player.dto';
@@ -70,6 +71,15 @@ export class PlayersController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<PlayerMatchStatsDto> {
     return this.playersService.getMatchStats(id);
+  }
+
+  /** Profile trophies: tournament placements and platform records (public, like the profile). */
+  @Get(':id/achievements')
+  @ApiOkResponse({ type: PlayerAchievementsDto })
+  getAchievements(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<PlayerAchievementsDto> {
+    return this.playersService.getAchievements(id);
   }
 
   @Patch(':id')
