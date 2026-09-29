@@ -66,9 +66,19 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit(): Promise<void> {
-    if (!process.env.HOSTBOT_SECRET_KEY?.trim()) {
+    // The timers are what keeps this HTTP-less process alive, so they are
+    // installed unconditionally: a missing secret key or an empty pool must
+    // wait and retry, not let the event loop drain and the container restart.
+    this.timers = [
+      setInterval(() => void this.claim(), CLAIM_INTERVAL_MS),
+      setInterval(() => void this.reload(), RELOAD_INTERVAL_MS),
+      setInterval(() => void this.heartbeat(), HEARTBEAT_INTERVAL_MS),
+    ];
+
+    if (!this.hasSecretKey()) {
       this.logger.error(
-        'HOSTBOT_SECRET_KEY is not set — bot passwords cannot be decrypted, no bots will start',
+        'HOSTBOT_SECRET_KEY is not set — bot passwords cannot be decrypted. ' +
+          'Set it (npm run bot:keygen) and restart; retrying every 30 s meanwhile.',
       );
       return;
     }
@@ -80,12 +90,11 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
     await this.bootstrapAccountsIfEmpty();
     await this.reload();
     await this.recoverOrphans();
-    this.timers = [
-      setInterval(() => void this.claim(), CLAIM_INTERVAL_MS),
-      setInterval(() => void this.reload(), RELOAD_INTERVAL_MS),
-      setInterval(() => void this.heartbeat(), HEARTBEAT_INTERVAL_MS),
-    ];
     this.logger.log(`Pool started with ${this.workers.size} bot(s)`);
+  }
+
+  private hasSecretKey(): boolean {
+    return !!process.env.HOSTBOT_SECRET_KEY?.trim();
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -128,6 +137,7 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
   /** Start workers for new/enabled rows, stop workers for removed/disabled ones. */
   private async reload(): Promise<void> {
     if (this.reloading) return;
+    if (!this.hasSecretKey()) return; // logged once at startup
     this.reloading = true;
     try {
       let accounts: HostBotAccount[];
