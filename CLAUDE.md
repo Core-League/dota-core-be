@@ -84,7 +84,7 @@ Each process bootstraps its own root module, so only its own entities/pipes load
 
 **Environment loading**: loads `.env`, then overlays `.env.dev` for `development`/`test` (non-empty values only; skipped on staging/production). v1 loads it via `src/config/load-env.ts`; v2 via `src/connectors/config/load-env.ts` — both read the same root `.env*` files.
 
-**Key env vars:** `NODE_ENV`, `PORT`, `DB_*`, `JWT_SECRET`, `JWT_EXPIRES_SEC`, `DISCORD_*`, `STEAM_*`, `CORS_ORIGINS`, `HOSTBOT_SECRET_KEY` (+ optional `HOSTBOT_LOBBY_NAME`, `HOSTBOT_REGION`, `HOSTBOT_JOIN_TIMEOUT`, `HOSTBOT_GAME_TIMEOUT`, `HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON`). Bot Steam accounts must have Steam Guard disabled and must have opened Dota 2 once (GC onboarding); verify one with `npm run bot:smoke` before adding it through `POST /admin/duels/bots`.
+**Key env vars:** `NODE_ENV`, `PORT`, `DB_*`, `JWT_SECRET`, `JWT_EXPIRES_SEC`, `DISCORD_*`, `STEAM_*`, `CORS_ORIGINS`, `HOSTBOT_SECRET_KEY` (+ optional `HOSTBOT_LOBBY_NAME`, `HOSTBOT_REGION`, `HOSTBOT_JOIN_TIMEOUT`, `HOSTBOT_GAME_TIMEOUT`, `HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON`). Bot Steam accounts must have Steam Guard disabled and must have opened Dota 2 once (GC onboarding); verify one with `npm run bot:smoke` before adding it. First-start seeding of an empty `host_bot` table: `HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON` (prod secret) or the git-ignored `hostbot-accounts.json` at the repo root (`HOSTBOT_ACCOUNTS_FILE` overrides the path); afterwards manage accounts through `/admin/duels/bots`.
 
 ## Deployment
 

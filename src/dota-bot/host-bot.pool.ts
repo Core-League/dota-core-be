@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   Injectable,
   Logger,
@@ -22,6 +24,14 @@ import { RealtimeStatsService } from './realtime-stats.service';
 const CLAIM_INTERVAL_MS = 3_000;
 const RELOAD_INTERVAL_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
+/** Git-ignored seed file at the repo root; `HOSTBOT_ACCOUNTS_FILE` overrides the path. */
+const DEFAULT_ACCOUNTS_FILE = 'hostbot-accounts.json';
+
+interface SeedAccount {
+  username: string;
+  password: string;
+  region?: number;
+}
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -105,32 +115,72 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
     this.workers.clear();
   }
 
-  /** First start in Docker: seed accounts from `HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON` if the table is empty. */
+  /**
+   * Seed the pool on first start (only while `host_bot` is empty). Source, in
+   * order: `HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON` (prod: a GitHub secret), else the
+   * git-ignored `hostbot-accounts.json` at the repo root (local / self-hosted;
+   * path override: `HOSTBOT_ACCOUNTS_FILE`). Format either way:
+   * `[{"username":"…","password":"…","region":3}, …]`.
+   */
   private async bootstrapAccountsIfEmpty(): Promise<void> {
-    const raw = process.env.HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON?.trim();
-    if (!raw) return;
     const existing = await this.hostBots.list();
     if (existing.length) return;
-    let accounts: Array<{
-      username: string;
-      password: string;
-      region?: number;
-    }>;
-    try {
-      accounts = JSON.parse(raw) as typeof accounts;
-    } catch {
-      this.logger.error(
-        'HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON is not valid JSON — ignored',
-      );
-      return;
-    }
-    for (const a of accounts) {
+
+    const seed = this.readSeedAccounts();
+    if (!seed) return;
+    for (const a of seed.accounts) {
+      if (!a.username || !a.password) {
+        this.logger.warn(
+          `Seed (${seed.source}): entry without username/password skipped`,
+        );
+        continue;
+      }
       await this.hostBots.create({
         accountName: a.username,
         password: a.password,
         region: a.region ?? envInt('HOSTBOT_REGION', DUEL_DEFAULT_REGION),
       });
-      this.logger.log(`Bootstrap: added ${a.username} to the pool`);
+      this.logger.log(`Seed (${seed.source}): added ${a.username} to the pool`);
+    }
+  }
+
+  private readSeedAccounts(): {
+    source: string;
+    accounts: SeedAccount[];
+  } | null {
+    const fromEnv = process.env.HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON?.trim();
+    if (fromEnv) {
+      const accounts = this.parseSeed(
+        fromEnv,
+        'HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON',
+      );
+      return accounts ? { source: 'env', accounts } : null;
+    }
+    const file = resolve(
+      process.cwd(),
+      process.env.HOSTBOT_ACCOUNTS_FILE?.trim() || DEFAULT_ACCOUNTS_FILE,
+    );
+    if (!existsSync(file)) {
+      this.logger.log(
+        `No bot accounts seeded: neither HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON nor ${file} present`,
+      );
+      return null;
+    }
+    const accounts = this.parseSeed(readFileSync(file, 'utf8'), file);
+    return accounts ? { source: file, accounts } : null;
+  }
+
+  private parseSeed(raw: string, label: string): SeedAccount[] | null {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error('expected a JSON array');
+      return parsed as SeedAccount[];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `${label} is not a valid accounts JSON (${message}) — ignored`,
+      );
+      return null;
     }
   }
 
