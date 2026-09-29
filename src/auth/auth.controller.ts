@@ -49,7 +49,7 @@ export class AuthController {
     return this.authService.exchangeDiscordCode(body);
   }
 
-  // ── Steam OpenID ─────────────────────────────────────────────────────────
+  // ── Steam OpenID ────────────────────────────────────────────────────────
 
   @Get('steam/link')
   @UseGuards(JwtAuthGuard)
