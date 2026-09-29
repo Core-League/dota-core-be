@@ -65,6 +65,9 @@ import {
   LinkManualMatchDto,
   LinkManualMatchResultDto,
   ManualMatchDto,
+  SetMapDotaMatchDto,
+  SetMapDotaMatchResultDto,
+  TournamentMapDto,
 } from './dto/manual-match.dto';
 
 const IMAGE_INTERCEPTOR_OPTIONS = {
@@ -519,6 +522,39 @@ export class TournamentsController {
     @Body() body: LinkManualMatchDto,
   ) {
     return this.manualMatches.linkDotaMatch(id, body);
+  }
+
+  @Get(':id/maps')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Every qualification / playoff map with its Dota match id',
+    description:
+      'Audit view for admins: all maps of the tournament that have both teams, including those ' +
+      'without a result, with whatever dotaMatchId they carry. Fix a wrong or missing id with ' +
+      'PATCH …/maps/dota-match.',
+  })
+  @ApiOkResponse({ type: [TournamentMapDto] })
+  listMaps(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.manualMatches.listMaps(id);
+  }
+
+  @Patch(':id/maps/dota-match')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Replace or detach the Dota 2 match id of a map',
+    description:
+      'Works on any map, including one that already has a (wrong) real id. A numeric id is checked ' +
+      'against OpenDota (teams and winner) unless `force` is set; `null` detaches the id. Participant ' +
+      'rows of the old id are dropped and rewritten. Points and the bracket are left untouched.',
+  })
+  @ApiOkResponse({ type: SetMapDotaMatchResultDto })
+  setMapDotaMatch(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: SetMapDotaMatchDto,
+  ): Promise<SetMapDotaMatchResultDto> {
+    return this.manualMatches.setDotaMatch(id, body);
   }
 
   @Get(':id/playoff')

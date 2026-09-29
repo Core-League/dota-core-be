@@ -78,6 +78,15 @@ export class MatchParticipantsRepository {
     });
   }
 
+  /** Drop every participant row of one map (before its Dota match id changes). */
+  async deleteForMatch(
+    stage: MatchParticipant['stage'],
+    matchId: string,
+  ): Promise<number> {
+    const result = await this.repo.delete({ stage, matchId });
+    return result.affected ?? 0;
+  }
+
   findPlayersBySteamIds(
     steamIds: string[],
   ): Promise<Pick<Player, 'id' | 'steamId'>[]> {

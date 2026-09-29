@@ -60,6 +60,14 @@ export class MatchParticipantsService {
   }
 
   /**
+   * Forget who played a map — used when its Dota match id is detached or
+   * replaced, so statistics never mix two different games.
+   */
+  removeForMatch(stage: MatchStage, matchId: string): Promise<number> {
+    return this.repo.deleteForMatch(stage, matchId);
+  }
+
+  /**
    * Walk recorded maps that have no participant rows yet, oldest Dota match
    * first, and fill them from OpenDota. Resumable via `afterDotaMatchId`;
    * failures are reported and skipped so one broken map cannot block the rest.

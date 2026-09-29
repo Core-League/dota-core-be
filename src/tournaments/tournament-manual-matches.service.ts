@@ -20,6 +20,9 @@ import {
   LinkManualMatchResultDto,
   ManualMatchDto,
   ManualMatchTeamDto,
+  SetMapDotaMatchDto,
+  SetMapDotaMatchResultDto,
+  TournamentMapDto,
 } from './dto/manual-match.dto';
 
 const STEAM_ID_OFFSET = 76561197960265728n;
@@ -100,6 +103,278 @@ export class TournamentManualMatchesService {
       }));
 
     return [...qual, ...playoff];
+  }
+
+  /** Every map of the tournament with both teams known, whatever its Dota match id — the audit view. */
+  async listMaps(tournamentId: string): Promise<TournamentMapDto[]> {
+    const qualMatches = await this.dataSource
+      .getRepository(QualificationMatch)
+      .find({
+        where: { qualification: { tournament: { id: tournamentId } } },
+        relations: ['teamA', 'teamB', 'winner'],
+      });
+
+    const playoffMatches = await this.dataSource
+      .getRepository(PlayoffMatch)
+      .find({
+        where: { playoff: { tournamentId } },
+        relations: ['teamA', 'teamB', 'series'],
+        order: { createdAt: 'ASC' },
+      });
+
+    const qual: TournamentMapDto[] = qualMatches
+      .filter((m) => m.teamA && m.teamB)
+      .map((m) => ({
+        stage: 'qualification',
+        matchId: m.id,
+        teamA: toTeamDto(m.teamA!),
+        teamB: toTeamDto(m.teamB!),
+        winnerTeamId: m.winner?.id ?? null,
+        dotaMatchId: m.dotaMatchId,
+        createdAt: null,
+        gameNumber: null,
+        bestOf: null,
+        finalType: null,
+        seriesId: null,
+      }));
+
+    const playoff: TournamentMapDto[] = playoffMatches
+      .filter((m) => m.teamA && m.teamB)
+      .map((m) => ({
+        stage: 'playoff',
+        matchId: m.id,
+        teamA: toTeamDto(m.teamA!),
+        teamB: toTeamDto(m.teamB!),
+        winnerTeamId: m.winnerId,
+        dotaMatchId: m.dotaMatchId,
+        createdAt: m.createdAt?.toISOString() ?? null,
+        gameNumber: m.gameNumber,
+        bestOf: m.series?.bestOf ?? null,
+        finalType: m.series?.finalType ?? null,
+        seriesId: m.seriesId,
+      }));
+
+    return [...qual, ...playoff];
+  }
+
+  /**
+   * Replace or detach the Dota match id of any map. Unlike `linkDotaMatch` it
+   * also accepts maps that already carry a real id (a wrong one) and maps
+   * without a recorded winner. Participant rows of the old id are dropped and
+   * rewritten from the new match; points and the bracket stay untouched.
+   */
+  async setDotaMatch(
+    tournamentId: string,
+    dto: SetMapDotaMatchDto,
+  ): Promise<SetMapDotaMatchResultDto> {
+    const next = dto.dotaMatchId?.trim() || null;
+    if (next !== null && !NUMERIC_ID.test(next)) {
+      throw new BadRequestException('ID матчу Dota 2 має бути числом');
+    }
+
+    const target = await this.loadMap(tournamentId, dto.stage, dto.matchId);
+    const previous = target.dotaMatchId;
+    const base = {
+      stage: dto.stage,
+      matchId: dto.matchId,
+      previousDotaMatchId: previous,
+    };
+
+    if (next === previous) {
+      return {
+        ...base,
+        dotaMatchId: next,
+        winnerVerified: false,
+        participantsRemoved: 0,
+        participantsRecorded: 0,
+      };
+    }
+
+    if (next === null) {
+      const participantsRemoved = await this.matchParticipants.removeForMatch(
+        dto.stage,
+        dto.matchId,
+      );
+      await this.storeDotaMatchId(dto.stage, dto.matchId, null);
+      this.logger.log(
+        `Detached dota match ${previous} from ${dto.stage} map ${dto.matchId} (tournament ${tournamentId})`,
+      );
+      return {
+        ...base,
+        dotaMatchId: null,
+        winnerVerified: false,
+        participantsRemoved,
+        participantsRecorded: 0,
+      };
+    }
+
+    await this.assertDotaIdUnusedExcept(next, dto.stage, dto.matchId);
+
+    const matchData = await this.dota2.getOpenDotaMatch(next);
+    if (typeof matchData.radiant_win !== 'boolean') {
+      throw new UnprocessableEntityException(
+        'OpenDota не повернув результат матчу — спробуйте пізніше',
+      );
+    }
+
+    const radiantCoreTeamId = await this.resolveRadiantCoreTeamId(
+      target.teamA,
+      target.teamB,
+      matchData,
+    );
+    let winnerVerified = false;
+    if (radiantCoreTeamId) {
+      const dotaWinnerId = matchData.radiant_win
+        ? radiantCoreTeamId
+        : radiantCoreTeamId === target.teamA.id
+          ? target.teamB.id
+          : target.teamA.id;
+      if (target.winnerId && dotaWinnerId !== target.winnerId && !dto.force) {
+        const dotaWinner =
+          dotaWinnerId === target.teamA.id ? target.teamA : target.teamB;
+        throw new UnprocessableEntityException(
+          `У матчі ${next} перемогла «${dotaWinner.name}», а в Core записано іншого переможця. ` +
+            'Спершу виправте результат або передайте force.',
+        );
+      }
+      winnerVerified = target.winnerId === dotaWinnerId;
+    } else if (!dto.force) {
+      throw new UnprocessableEntityException(
+        `Не вдалося впізнати команди Core у матчі ${next} — перевірте ID або передайте force.`,
+      );
+    }
+
+    const participantsRemoved = await this.matchParticipants.removeForMatch(
+      dto.stage,
+      dto.matchId,
+    );
+    await this.storeDotaMatchId(dto.stage, dto.matchId, next);
+
+    let participantsRecorded = 0;
+    if (target.winnerId) {
+      participantsRecorded = await this.matchParticipants.recordFromDota(
+        {
+          stage: dto.stage,
+          matchId: dto.matchId,
+          tournamentId,
+          dotaMatchId: next,
+          teamAId: target.teamA.id,
+          teamBId: target.teamB.id,
+          winnerId: target.winnerId,
+        },
+        matchData,
+      );
+      void this.duelo.sendMatchResult(matchData, `${dto.stage}:relink`);
+    }
+
+    this.logger.log(
+      `Set dota match ${next} (was ${previous}) on ${dto.stage} map ${dto.matchId} (tournament ${tournamentId}); ` +
+        `winnerVerified=${winnerVerified}, force=${dto.force === true}, participants=${participantsRecorded}`,
+    );
+
+    return {
+      ...base,
+      dotaMatchId: next,
+      winnerVerified,
+      participantsRemoved,
+      participantsRecorded,
+    };
+  }
+
+  private async storeDotaMatchId(
+    stage: MatchStage,
+    matchId: string,
+    dotaMatchId: string | null,
+  ): Promise<void> {
+    if (stage === 'qualification') {
+      await this.dataSource
+        .getRepository(QualificationMatch)
+        .update({ id: matchId }, { dotaMatchId });
+    } else {
+      await this.dataSource
+        .getRepository(PlayoffMatch)
+        .update({ id: matchId }, { dotaMatchId });
+    }
+  }
+
+  /** Any map of the tournament with both teams present; winner and Dota id may be missing. */
+  private async loadMap(
+    tournamentId: string,
+    stage: MatchStage,
+    matchId: string,
+  ): Promise<{
+    teamA: Team;
+    teamB: Team;
+    winnerId: string | null;
+    dotaMatchId: string | null;
+  }> {
+    if (stage === 'qualification') {
+      const match = await this.dataSource
+        .getRepository(QualificationMatch)
+        .findOne({
+          where: { id: matchId },
+          relations: [
+            'qualification',
+            'qualification.tournament',
+            'teamA',
+            'teamB',
+            'winner',
+          ],
+        });
+      if (!match || match.qualification?.tournament?.id !== tournamentId) {
+        throw new NotFoundException('Кваліфікаційний матч не знайдено');
+      }
+      if (!match.teamA || !match.teamB) {
+        throw new BadRequestException('Одну з команд матчу видалено');
+      }
+      return {
+        teamA: match.teamA,
+        teamB: match.teamB,
+        winnerId: match.winner?.id ?? null,
+        dotaMatchId: match.dotaMatchId,
+      };
+    }
+
+    const match = await this.dataSource.getRepository(PlayoffMatch).findOne({
+      where: { id: matchId },
+      relations: ['playoff', 'teamA', 'teamB'],
+    });
+    if (!match || match.playoff?.tournamentId !== tournamentId) {
+      throw new NotFoundException('Матч плей-оф не знайдено');
+    }
+    if (!match.teamA || !match.teamB) {
+      throw new BadRequestException('Одну з команд матчу видалено');
+    }
+    return {
+      teamA: match.teamA,
+      teamB: match.teamB,
+      winnerId: match.winnerId,
+      dotaMatchId: match.dotaMatchId,
+    };
+  }
+
+  /** Like `assertDotaIdUnused`, but the map being edited may already hold the id. */
+  private async assertDotaIdUnusedExcept(
+    dotaMatchId: string,
+    stage: MatchStage,
+    matchId: string,
+  ): Promise<void> {
+    const [qual, playoff] = await Promise.all([
+      this.dataSource
+        .getRepository(QualificationMatch)
+        .findOne({ where: { dotaMatchId }, select: ['id'] }),
+      this.dataSource
+        .getRepository(PlayoffMatch)
+        .findOne({ where: { dotaMatchId }, select: ['id'] }),
+    ]);
+    const clashes =
+      (qual && !(stage === 'qualification' && qual.id === matchId)) ||
+      (playoff && !(stage === 'playoff' && playoff.id === matchId));
+    if (clashes) {
+      throw new BadRequestException(
+        `Dota-матч ${dotaMatchId} уже прив’язано до іншого матчу`,
+      );
+    }
   }
 
   async linkDotaMatch(
