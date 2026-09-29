@@ -115,12 +115,16 @@ export class DuelsAdminController {
   @ApiOperation({
     summary: 'Cancel an active duel',
     description:
-      'No rating change. The host bot leaves the lobby on its next tick.',
+      'No rating change. The host bot leaves the lobby on its next tick. ' +
+      'When the admin is a participant, the opponent is re-queued automatically.',
   })
   @ApiParam({ name: 'id', type: String, format: 'uuid' })
   @ApiOkResponse({ type: DuelDto })
-  cancel(@Param('id', ParseUUIDPipe) id: string): Promise<DuelDto> {
-    return this.duels.adminCancel(id);
+  cancel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelDto> {
+    return this.duels.adminCancel(id, req.user.playerId);
   }
 
   @Post(':id/resolve')

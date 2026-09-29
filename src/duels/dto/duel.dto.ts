@@ -115,6 +115,21 @@ export class DuelDto {
   })
   joinDeadlineAt: Date | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    format: 'date-time',
+    description:
+      'Both players must accept before this moment (ACCEPTING only, 30 s after pairing)',
+  })
+  acceptDeadlineAt: Date | null;
+
+  @ApiProperty({
+    type: [String],
+    description: 'Players who already pressed Accept',
+  })
+  acceptedPlayerIds: string[];
+
   @ApiPropertyOptional({ type: DuelPlayerDto, nullable: true })
   player1: DuelPlayerDto | null;
 
@@ -166,6 +181,13 @@ export class DuelDto {
 
   @ApiPropertyOptional({ nullable: true, enum: DuelFailReason })
   failReason: DuelFailReason | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Who cancelled the duel (player or admin); null for automatic cancels',
+  })
+  cancelledById: string | null;
 
   @ApiProperty()
   adminReviewRequired: boolean;
@@ -226,6 +248,22 @@ export enum DuelQueueBlockedReason {
   COOLDOWN = 'cooldown',
   ACTIVE_DUEL = 'active_duel',
   ALREADY_QUEUED = 'already_queued',
+  NO_BOTS_ONLINE = 'no_bots_online',
+}
+
+/** Public host-bot pool summary shown next to the queue. */
+export class DuelBotsStatusDto {
+  @ApiProperty({ description: 'Enabled, non-banned bots' })
+  total: number;
+
+  @ApiProperty({ description: 'Bots whose worker is alive (FREE + BUSY)' })
+  online: number;
+
+  @ApiProperty()
+  free: number;
+
+  @ApiProperty()
+  busy: number;
 }
 
 /** Everything the /1v1 page needs; polled every few seconds while queued or in a duel. */
@@ -254,6 +292,13 @@ export class DuelStatusDto {
 
   @ApiPropertyOptional({ nullable: true, enum: DuelQueueBlockedReason })
   queueBlockedReason: DuelQueueBlockedReason | null;
+
+  @ApiProperty({
+    type: DuelBotsStatusDto,
+    description:
+      'Host bot pool snapshot; queueing is blocked while online is 0',
+  })
+  bots: DuelBotsStatusDto;
 }
 
 export class DuelLeaderboardRowDto {

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -9,12 +10,15 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'node:crypto';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, LessThan, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import {
+  DUEL_ACCEPT_WINDOW_SECONDS,
   DUEL_ACTIVE_STATES,
+  DUEL_CANCEL_PENALTY,
   DUEL_JOIN_TIMEOUT_SECONDS,
   DUEL_NO_SHOW_COOLDOWN_SECONDS,
+  DUEL_PLAYER_CANCELLABLE_STATES,
   DUEL_QUEUE_WINDOW_BASE,
   DUEL_QUEUE_WINDOW_STEP,
   DUEL_QUEUE_WINDOW_STEP_SECONDS,
@@ -32,7 +36,9 @@ import {
 import { Duel } from './duel.entity';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
+import { HostBotsService } from './host-bots.service';
 import {
+  DuelBotsStatusDto,
   DuelDto,
   DuelLeaderboardDto,
   DuelPlayerDto,
@@ -68,6 +74,7 @@ export class DuelsService {
     @InjectRepository(DuelQueueEntry)
     private readonly queue: Repository<DuelQueueEntry>,
     @InjectRepository(Player) private readonly players: Repository<Player>,
+    private readonly hostBots: HostBotsService,
   ) {}
 
   // ── mapping ──────────────────────────────────────────────────────────────
@@ -132,6 +139,8 @@ export class DuelsService {
             duel.lobbyReadyAt.getTime() + DUEL_JOIN_TIMEOUT_SECONDS * 1000,
           )
         : null,
+      acceptDeadlineAt: duel.acceptDeadlineAt,
+      acceptedPlayerIds: duel.acceptedPlayerIds ?? [],
       player1: this.toPlayerDto(duel.player1, ratings),
       player2: this.toPlayerDto(duel.player2, ratings),
       player1Rating: duel.player1Rating,
@@ -147,6 +156,7 @@ export class DuelsService {
       ratingDelta: duel.ratingDelta,
       cancelReason: duel.cancelReason,
       failReason: duel.failReason,
+      cancelledById: duel.cancelledById,
       adminReviewRequired: duel.adminReviewRequired,
       stats: duel.stats,
     };
@@ -241,6 +251,7 @@ export class DuelsService {
     player: Player,
     rating: DuelRating | null,
     queued: boolean,
+    bots: DuelBotsStatusDto,
   ): Promise<DuelQueueBlockedReason | null> {
     if (!player.steamId) return DuelQueueBlockedReason.STEAM_NOT_LINKED;
     if (queued) return DuelQueueBlockedReason.ALREADY_QUEUED;
@@ -250,6 +261,7 @@ export class DuelsService {
     if (await this.findActiveDuelForPlayer(player.id)) {
       return DuelQueueBlockedReason.ACTIVE_DUEL;
     }
+    if (bots.online === 0) return DuelQueueBlockedReason.NO_BOTS_ONLINE;
     return null;
   }
 
@@ -258,7 +270,8 @@ export class DuelsService {
     if (!player) throw new NotFoundException('Player not found');
     const rating = await this.ensureRating(playerId);
     const queued = (await this.queue.findOne({ where: { playerId } })) != null;
-    const blocked = await this.queueBlockedReason(player, rating, queued);
+    const bots = await this.hostBots.publicStatus();
+    const blocked = await this.queueBlockedReason(player, rating, queued, bots);
     if (blocked === DuelQueueBlockedReason.STEAM_NOT_LINKED) {
       throw new BadRequestException({
         error: blocked,
@@ -280,6 +293,15 @@ export class DuelsService {
         error: blocked,
         message: 'У вас уже є активна дуель',
       });
+    }
+    if (blocked === DuelQueueBlockedReason.NO_BOTS_ONLINE) {
+      throw new HttpException(
+        {
+          error: blocked,
+          message: 'Жоден бот-хост зараз не онлайн — черга тимчасово закрита',
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
     }
     if (blocked === DuelQueueBlockedReason.ALREADY_QUEUED) {
       return this.getStatus(playerId);
@@ -312,13 +334,14 @@ export class DuelsService {
 
     const now = new Date();
     await this.queue.update({ playerId }, { lastSeenAt: now });
-    const [entry, playersInQueue, rating, active, lastFinished] =
+    const [entry, playersInQueue, rating, active, lastFinished, bots] =
       await Promise.all([
         this.queue.findOne({ where: { playerId } }),
         this.queue.count(),
         this.ratings.findOne({ where: { playerId } }),
         this.findActiveDuelForPlayer(playerId),
         this.findLastFinishedDuelForPlayer(playerId),
+        this.hostBots.publicStatus(),
       ]);
 
     const toDto = [active, lastFinished].filter((d): d is Duel => d != null);
@@ -330,6 +353,7 @@ export class DuelsService {
       player,
       rating,
       entry != null,
+      bots,
     );
     const waitSeconds = entry
       ? Math.max(
@@ -352,7 +376,182 @@ export class DuelsService {
       lastFinishedDuel: lastFinishedDto,
       canQueue: blocked == null,
       queueBlockedReason: blocked,
+      bots,
     };
+  }
+
+  // ── accept / cancel by players ───────────────────────────────────────────
+
+  /** Throws unless `playerId` is one of the two players; returns the opponent id ('' when unknown). */
+  private assertParticipant(duel: Duel, playerId: string): string {
+    const opponentId =
+      duel.player1Id === playerId
+        ? duel.player2Id
+        : duel.player2Id === playerId
+          ? duel.player1Id
+          : undefined;
+    if (opponentId === undefined) {
+      throw new ForbiddenException({
+        error: 'not_participant',
+        message: 'Це не ваша дуель',
+      });
+    }
+    return opponentId ?? '';
+  }
+
+  /** −points (floor 0) and an optional queue cooldown for a player who bailed on a found match. */
+  private async applyPenalty(
+    em: EntityManager,
+    playerId: string,
+    points: number,
+    cooldownUntil: Date | null,
+  ): Promise<void> {
+    const row = await this.ensureRating(playerId, em);
+    row.rating = Math.max(DUEL_RATING_FLOOR, row.rating - points);
+    if (cooldownUntil) row.cooldownUntil = cooldownUntil;
+    await em.save(row);
+  }
+
+  /**
+   * Player presses Accept. Once both did, the duel moves to PENDING and a
+   * host bot may claim it. Accepting after the deadline is refused; the
+   * matchmaker expires the duel on its next tick.
+   */
+  async acceptDuel(duelId: string, playerId: string): Promise<DuelStatusDto> {
+    await this.dataSource.transaction(async (em) => {
+      const duel = await em.findOne(Duel, {
+        where: { id: duelId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!duel) throw new NotFoundException('Duel not found');
+      this.assertParticipant(duel, playerId);
+      if (duel.state !== DuelState.ACCEPTING) {
+        if (DUEL_ACTIVE_STATES.includes(duel.state)) return; // both already accepted
+        throw new ConflictException({
+          error: 'duel_not_accepting',
+          message: 'Матч уже не чекає на прийняття',
+        });
+      }
+      if (
+        duel.acceptDeadlineAt &&
+        duel.acceptDeadlineAt.getTime() < Date.now()
+      ) {
+        throw new ConflictException({
+          error: 'accept_expired',
+          message: 'Час на прийняття матчу вичерпано',
+        });
+      }
+      const accepted = new Set(duel.acceptedPlayerIds ?? []);
+      accepted.add(playerId);
+      duel.acceptedPlayerIds = [...accepted];
+      const both =
+        !!duel.player1Id &&
+        !!duel.player2Id &&
+        accepted.has(duel.player1Id) &&
+        accepted.has(duel.player2Id);
+      if (both) duel.state = DuelState.PENDING;
+      await em.save(duel);
+    });
+    return this.getStatus(playerId);
+  }
+
+  /**
+   * Matchmaker tick: ACCEPTING duels past their deadline. Nobody accepted →
+   * plain cancel, both simply leave the queue. One accepted → the other loses
+   * DUEL_CANCEL_PENALTY and gets a cooldown, the accepter is re-queued.
+   */
+  async expireAcceptTimeouts(): Promise<number> {
+    const stale = await this.duels.find({
+      where: {
+        state: DuelState.ACCEPTING,
+        acceptDeadlineAt: LessThan(new Date()),
+      },
+      select: { id: true },
+    });
+    for (const { id } of stale) {
+      await this.dataSource.transaction(async (em) => {
+        const duel = await em.findOne(Duel, {
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!duel || duel.state !== DuelState.ACCEPTING) return;
+        const now = new Date();
+        const accepted = new Set(duel.acceptedPlayerIds ?? []);
+        const participants = [duel.player1Id, duel.player2Id].filter(
+          (p): p is string => !!p,
+        );
+        const absent = participants.filter((p) => !accepted.has(p));
+        const present = participants.filter((p) => accepted.has(p));
+
+        duel.state = DuelState.CANCELLED;
+        duel.cancelReason = DuelCancelReason.ACCEPT_TIMEOUT;
+        duel.finishedAt = now;
+        if (present.length && absent.length === 1) {
+          const cooldownUntil = new Date(
+            now.getTime() + DUEL_NO_SHOW_COOLDOWN_SECONDS * 1000,
+          );
+          await this.applyPenalty(
+            em,
+            absent[0],
+            DUEL_CANCEL_PENALTY,
+            cooldownUntil,
+          );
+          duel.loserId = absent[0];
+          duel.ratingDelta = DUEL_CANCEL_PENALTY;
+          duel.ratingAppliedAt = now;
+          duel.error = `not accepted by ${absent[0]}`;
+        } else {
+          duel.error = 'not accepted by both';
+        }
+        const saved = await em.save(duel);
+        if (present.length) await this.requeuePlayers(saved, em, present);
+      });
+      this.logger.log(`Duel ${id} expired: accept timeout`);
+    }
+    return stale.length;
+  }
+
+  /**
+   * Participant cancels before the game is LIVE: −DUEL_CANCEL_PENALTY for the
+   * caller, the opponent goes straight back into the queue. The host bot
+   * notices the terminal state on its next tick and leaves the lobby.
+   */
+  async playerCancelDuel(
+    duelId: string,
+    playerId: string,
+  ): Promise<DuelStatusDto> {
+    await this.dataSource.transaction(async (em) => {
+      const duel = await em.findOne(Duel, {
+        where: { id: duelId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!duel) throw new NotFoundException('Duel not found');
+      const opponentId = this.assertParticipant(duel, playerId);
+      if (!DUEL_PLAYER_CANCELLABLE_STATES.includes(duel.state)) {
+        throw new ConflictException({
+          error: 'duel_not_cancellable',
+          message: DUEL_TERMINAL_STATES.includes(duel.state)
+            ? 'Дуель уже завершена'
+            : 'Гру вже запущено — скасувати не можна',
+        });
+      }
+      const now = new Date();
+      await this.applyPenalty(em, playerId, DUEL_CANCEL_PENALTY, null);
+      duel.state = DuelState.CANCELLED;
+      duel.cancelReason = DuelCancelReason.PLAYER_CANCELLED;
+      duel.cancelledById = playerId;
+      duel.loserId = playerId;
+      duel.ratingDelta = DUEL_CANCEL_PENALTY;
+      duel.ratingAppliedAt = now;
+      duel.finishedAt = now;
+      duel.error = `cancelled by player ${playerId}`;
+      const saved = await em.save(duel);
+      if (opponentId) await this.requeuePlayers(saved, em, [opponentId]);
+    });
+    this.logger.log(
+      `Duel ${duelId} cancelled by player ${playerId} (−${DUEL_CANCEL_PENALTY})`,
+    );
+    return this.getStatus(playerId);
   }
 
   // ── matchmaker helpers ───────────────────────────────────────────────────
@@ -385,7 +584,11 @@ export class DuelsService {
           throw new QueueRaceError();
         }
         const duel = em.create(Duel, {
-          state: DuelState.PENDING,
+          state: DuelState.ACCEPTING,
+          acceptDeadlineAt: new Date(
+            Date.now() + DUEL_ACCEPT_WINDOW_SECONDS * 1000,
+          ),
+          acceptedPlayerIds: [],
           player1Id: p1.playerId,
           player2Id: p2.playerId,
           player1Rating: p1.rating,
@@ -402,8 +605,15 @@ export class DuelsService {
       });
   }
 
-  /** Puts both players of a duel back into the queue (after `no_bots_available`). */
-  async requeuePlayers(duel: Duel, em: EntityManager): Promise<void> {
+  /**
+   * Puts the duel's players back into the queue (after `no_bots_available`,
+   * a cancel by the other side, …). `only` limits it to a subset.
+   */
+  async requeuePlayers(
+    duel: Duel,
+    em: EntityManager,
+    only?: string[],
+  ): Promise<void> {
     const now = new Date();
     const values = [
       duel.player1Id && {
@@ -414,7 +624,9 @@ export class DuelsService {
         playerId: duel.player2Id,
         rating: duel.player2Rating,
       },
-    ].filter((v): v is { playerId: string; rating: number } => !!v);
+    ]
+      .filter((v): v is { playerId: string; rating: number } => !!v)
+      .filter((v) => !only || only.includes(v.playerId));
     if (!values.length) return;
     await em
       .createQueryBuilder()
@@ -619,7 +831,13 @@ export class DuelsService {
   async cancelDuel(
     duelId: string,
     reason: DuelCancelReason,
-    opts: { requeue?: boolean; error?: string } = {},
+    opts: {
+      requeue?: boolean;
+      /** Re-queue only these players (implies requeue). */
+      requeueOnly?: string[];
+      error?: string;
+      cancelledById?: string | null;
+    } = {},
   ): Promise<Duel | null> {
     return this.dataSource.transaction(async (em) => {
       const duel = await em.findOne(Duel, {
@@ -632,8 +850,13 @@ export class DuelsService {
       duel.cancelReason = reason;
       duel.finishedAt = new Date();
       if (opts.error) duel.error = opts.error;
+      if (opts.cancelledById) duel.cancelledById = opts.cancelledById;
       const saved = await em.save(duel);
-      if (opts.requeue) await this.requeuePlayers(saved, em);
+      if (opts.requeueOnly?.length) {
+        await this.requeuePlayers(saved, em, opts.requeueOnly);
+      } else if (opts.requeue) {
+        await this.requeuePlayers(saved, em);
+      }
       return saved;
     });
   }
@@ -748,12 +971,26 @@ export class DuelsService {
     return this.toDtos(rows, null);
   }
 
-  async adminCancel(duelId: string): Promise<DuelDto> {
+  /**
+   * Admin cancel: no rating change. When the admin is one of the two players
+   * (cancelling their own match) the opponent is re-queued automatically.
+   */
+  async adminCancel(duelId: string, adminId: string): Promise<DuelDto> {
+    const existing = await this.duels.findOne({ where: { id: duelId } });
+    if (!existing) throw new NotFoundException('Duel not found');
+    const opponentId =
+      existing.player1Id === adminId
+        ? existing.player2Id
+        : existing.player2Id === adminId
+          ? existing.player1Id
+          : null;
     const duel = await this.cancelDuel(duelId, DuelCancelReason.ADMIN, {
       error: 'cancelled by admin',
+      cancelledById: adminId,
+      requeueOnly: opponentId ? [opponentId] : undefined,
     });
     if (!duel) throw new NotFoundException('Duel not found');
-    this.logger.log(`Duel ${duelId} cancelled by admin`);
+    this.logger.log(`Duel ${duelId} cancelled by admin ${adminId}`);
     return this.getDuel(duelId, null);
   }
 

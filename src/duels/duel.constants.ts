@@ -5,7 +5,9 @@
  */
 
 export enum DuelState {
-  /** Paired by the matchmaker, waiting for a free host bot. */
+  /** Paired by the matchmaker, waiting for both players to press Accept (30 s). */
+  ACCEPTING = 'ACCEPTING',
+  /** Both accepted, waiting for a free host bot. */
   PENDING = 'PENDING',
   /** A bot claimed the duel and is creating the lobby. */
   LOBBY_CREATING = 'LOBBY_CREATING',
@@ -22,6 +24,7 @@ export enum DuelState {
 }
 
 export const DUEL_ACTIVE_STATES: readonly DuelState[] = [
+  DuelState.ACCEPTING,
   DuelState.PENDING,
   DuelState.LOBBY_CREATING,
   DuelState.WAITING_PLAYERS,
@@ -39,7 +42,19 @@ export enum DuelCancelReason {
   LOBBY_NOT_CREATED = 'lobby_not_created',
   NO_BOTS_AVAILABLE = 'no_bots_available',
   ADMIN = 'admin',
+  /** At least one player did not press Accept in time. */
+  ACCEPT_TIMEOUT = 'accept_timeout',
+  /** A participant cancelled before the game started (−10 for them). */
+  PLAYER_CANCELLED = 'player_cancelled',
 }
+
+/** States in which a participant may still cancel the duel themselves. */
+export const DUEL_PLAYER_CANCELLABLE_STATES: readonly DuelState[] = [
+  DuelState.ACCEPTING,
+  DuelState.PENDING,
+  DuelState.LOBBY_CREATING,
+  DuelState.WAITING_PLAYERS,
+];
 
 export enum DuelFailReason {
   LOBBY_LOST = 'lobby_lost',
@@ -105,6 +120,10 @@ export const DUEL_QUEUE_HEARTBEAT_TTL_SECONDS = 20;
 export const DUEL_PENDING_TIMEOUT_SECONDS = 5 * 60;
 export const DUEL_NO_SHOW_COOLDOWN_SECONDS = 5 * 60;
 export const DUEL_SAME_OPPONENT_DAILY_LIMIT = 3;
+/** Points a player loses for cancelling their duel or not accepting a found match. */
+export const DUEL_CANCEL_PENALTY = 10;
+/** How long both players have to press Accept after being paired. */
+export const DUEL_ACCEPT_WINDOW_SECONDS = 30;
 
 /** Lobby rules (decisions 11, 26). Env overrides live in the bot worker. */
 export const DUEL_DEFAULT_REGION = 3; // EU West

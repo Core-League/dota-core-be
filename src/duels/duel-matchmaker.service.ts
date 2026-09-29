@@ -33,6 +33,7 @@ export class DuelMatchmakerService {
 
   async tick(): Promise<void> {
     await this.pruneStaleQueue();
+    await this.duelsService.expireAcceptTimeouts();
     await this.expireUnclaimedDuels();
     await this.pairPlayers();
   }

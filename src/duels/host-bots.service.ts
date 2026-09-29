@@ -16,6 +16,7 @@ import {
   HostBotDto,
   UpdateHostBotDto,
 } from './dto/duel-admin.dto';
+import { DuelBotsStatusDto } from './dto/duel.dto';
 
 /** A worker that has not touched its rows for this long is considered dead. */
 const ALIVE_WINDOW_MS = 30_000;
@@ -55,6 +56,27 @@ export class HostBotsService {
       enabled: bot.enabled,
       alive,
     };
+  }
+
+  // ── public ───────────────────────────────────────────────────────────────
+
+  /** Pool summary for the site: a bot counts as online when its worker is alive and GC-ready. */
+  async publicStatus(): Promise<DuelBotsStatusDto> {
+    const rows = await this.repo.find({
+      where: { enabled: true, status: Not(HostBotStatus.BANNED) },
+    });
+    const now = Date.now();
+    let free = 0;
+    let busy = 0;
+    for (const bot of rows) {
+      const alive =
+        bot.lastHeartbeatAt != null &&
+        now - bot.lastHeartbeatAt.getTime() < ALIVE_WINDOW_MS;
+      if (!alive) continue;
+      if (bot.status === HostBotStatus.FREE) free += 1;
+      else if (bot.status === HostBotStatus.BUSY) busy += 1;
+    }
+    return { total: rows.length, online: free + busy, free, busy };
   }
 
   // ── admin ────────────────────────────────────────────────────────────────

@@ -129,6 +129,18 @@ export class Duel {
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 
+  /** ACCEPTING: both players must press Accept before this moment. */
+  @Column({ type: 'timestamptz', nullable: true })
+  acceptDeadlineAt: Date | null;
+
+  /** Players who already pressed Accept. */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  acceptedPlayerIds: string[];
+
+  /** Who cancelled (participant or admin); null for automatic cancels. */
+  @Column({ type: 'uuid', nullable: true })
+  cancelledById: string | null;
+
   @Column({ type: 'timestamptz', nullable: true })
   lobbyReadyAt: Date | null;
 

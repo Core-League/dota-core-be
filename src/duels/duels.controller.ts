@@ -17,7 +17,9 @@ import {
 } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { HostBotsService } from './host-bots.service';
 import {
+  DuelBotsStatusDto,
   DuelDto,
   DuelLeaderboardDto,
   DuelPlayerProfileDto,
@@ -30,7 +32,10 @@ type AuthedRequest = Request & { user: { playerId: string } };
 @ApiTags('duels')
 @Controller('duels')
 export class DuelsController {
-  constructor(private readonly duels: DuelsService) {}
+  constructor(
+    private readonly duels: DuelsService,
+    private readonly hostBots: HostBotsService,
+  ) {}
 
   // ── queue (JWT) ──────────────────────────────────────────────────────────
 
@@ -71,7 +76,54 @@ export class DuelsController {
     return this.duels.getStatus(req.user.playerId);
   }
 
+  @Post(':id/accept')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Accept a found match',
+    description:
+      'Participants only, while the duel is ACCEPTING. Once both accept the duel moves to PENDING. ' +
+      'A player who does not accept in time gets −10 and a cooldown; the one who accepted is re-queued.',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: DuelStatusDto })
+  accept(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.duels.acceptDuel(id, req.user.playerId);
+  }
+
+  @Post(':id/cancel')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Cancel my duel',
+    description:
+      'Participants only, until the game is LIVE. The caller loses 10 rating points, ' +
+      'the opponent is re-queued automatically.',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: DuelStatusDto })
+  cancel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.duels.playerCancelDuel(id, req.user.playerId);
+  }
+
   // ── public ───────────────────────────────────────────────────────────────
+
+  @Get('bots/status')
+  @ApiOperation({
+    summary: 'Host bot pool status',
+    description:
+      'Public. How many host bots are enabled, online, free and busy right now.',
+  })
+  @ApiOkResponse({ type: DuelBotsStatusDto })
+  getBotsStatus(): Promise<DuelBotsStatusDto> {
+    return this.hostBots.publicStatus();
+  }
 
   @Get('leaderboard')
   @ApiOperation({
