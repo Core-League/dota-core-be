@@ -11,6 +11,10 @@ npm run start:dev:v2       # v2 hot-reload dev server (port 3002)
 npm run build              # Compile ALL of src/ to dist/ (emits both entry points)
 npm run start:prod         # Run compiled v1  (dist/entry-points/http/api-v1/main)
 npm run start:prod:v2      # Run compiled v2  (dist/entry-points/http/api-v2/main)
+npm run start:dev:bot      # bot-worker (Dota 2 host bots) via ts-node — needs HOSTBOT_SECRET_KEY
+npm run start:prod:bot     # Run compiled bot-worker (dist/entry-points/bot-worker/main)
+npm run bot:keygen         # Print a new HOSTBOT_SECRET_KEY
+npm run bot:smoke          # One-account GC smoke test (HOSTBOT_SMOKE_ACCOUNT / _PASSWORD env)
 
 # Testing
 npm run test               # Jest unit tests
@@ -38,10 +42,11 @@ npm run migration:create -- src/migrations/MigrationName     # Blank migration
 
 NestJS 11 REST API with TypeORM 0.3 + PostgreSQL 16. Swagger docs auto-generated at `/api`.
 
-This repo hosts **two apps in one `src/` tree**, compiled by a single `npm run build` into one `dist/`, run as **two separate processes** against the **same database**. A reverse proxy routes the v2 subdomain to the v2 process.
+This repo hosts **three apps in one `src/` tree**, compiled by a single `npm run build` into one `dist/`, run as **three separate processes** against the **same database**. A reverse proxy routes the v2 subdomain to the v2 process; the bot-worker has no HTTP at all.
 
 - **v1** (`entry-points/http/api-v1/main.ts` → `app.module.ts`, port 3000) — the original **feature-per-folder** app. Holds all current domains. Uses class-validator `ValidationPipe`.
 - **v2** (`entry-points/http/api-v2/main.ts` → `http-api.module.ts`, port 3002) — the **clean/hexagonal layered** app. Currently an **empty scaffold**: foundation only, no domains yet. Uses `ZodValidationPipe`.
+- **bot-worker** (`entry-points/bot-worker/main.ts` → `dota-bot/bot-worker.module.ts`) — a Nest application context (no HTTP) running the **Dota 2 host-bot pool** for the 1v1 ladder. It logs the `host_bot` Steam accounts in via `steam-user`, talks to the Game Coordinator with Valve's protobufs (`dota-bot/protobufs`, loaded by `protobufjs`), hosts unlisted 1v1 Mid lobbies for `duel` rows the api-v1 matchmaker created, and finalises them through the same `DuelsService` api-v1 uses. Hand-off between the processes is the `duel` table (`PENDING` → claimed with `FOR UPDATE SKIP LOCKED`), never HTTP. Restarting api-v1 does not touch running lobbies; a restarted worker re-adopts its lobbies from the GC cache or fails the duel for admin review.
 
 Each process bootstraps its own root module, so only its own entities/pipes load — no collision on the shared DB.
 
@@ -55,6 +60,8 @@ Each process bootstraps its own root module, so only its own entities/pipes load
 - `matches/` — standalone match records
 - `admin/` — admin-only endpoints: player verification, Discord role sync
 - `discord/` — Discord bot service for syncing roles/channels with the guild
+- `duels/` — 1v1 Solo Mid ladder: queue (`duel_queue`, heartbeat via `GET /duels/me`), matchmaker (`@Interval` 3 s, ±50 rating widening +50/30 s), `duel` lifecycle, ratings (`duel_rating`: +25/−25, floor 0, no-show −25 + 5-min cooldown), leaderboard, admin endpoints under `/admin/duels` (cancel / resolve / bot pool / rating override). `DuelsCoreModule` (entities + services) is shared with the bot-worker; `DuelsModule` adds HTTP + the scheduler. Bot passwords are AES-256-GCM encrypted with `HOSTBOT_SECRET_KEY` (`host-bot.crypto.ts`).
+- `dota-bot/` — the host-bot pool used by the bot-worker process only: `dota-gc.protocol.ts` (message ids, enums, protobuf encode/decode), `dota-gc.client.ts` (steam-user login + GC hello/welcome + shared-object cache → lobby), `host-bot.worker.ts` (lobby state machine per account), `host-bot.pool.ts` (claims PENDING duels, heartbeat, account reload every 30 s), `realtime-stats.service.ts` (Steam `GetRealtimeStats` live scoreboard — the only stats source for 1v1 practice lobbies).
 
 **v2 layout (layered — populated as domains migrate):**
 - `entry-points/http/api-v2/` — bootstrap + `HttpApiModule` (root)
@@ -77,20 +84,21 @@ Each process bootstraps its own root module, so only its own entities/pipes load
 
 **Environment loading**: loads `.env`, then overlays `.env.dev` for `development`/`test` (non-empty values only; skipped on staging/production). v1 loads it via `src/config/load-env.ts`; v2 via `src/connectors/config/load-env.ts` — both read the same root `.env*` files.
 
-**Key env vars:** `NODE_ENV`, `PORT`, `DB_*`, `JWT_SECRET`, `JWT_EXPIRES_SEC`, `DISCORD_*`, `STEAM_*`, `CORS_ORIGINS`.
+**Key env vars:** `NODE_ENV`, `PORT`, `DB_*`, `JWT_SECRET`, `JWT_EXPIRES_SEC`, `DISCORD_*`, `STEAM_*`, `CORS_ORIGINS`, `HOSTBOT_SECRET_KEY` (+ optional `HOSTBOT_LOBBY_NAME`, `HOSTBOT_REGION`, `HOSTBOT_JOIN_TIMEOUT`, `HOSTBOT_GAME_TIMEOUT`, `HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON`). Bot Steam accounts must have Steam Guard disabled and must have opened Dota 2 once (GC onboarding); verify one with `npm run bot:smoke` before adding it through `POST /admin/duels/bots`.
 
 ## Deployment
 
 **Docker Compose on a self-hosted runner.** One workflow `.github/workflows/deploy.yml` triggers on push to `main` (→ Environment `production`) and `dev` (→ Environment `staging`); the branch selects the Environment, project name, and image name via expressions. The job runs on `runs-on: self-hosted`, checks out the repo, sets all GitHub secrets + vars inline, then runs three sequential, fail-fast steps: **build → migrate → up** (see below).
 
-One Dockerfile backs all three services in `docker-compose.yml`, all on `network_mode: host`. The image is built once (prod-only deps + `dist`, no dev deps/src) and shared via `${IMAGE_NAME}:${IMAGE_TAG}`:
+One Dockerfile backs all four services in `docker-compose.yml`, all on `network_mode: host`. The image is built once (prod-only deps + `dist`, no dev deps/src) and shared via `${IMAGE_NAME}:${IMAGE_TAG}`:
 - `migrate` — same image; one-shot, runs `migration:run:prod` + `migration:run:v2:prod` (the prod `typeorm` bin against the compiled `dist/*.js` data sources — no ts-node), then exits.
 - `api-v1` — binds `${API_V1_PORT}` directly on the host.
 - `api-v2` — binds `${API_V2_PORT}` directly on the host.
+- `bot-worker` — no port; outbound Steam/GC traffic only.
 
 The data sources (`src/data-source.ts`, `src/db/data-source.ts`) use `__dirname`-relative `{ts,js}` globs, so the same files drive ts-node in dev (`migration:run`) and compiled `.js` in prod (`migration:run:prod`).
 
-**CI order (build → migrate → up).** Step 1 `docker compose build api-v1` builds the shared image once. Step 2 `run --rm --no-build migrate` runs migrations from that image; a non-zero exit fails the job here, before any app container is touched. Step 3 `up -d --no-build --no-deps --remove-orphans api-v1 api-v2` recreates the apps reusing the built image. Because the steps are sequential and fail-fast, **a build or migration failure leaves the live app containers untouched** — apps are only swapped after migrations succeed. (`api-v1`/`api-v2` also `depends_on` `migrate` with `service_completed_successfully` for plain local `up`; CI uses `--no-deps` since migrate already ran.) Staging uses `COMPOSE_PROJECT_NAME=dota-core-be-staging` for an isolated stack on the same host. Under host networking there is no port mapping — the listen port *is* the host port — so staging and prod must use different `API_V1_PORT`/`API_V2_PORT` (e.g. prod 3000/3010, staging 3001/3011).
+**CI order (build → migrate → up).** Step 1 `docker compose build api-v1` builds the shared image once. Step 2 `run --rm --no-build migrate` runs migrations from that image; a non-zero exit fails the job here, before any app container is touched. Step 3 `up -d --no-build --no-deps --remove-orphans api-v1 api-v2 bot-worker` recreates the apps reusing the built image (restarting `bot-worker` mid-duel is safe: it re-adopts or fails its lobbies). Because the steps are sequential and fail-fast, **a build or migration failure leaves the live app containers untouched** — apps are only swapped after migrations succeed. (`api-v1`/`api-v2` also `depends_on` `migrate` with `service_completed_successfully` for plain local `up`; CI uses `--no-deps` since migrate already ran.) Staging uses `COMPOSE_PROJECT_NAME=dota-core-be-staging` for an isolated stack on the same host. Under host networking there is no port mapping — the listen port *is* the host port — so staging and prod must use different `API_V1_PORT`/`API_V2_PORT` (e.g. prod 3000/3010, staging 3001/3011).
 
 **Config (no `.env` file):** each service's `environment:` lists value-less names; Compose forwards them from the shell that runs `docker compose`. The deploy step sets each value inline before the command (`NAME="${{ vars.NAME }}"` / `NAME="${{ secrets.NAME }}"` … `docker compose --env-file /dev/null up`), so GitHub is the only config source (the committed root `.env` is ignored). Each app's `PORT` is set via `command` from `${API_V1_PORT}`/`${API_V2_PORT}`; `IMAGE_TAG` and project/image names come from job `env`. Adding a new app env var means three edits: the GitHub Environment, the inline list in the workflow, and the `environment:` names in `docker-compose.yml`.
 

@@ -12,6 +12,10 @@
       {
         "include": "locations/data/**/*.json",
         "outDir": "dist"
+      },
+      {
+        "include": "dota-bot/protobufs/**/*.proto",
+        "outDir": "dist"
       }
     ],
     "watchAssets": true

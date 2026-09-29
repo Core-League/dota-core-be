@@ -6,10 +6,11 @@
 # binds its PORT directly on the host, so prod and staging MUST use different
 # ports (driven by API_V1_PORT / API_V2_PORT below).
 #
-# One image (Dockerfile, prod-only deps + dist, lean) backs all three services:
+# One image (Dockerfile, prod-only deps + dist, lean) backs all four services:
 #   - migrate     -> runs v1 + v2 migrations from the compiled dist (.js) via the
 #                    prod `typeorm` bin, then exits. No dev deps / src / ts-node.
 #   - api-v1/v2   -> the long-running apps.
+#   - bot-worker  -> Dota 2 host-bot pool for 1v1 duels (no HTTP).
 #
 # Boot order: `migrate` runs v1 + v2 migrations to completion, then the apps
 # start. CI runs them as two explicit steps (`run --rm migrate`, then `up
@@ -73,6 +74,12 @@ x-common:
     - MONOBANK_API_URL
     - MONOBANK_HTTP_TIMEOUT
     - MONOBANK_MERCHANT_TOKEN
+    - HOSTBOT_SECRET_KEY
+    - HOSTBOT_LOBBY_NAME
+    - HOSTBOT_REGION
+    - HOSTBOT_JOIN_TIMEOUT
+    - HOSTBOT_GAME_TIMEOUT
+    - HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON
 
 services:
   # Same image as the apps (one build, shared tag). One-shot: runs v1 + v2
@@ -110,6 +117,21 @@ services:
       migrate:
         condition: service_completed_successfully
     command: sh -c "export PORT=${API_V2_PORT:-3010}; exec node dist/entry-points/http/api-v2/main"
+
+  # Dota 2 host-bot pool (src/dota-bot): logs the bot Steam accounts in, hosts
+  # 1v1 lobbies for the duels api-v1 queued, writes results to the shared DB.
+  # No HTTP port. Restarting api-v1 does not touch running lobbies.
+  bot-worker:
+    <<: *common
+    build:
+      context: .
+    image: ${IMAGE_NAME:-dota-core-be}:${IMAGE_TAG:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-dota-core-be}-bot-worker
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: sh -c "exec node dist/entry-points/bot-worker/main"
 
 volumes:
   uploads:

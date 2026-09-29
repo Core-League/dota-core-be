@@ -58,6 +58,10 @@ jobs:
       MONOBANK_ACCOUNT_IDS: ${{ vars.MONOBANK_ACCOUNT_IDS }}
       MONOBANK_API_URL: ${{ vars.MONOBANK_API_URL }}
       MONOBANK_HTTP_TIMEOUT: ${{ vars.MONOBANK_HTTP_TIMEOUT }}
+      HOSTBOT_LOBBY_NAME: ${{ vars.HOSTBOT_LOBBY_NAME }}
+      HOSTBOT_REGION: ${{ vars.HOSTBOT_REGION }}
+      HOSTBOT_JOIN_TIMEOUT: ${{ vars.HOSTBOT_JOIN_TIMEOUT }}
+      HOSTBOT_GAME_TIMEOUT: ${{ vars.HOSTBOT_GAME_TIMEOUT }}
       DB_PASS: ${{ secrets.DB_PASS }}
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
       DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}
@@ -71,6 +75,8 @@ jobs:
       STARTZ_API_KEY: ${{ secrets.STARTZ_API_KEY }}
       MONOBANK_TOKEN: ${{ secrets.MONOBANK_TOKEN }}
       MONOBANK_MERCHANT_TOKEN: ${{ secrets.MONOBANK_MERCHANT_TOKEN }}
+      HOSTBOT_SECRET_KEY: ${{ secrets.HOSTBOT_SECRET_KEY }}
+      HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON: ${{ secrets.HOSTBOT_BOOTSTRAP_ACCOUNTS_JSON }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -92,8 +98,8 @@ jobs:
       # Migrations already ran above and passed (fail-fast guarantees the live
       # apps were untouched on failure). Reuse the built image (--no-build) and
       # skip re-triggering `migrate` via depends_on (--no-deps).
-      - name: Start apps (api-v1 + api-v2)
-        run: docker compose --env-file /dev/null up -d --no-build --no-deps --remove-orphans api-v1 api-v2
+      - name: Start apps (api-v1 + api-v2 + bot-worker)
+        run: docker compose --env-file /dev/null up -d --no-build --no-deps --remove-orphans api-v1 api-v2 bot-worker
 
       - name: Prune dangling images
         if: always()
