@@ -146,6 +146,38 @@ export class PlatformAchievementDto {
   holders: PlatformAchievementHolderDto[];
 }
 
+/** A player on the "most decorated" shortlist of the analytics board. */
+export class PlatformTopAchieverDto {
+  @ApiProperty()
+  playerId: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  discordName: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  discordUsername: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  avatarUrl: string | null;
+
+  @ApiProperty({
+    description:
+      'Distinct achievement kinds the player holds — the ranking key',
+  })
+  achievements: number;
+
+  @ApiProperty({
+    description:
+      'Sum of `count` over every held kind: tournaments for placements, maps for per-map feats, 1 otherwise',
+  })
+  trophies: number;
+
+  @ApiProperty({
+    description: 'Podium finishes (1st + 2nd + 3rd places) across tournaments',
+  })
+  podiums: number;
+}
+
 /** Response of GET /admin/analytics/achievements: every kind, including those nobody holds yet. */
 export class PlatformAchievementsDto {
   @ApiProperty({ description: 'ISO timestamp the board was built at.' })
@@ -153,4 +185,13 @@ export class PlatformAchievementsDto {
 
   @ApiProperty({ type: PlatformAchievementDto, isArray: true })
   achievements: PlatformAchievementDto[];
+
+  @ApiProperty({
+    type: PlatformTopAchieverDto,
+    isArray: true,
+    description:
+      'Up to three players holding the most distinct achievement kinds, best first. ' +
+      'Ties break on total trophies, then podiums, then name.',
+  })
+  topAchievers: PlatformTopAchieverDto[];
 }

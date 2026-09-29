@@ -30,7 +30,8 @@ import { DiscordBotModule } from '../discord/discord-bot.module';
     PlayerAchievementsService,
   ],
   controllers: [PlayersController],
-  // The analytics board reuses the trophy computation instead of re-deriving it.
-  exports: [PlayerAchievementsService],
+  // The analytics board reuses the trophy computation instead of re-deriving it;
+  // the leaderboard reuses both the trophies and the platform-wide loaders.
+  exports: [PlayerAchievementsService, PlayerAchievementsRepository],
 })
 export class PlayersModule {}

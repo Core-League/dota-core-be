@@ -11,6 +11,7 @@ import {
   PlatformAchievementDto,
   PlatformAchievementHolderDto,
   PlatformAchievementsDto,
+  PlatformTopAchieverDto,
 } from './dto/player-achievements.dto';
 import {
   PlayerAchievementsRepository,
@@ -89,6 +90,16 @@ const PLACEMENT_KINDS: Record<PlayoffPlace, Kind> = {
 
 /** Results arrive a few times a day; recomputing per profile view would be waste. */
 const SNAPSHOT_TTL_MS = 60_000;
+
+/** How many "most decorated" players the analytics board shortlists. */
+const TOP_ACHIEVERS_LIMIT = 3;
+
+/** Kinds that count as a podium finish for the shortlist tie-break. */
+const PODIUM_KINDS: readonly Kind[] = [
+  Kind.TOURNAMENT_FIRST_PLACE,
+  Kind.TOURNAMENT_SECOND_PLACE,
+  Kind.TOURNAMENT_THIRD_PLACE,
+];
 
 // Thresholds — kept together so tuning the game is one edit.
 const FLAWLESS_MIN_MAPS = 3;
@@ -188,7 +199,50 @@ export class PlayerAchievementsService {
       },
     );
 
-    return { generatedAt: snapshot.generatedAt, achievements };
+    return {
+      generatedAt: snapshot.generatedAt,
+      achievements,
+      topAchievers: this.pickTopAchievers(snapshot),
+    };
+  }
+
+  /**
+   * The most decorated players: ranked by how many distinct kinds they hold,
+   * then by total trophies (a champion of three tournaments beats one of one),
+   * then by podium finishes, then by name so the order is stable.
+   */
+  private pickTopAchievers(snapshot: Snapshot): PlatformTopAchieverDto[] {
+    const rows: PlatformTopAchieverDto[] = [];
+    for (const [playerId, tallies] of snapshot.board) {
+      const player = snapshot.players.get(playerId);
+      if (!player || tallies.size === 0) continue;
+
+      let trophies = 0;
+      let podiums = 0;
+      for (const [kind, tally] of tallies) {
+        trophies += tally.count;
+        if (PODIUM_KINDS.includes(kind)) podiums += tally.count;
+      }
+
+      rows.push({
+        playerId,
+        discordName: player.discordName,
+        discordUsername: player.discordUsername,
+        avatarUrl: player.avatarUrl,
+        achievements: tallies.size,
+        trophies,
+        podiums,
+      });
+    }
+
+    rows.sort(
+      (a, b) =>
+        b.achievements - a.achievements ||
+        b.trophies - a.trophies ||
+        b.podiums - a.podiums ||
+        (a.discordName ?? '').localeCompare(b.discordName ?? '', 'uk'),
+    );
+    return rows.slice(0, TOP_ACHIEVERS_LIMIT);
   }
 
   // ─── Snapshot ──────────────────────────────────────────────────────────────

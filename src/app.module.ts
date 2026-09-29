@@ -14,6 +14,7 @@ import { AdminModule } from './admin/admin.module';
 import { DevModule } from './dev/dev.module';
 import { LocationsModule } from './locations/locations.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { LeaderboardModule } from './leaderboard/leaderboard.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     DevModule,
     LocationsModule,
     AnalyticsModule,
+    LeaderboardModule,
   ],
   controllers: [HealthController],
 })
