@@ -25,6 +25,7 @@ import {
   DUEL_ACCEPT_WINDOW_SECONDS,
   DUEL_RESULT_RECOVERY_WINDOW_SECONDS,
   DUEL_ACTIVE_STATES,
+  DUEL_HOSTED_STATES,
   DUEL_CANCEL_PENALTY,
   DUEL_JOIN_TIMEOUT_SECONDS,
   DUEL_NO_SHOW_COOLDOWN_SECONDS,
@@ -247,13 +248,18 @@ export class DuelsService {
     return [row?.player1Id, row?.player2Id].filter((p): p is string => !!p);
   }
 
+  /**
+   * The duel shown as the result banner: the newest terminal one, or the one
+   * whose game is over but whose result is still being collected (PROCESSING).
+   */
   private findLastFinishedDuelForPlayer(
     playerId: string,
   ): Promise<Duel | null> {
+    const states = [...DUEL_TERMINAL_STATES, DuelState.PROCESSING];
     return this.duels.findOne({
       where: [
-        { player1Id: playerId, state: In([...DUEL_TERMINAL_STATES]) },
-        { player2Id: playerId, state: In([...DUEL_TERMINAL_STATES]) },
+        { player1Id: playerId, state: In(states) },
+        { player2Id: playerId, state: In(states) },
       ],
       relations: ['player1', 'player2'],
       order: { finishedAt: 'DESC', createdAt: 'DESC' },
@@ -314,7 +320,7 @@ export class DuelsService {
     if (blocked === DuelQueueBlockedReason.STEAM_NOT_LINKED) {
       throw new BadRequestException({
         error: blocked,
-        message: 'Прив’яжіть Steam-акаунт у профілі, щоб грати 1v1',
+        message: 'Прив’яжіть Steam-акаунт у профілі, щоб грати дуелі',
       });
     }
     if (blocked === DuelQueueBlockedReason.COOLDOWN) {
@@ -786,6 +792,19 @@ export class DuelsService {
     this.events.duelChanged(duelId);
   }
 
+  /**
+   * The game server started and the GC dropped the bot from the lobby: the
+   * match counts as finished for the players (they may queue again) while the
+   * result is still collected. No-op unless the duel is LIVE.
+   */
+  async markProcessing(duelId: string): Promise<void> {
+    const res = await this.duels.update(
+      { id: duelId, state: DuelState.LIVE },
+      { state: DuelState.PROCESSING, finishedAt: new Date() },
+    );
+    if (res.affected) this.events.duelChanged(duelId);
+  }
+
   /** Valve match id becomes known at launch; stored early so a restarted worker can still resolve the game. */
   async saveMatchId(duelId: string, dotaMatchId: string): Promise<void> {
     await this.duels.update(
@@ -1064,11 +1083,7 @@ export class DuelsService {
   findActiveClaimedDuels(): Promise<Duel[]> {
     return this.duels.find({
       where: {
-        state: In([
-          DuelState.LOBBY_CREATING,
-          DuelState.WAITING_PLAYERS,
-          DuelState.LIVE,
-        ]),
+        state: In([...DUEL_HOSTED_STATES]),
       },
       relations: ['player1', 'player2'],
       order: { createdAt: 'ASC' },

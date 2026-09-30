@@ -456,12 +456,13 @@ export class HostBotWorker {
     const lobby = gc.lobby;
     const lobbyMatches =
       !!lobby && !!duel.lobbyId && lobby.lobby_id === duel.lobbyId;
-    // LIVE without the lobby is the normal case (the GC drops the bot at
-    // server start): with the server id we keep following the scoreboard.
+    // LIVE / PROCESSING without the lobby is the normal case (the GC drops
+    // the bot at server start): with the server id we keep following the
+    // scoreboard.
+    const launched =
+      duel.state === DuelState.LIVE || duel.state === DuelState.PROCESSING;
     const canFollow =
-      duel.state === DuelState.LIVE &&
-      !!duel.serverSteamId &&
-      this.deps.stats.enabled;
+      launched && !!duel.serverSteamId && this.deps.stats.enabled;
     if (
       duel.state === DuelState.LOBBY_CREATING ||
       (!lobbyMatches && !canFollow)
@@ -472,7 +473,7 @@ export class HostBotWorker {
         );
         await this.deps.duels.releaseClaim(duel.id);
       } else if (
-        duel.state === DuelState.LIVE &&
+        launched &&
         duel.dotaMatchId &&
         (await this.resolveFromWebApi(
           duel.id,
@@ -513,7 +514,7 @@ export class HostBotWorker {
       ctx.joinDeadline =
         duel.lobbyReadyAt.getTime() + this.config.joinTimeoutSeconds * 1000;
     }
-    if (duel.state === DuelState.LIVE) {
+    if (launched) {
       ctx.launched = true;
       ctx.sawRun = true;
       ctx.gameDeadline =
@@ -528,7 +529,14 @@ export class HostBotWorker {
             ?.accountId ?? null)
         : null;
     }
-    if (!lobbyMatches) ctx.lobbyLostAt = Date.now();
+    if (!lobbyMatches) {
+      ctx.lobbyLostAt = Date.now();
+      // Re-adopted after the bot was dropped from the lobby: the players'
+      // match is over — the same transition the live tick would have made.
+      if (duel.state === DuelState.LIVE) {
+        await this.deps.duels.markProcessing(duel.id);
+      }
+    }
     this.ctx = ctx;
     this.logger.log(
       `Re-adopted duel ${duel.id} (${duel.state}) ${lobbyMatches ? `in lobby ${lobby?.lobby_id ?? '?'}` : `via server ${duel.serverSteamId ?? '?'}`}`,
@@ -604,6 +612,9 @@ export class HostBotWorker {
           this.logger.log(
             `Lobby gone after launch (the bot is not in the game) — following match ${ctx.lastMatchId ?? '?'} on server ${ctx.lastServerId ?? '?'} via the live scoreboard`,
           );
+          // For the players the match is done here: LIVE → PROCESSING frees
+          // them to queue again while the result is still being collected.
+          await this.deps.duels.markProcessing(ctx.id);
           const last = ctx.lastLobby;
           const lastOutcome = last?.match_outcome ?? 0;
           if (last && (lastOutcome === 2 || lastOutcome === 3)) {

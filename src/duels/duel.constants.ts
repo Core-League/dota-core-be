@@ -15,6 +15,12 @@ export enum DuelState {
   WAITING_PLAYERS = 'WAITING_PLAYERS',
   /** Game launched. */
   LIVE = 'LIVE',
+  /**
+   * The game server took over and the GC dropped the bot from the lobby: for
+   * the players the match is over (they may queue again), while the platform
+   * still collects the result from the live scoreboard / Web API.
+   */
+  PROCESSING = 'PROCESSING',
   /** Result received from the Game Coordinator, rating applied. */
   RESOLVED = 'RESOLVED',
   /** No-show, no free bot, admin cancel — no game was played. */
@@ -23,12 +29,21 @@ export enum DuelState {
   FAILED = 'FAILED',
 }
 
+/** States that block the queue and show as "my active duel"; PROCESSING is deliberately not one of them. */
 export const DUEL_ACTIVE_STATES: readonly DuelState[] = [
   DuelState.ACCEPTING,
   DuelState.PENDING,
   DuelState.LOBBY_CREATING,
   DuelState.WAITING_PLAYERS,
   DuelState.LIVE,
+];
+
+/** States a host bot owns — what a restarted worker must reconcile. */
+export const DUEL_HOSTED_STATES: readonly DuelState[] = [
+  DuelState.LOBBY_CREATING,
+  DuelState.WAITING_PLAYERS,
+  DuelState.LIVE,
+  DuelState.PROCESSING,
 ];
 
 export const DUEL_TERMINAL_STATES: readonly DuelState[] = [

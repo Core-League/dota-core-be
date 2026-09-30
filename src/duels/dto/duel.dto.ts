@@ -304,7 +304,7 @@ export class DuelStatusDto {
     type: DuelDto,
     nullable: true,
     description:
-      'Most recent duel in a terminal state — the UI shows it as a result banner',
+      'Most recent finished duel — terminal, or PROCESSING (game over, result still being collected); the UI shows it as a result banner',
   })
   lastFinishedDuel: DuelDto | null;
 
