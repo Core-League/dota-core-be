@@ -4,7 +4,8 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { Client, type Notification } from 'pg';
+import { Client, type ClientConfig, type Notification } from 'pg';
+import { getPostgresDataSourceOptions } from '../config/postgres-connection';
 import { DUEL_EVENTS_CHANNEL, parseDuelEvent } from './duel-events';
 import { DuelsGateway } from './duels.gateway';
 
@@ -41,12 +42,21 @@ export class DuelEventsListener implements OnModuleInit, OnModuleDestroy {
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
+    // Same connection as TypeORM (DATABASE_URL or DB_*; same TLS rule) — a
+    // listener that cannot log in leaves the page without any pushes.
+    const options = getPostgresDataSourceOptions();
     const client = new Client({
-      host: process.env.DB_HOST,
-      port: Number(process.env.DB_PORT ?? 5432),
-      user: process.env.DB_USER,
-      password: process.env.DB_PASS,
-      database: process.env.DB_NAME,
+      ...(options.url
+        ? { connectionString: options.url }
+        : {
+            host: options.host,
+            port: options.port,
+            user: options.username,
+            password: options.password,
+            database: options.database,
+          }),
+      // TypeORM types TLS as `TlsOptions`, pg as `ConnectionOptions`; the runtime object is the same.
+      ssl: options.ssl as ClientConfig['ssl'],
       application_name: 'core-duel-events',
     });
     client.on('notification', (msg: Notification) => this.onNotification(msg));
@@ -77,6 +87,9 @@ export class DuelEventsListener implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`ignoring malformed duel event: ${msg.payload}`);
       return;
     }
+    this.logger.log(
+      `duel_events ← ${msg.payload} (from backend pid ${msg.processId})`,
+    );
     this.gateway.onEvent(event);
   }
 

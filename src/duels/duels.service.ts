@@ -437,6 +437,7 @@ export class DuelsService {
       lastFinishedDuel: lastFinishedDto,
       canQueue: blocked == null,
       queueBlockedReason: blocked,
+      playersInQueue,
       bots,
     };
   }

@@ -34,18 +34,24 @@ import {
   type StatsParticipant,
 } from './realtime-stats.service';
 
+/**
+ * How often `GetMatchDetails` is asked once the game looks over (the board
+ * shows post game, or it stopped answering). Valve publishes a lobby game
+ * right after the server signs it out, so this is what makes the result land
+ * within seconds instead of on the next recovery pass.
+ */
+const WEB_API_POLL_MS = 5_000;
 /** After the server is gone: how long Valve gets to publish the match before the last snapshot decides. */
-const WEB_API_WAIT_MS = 5 * 60_000;
-/** …and how often `GetMatchDetails` is asked meanwhile. */
-const WEB_API_POLL_MS = 30_000;
+const WEB_API_WAIT_MS = 3 * 60_000;
 
 /**
  * How long the live scoreboard may stay silent, after it has answered at
  * least once, before the game server counts as gone. `GetRealtimeStats`
  * regularly returns 5xx / empty payloads for a few ticks while the game is
- * still running, so this is a wall-clock window, not a tick count.
+ * still running, so this is a wall-clock window, not a tick count. The Web
+ * API is asked throughout, so a real end is normally recorded long before.
  */
-const SERVER_GONE_AFTER_MS = 90_000;
+const SERVER_GONE_AFTER_MS = 60_000;
 /** …and at least this many consecutive misses (guards against one slow tick). */
 const SERVER_GONE_MIN_MISSES = 3;
 /** How often the "still following" line is logged while a game runs without the lobby. */
@@ -867,15 +873,27 @@ export class HostBotWorker {
         ctx.lastFollowLine = line;
         this.logger.log(`following: ${line}`);
       }
+      // The board says the game is over but shows no winner by the 1v1
+      // rules (the final kill does not always reach the board): Valve's own
+      // record of the match decides.
+      const state = raw.match?.game_state ?? 0;
+      if (state === 6 || state === 7) {
+        await this.tryWebApi(ctx, now, `board in post game (state=${state})`);
+      }
       return;
     }
 
     ctx.serverMisses += 1;
+    // A silent board almost always means the game ended and the server is
+    // shutting down — ask Valve for the match right away, every tick.
+    if (await this.tryWebApi(ctx, now, `scoreboard miss ${ctx.serverMisses}`)) {
+      return;
+    }
     if (ctx.serverSeenAt != null) {
       const silentMs = now - ctx.serverSeenAt;
       if (ctx.serverMisses === 1) {
         this.logger.warn(
-          `scoreboard ${ctx.lastServerId} stopped answering — the server counts as gone after ${SERVER_GONE_AFTER_MS / 1000}s of silence`,
+          `scoreboard ${ctx.lastServerId} stopped answering — asking the Web API for match ${ctx.lastMatchId ?? '?'} every ${WEB_API_POLL_MS / 1000}s; the server counts as gone after ${SERVER_GONE_AFTER_MS / 1000}s of silence`,
         );
       }
       if (
@@ -895,31 +913,12 @@ export class HostBotWorker {
         await this.applyScoreboardResult(ctx, last, strict);
         return;
       }
-      // 2) The end data Valve publishes for the match, a few minutes after
-      //    the game — authoritative when the last poll missed the final kill.
+      // 2) Valve's record (asked every tick above) gets a little longer.
       if (ctx.serverGoneAt == null) {
         ctx.serverGoneAt = now;
         this.logger.warn(
-          `Server gone after ${Math.round(silentMs / 1000)}s of silence, last snapshot shows no winner (${last ? this.deps.stats.describe(last) : 'no snapshot'}) — asking the Web API for match ${ctx.lastMatchId ?? '?'} every ${WEB_API_POLL_MS / 1000}s for up to ${WEB_API_WAIT_MS / 60_000} min`,
+          `Server gone after ${Math.round(silentMs / 1000)}s of silence, last snapshot shows no winner (${last ? this.deps.stats.describe(last) : 'no snapshot'}) — Web API asked ${ctx.webApiAttempts} time(s) so far, keeping on for up to ${WEB_API_WAIT_MS / 60_000} min`,
         );
-      }
-      if (ctx.lastMatchId && now - ctx.webApiLastAt >= WEB_API_POLL_MS) {
-        ctx.webApiLastAt = now;
-        ctx.webApiAttempts += 1;
-        this.logger.log(
-          `Web API attempt ${ctx.webApiAttempts} for match ${ctx.lastMatchId} (${Math.round((now - ctx.serverGoneAt) / 1000)}s since the server went away)`,
-        );
-        if (
-          await this.resolveFromWebApi(
-            ctx.id,
-            ctx.lastMatchId,
-            ctx.participants,
-          )
-        ) {
-          ctx.finished = true;
-          await this.finish();
-          return;
-        }
       }
       if (ctx.lastMatchId && now - ctx.serverGoneAt < WEB_API_WAIT_MS) return;
       // 3) Valve has nothing: whoever led on kills won (the server does not
@@ -967,7 +966,8 @@ export class HostBotWorker {
       return;
     }
 
-    // Never reached the server at all: give it the grace period, then give up.
+    // Never reached the server at all: give it the grace period (Valve's
+    // record is still asked every tick above), then give up.
     if (now - (ctx.lobbyLostAt ?? now) < DUEL_LOBBY_LOST_GRACE_SECONDS * 1000) {
       if (ctx.serverMisses === 1) {
         this.logger.warn(
@@ -986,6 +986,35 @@ export class HostBotWorker {
       'lobby gone, scoreboard unreachable',
     );
     await this.finish();
+  }
+
+  /**
+   * Throttled `GetMatchDetails` for the match we follow. True when Valve had
+   * the record and the result was applied — the duel is finished then.
+   */
+  private async tryWebApi(
+    ctx: DuelCtx,
+    now: number,
+    why: string,
+  ): Promise<boolean> {
+    if (ctx.finished || !ctx.lastMatchId || !this.deps.stats.enabled) {
+      return false;
+    }
+    if (now - ctx.webApiLastAt < WEB_API_POLL_MS) return false;
+    ctx.webApiLastAt = now;
+    ctx.webApiAttempts += 1;
+    this.logger.log(
+      `Web API attempt ${ctx.webApiAttempts} for match ${ctx.lastMatchId} — ${why}`,
+    );
+    const applied = await this.resolveFromWebApi(
+      ctx.id,
+      ctx.lastMatchId,
+      ctx.participants,
+    );
+    if (!applied) return false;
+    ctx.finished = true;
+    await this.finish();
+    return true;
   }
 
   /** Winner + stats + played heroes from one scoreboard snapshot → DuelsService. */

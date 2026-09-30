@@ -17,6 +17,7 @@ import {
 } from './duel.constants';
 import type { DuelEvent } from './duel-events';
 import { DuelsService } from './duels.service';
+import type { DuelStatusDto } from './dto/duel.dto';
 
 /** `socket.data` is typed through the 4th generic; the first three keep socket.io's defaults. */
 type DuelSocket = Socket<any, any, any, { playerId?: string }>;
@@ -26,6 +27,12 @@ const EVENT_STATUS = 'duel:status';
 const EVENT_ERROR = 'duel:error';
 
 const roomOf = (playerId: string) => `player:${playerId}`;
+
+/** One-line digest of a pushed status for the log. */
+function describeStatus(status: DuelStatusDto): string {
+  const duel = status.activeDuel;
+  return `rating=${status.rating.rating} (${status.rating.wins}W/${status.rating.losses}L) inQueue=${status.playersInQueue} queued=${status.queue ? `yes (wait ${status.queue.waitSeconds}s)` : 'no'} canQueue=${status.canQueue}${status.queueBlockedReason ? ` (${status.queueBlockedReason})` : ''} activeDuel=${duel ? `${duel.id} ${duel.state}` : 'none'} lastFinished=${status.lastFinishedDuel?.id ?? 'none'} bots=${status.bots.online}/${status.bots.total} online, ${status.bots.free} free`;
+}
 
 /**
  * Real-time channel of the duels page: `<api>/duels`, authenticated with the
@@ -81,6 +88,9 @@ export class DuelsGateway
   async handleConnection(client: DuelSocket): Promise<void> {
     const playerId = await this.authenticate(client);
     if (!playerId) {
+      this.logger.warn(
+        `socket ${client.id} from ${client.handshake.address} rejected: ${extractToken(client) ? 'invalid or expired token' : 'no token'}`,
+      );
       client.emit(EVENT_ERROR, { error: 'unauthorized' });
       client.disconnect(true);
       return;
@@ -93,9 +103,21 @@ export class DuelsGateway
       this.socketsByPlayer.set(playerId, set);
     }
     set.add(client.id);
+    this.logger.log(
+      `connected: player ${playerId} socket ${client.id} via ${client.conn.transport.name} — ${set.size} socket(s) for this player, ${this.socketsByPlayer.size} player(s) online`,
+    );
+    client.conn.on('upgrade', () => {
+      this.logger.log(
+        `socket ${client.id} (player ${playerId}) upgraded to ${client.conn.transport.name}`,
+      );
+    });
     // First snapshot doubles as the heartbeat (touches the queue row).
     try {
-      client.emit(EVENT_STATUS, await this.duels.getStatus(playerId));
+      const status = await this.duels.getStatus(playerId);
+      client.emit(EVENT_STATUS, status);
+      this.logger.log(
+        `status → player ${playerId} on connect: ${describeStatus(status)}`,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`status for ${playerId} on connect failed: ${message}`);
@@ -109,6 +131,9 @@ export class DuelsGateway
     if (!set) return;
     set.delete(client.id);
     if (!set.size) this.socketsByPlayer.delete(playerId);
+    this.logger.log(
+      `disconnected: player ${playerId} socket ${client.id} — ${set.size} socket(s) left for this player, ${this.socketsByPlayer.size} player(s) online`,
+    );
   }
 
   private async authenticate(client: DuelSocket): Promise<string | null> {
@@ -128,6 +153,9 @@ export class DuelsGateway
 
   /** A ladder change was announced (by any process): refresh the players it concerns. */
   onEvent(event: DuelEvent): void {
+    this.logger.log(
+      `event ${JSON.stringify(event)} — ${this.socketsByPlayer.size} player(s) online`,
+    );
     switch (event.scope) {
       case 'queue':
       case 'bots':
@@ -169,6 +197,9 @@ export class DuelsGateway
             touch: false,
           });
           this.server.to(roomOf(playerId)).emit(EVENT_STATUS, status);
+          this.logger.log(
+            `status → player ${playerId} (${this.socketsByPlayer.get(playerId)?.size ?? 0} socket(s)): ${describeStatus(status)}`,
+          );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.logger.warn(`status push to ${playerId} failed: ${message}`);

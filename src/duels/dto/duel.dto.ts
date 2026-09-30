@@ -317,6 +317,12 @@ export class DuelStatusDto {
   queueBlockedReason: DuelQueueBlockedReason | null;
 
   @ApiProperty({
+    description:
+      'Players in the 1v1 queue right now (me included when queued) — shown even outside the queue',
+  })
+  playersInQueue: number;
+
+  @ApiProperty({
     type: DuelBotsStatusDto,
     description:
       'Host bot pool snapshot; queueing is blocked while online is 0',
