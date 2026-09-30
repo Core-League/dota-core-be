@@ -11,6 +11,8 @@ const VIEW_JOIN_ROLE_IDS = ['1399031107835400385', '1399452821362966728'];
 
 // Every team voice channel lands in this one category.
 const TEAM_VOICE_CATEGORY_ID = '1421318941875245129';
+// Every 1v1 duel voice channel ("Duel #N") lands in this one category.
+const DUEL_VOICE_CATEGORY_ID = '1525087138432028722';
 
 // Discord permission bit values (Discord API expects string integers)
 const MANAGE_CHANNELS_BIT = 16n; // 1 << 4
@@ -223,6 +225,69 @@ export class DiscordBotService implements OnModuleInit {
       return (res.data as { id: string }).id;
     } catch (e) {
       this.logger.warn(`createTeamVoiceChannel failed: ${this.errMsg(e)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Creates the private voice channel of a 1v1 duel ("Duel #N"): only the
+   * two players (member overwrites) and staff can see it. Returns the channel
+   * ID or null on failure / when the bot is not configured.
+   */
+  async createDuelVoiceChannel(
+    duelNumber: number,
+    discordUserIds: string[],
+  ): Promise<string | null> {
+    if (!this.ready()) return null;
+    try {
+      const res = await this.withRateLimitRetry(() =>
+        firstValueFrom(
+          this.http.post(
+            `https://discord.com/api/v10/guilds/${this.guildId}/channels`,
+            {
+              name: `⚔️・Duel #${duelNumber}`,
+              type: 2, // GUILD_VOICE
+              parent_id: DUEL_VOICE_CATEGORY_ID,
+              permission_overwrites: [
+                // @everyone: deny VIEW_CHANNEL (channel is private)
+                {
+                  id: this.guildId,
+                  type: 0,
+                  allow: '0',
+                  deny: TEAM_CHANNEL_DENY_EVERYONE,
+                },
+                // The two players: view + connect + speak (type 1 = member)
+                ...discordUserIds.map((id) => ({
+                  id,
+                  type: 1,
+                  allow: TEAM_CHANNEL_ALLOW,
+                  deny: '0',
+                })),
+                // Staff role: full voice access
+                {
+                  id: STAFF_FULL_ACCESS_ROLE_ID,
+                  type: 0,
+                  allow: STAFF_CHANNEL_ALLOW,
+                  deny: '0',
+                },
+                // Moderator roles: view + connect
+                ...VIEW_JOIN_ROLE_IDS.map((id) => ({
+                  id,
+                  type: 0,
+                  allow: VIEW_JOIN_ALLOW,
+                  deny: '0',
+                })),
+              ],
+            },
+            { headers: this.headers },
+          ),
+        ),
+      );
+      return (res.data as { id: string }).id;
+    } catch (e) {
+      this.logger.warn(
+        `createDuelVoiceChannel #${duelNumber} failed: ${this.errMsg(e)}`,
+      );
       return null;
     }
   }
@@ -579,16 +644,27 @@ export class DiscordBotService implements OnModuleInit {
     }
   }
 
-  async deleteChannel(channelId: string): Promise<void> {
-    if (!this.ready()) return;
+  /**
+   * Deletes a channel. True when it is gone (deleted now, or already
+   * missing — 404); false on any other failure, so the caller may retry.
+   * Without a configured bot there is nothing to delete: also true.
+   */
+  async deleteChannel(channelId: string): Promise<boolean> {
+    if (!this.ready()) return true;
     try {
-      await firstValueFrom(
-        this.http.delete(`https://discord.com/api/v10/channels/${channelId}`, {
-          headers: this.headers,
-        }),
+      await this.withRateLimitRetry(() =>
+        firstValueFrom(
+          this.http.delete(
+            `https://discord.com/api/v10/channels/${channelId}`,
+            { headers: this.headers },
+          ),
+        ),
       );
+      return true;
     } catch (e) {
+      if ((e as AxiosError).response?.status === 404) return true;
       this.logger.warn(`deleteChannel ${channelId} failed: ${this.errMsg(e)}`);
+      return false;
     }
   }
 

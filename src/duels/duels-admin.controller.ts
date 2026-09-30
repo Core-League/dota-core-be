@@ -33,6 +33,7 @@ import {
 } from './dto/duel-admin.dto';
 import { DuelDto, DuelRatingDto } from './dto/duel.dto';
 import { AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
+import { DuelVoiceChannelsService } from './duel-voice-channels.service';
 import { DuelsService } from './duels.service';
 import { HostBotsService } from './host-bots.service';
 import { RealtimeStatsService } from '../dota-bot/realtime-stats.service';
@@ -48,6 +49,7 @@ export class DuelsAdminController {
     private readonly duels: DuelsService,
     private readonly hostBots: HostBotsService,
     private readonly stats: RealtimeStatsService,
+    private readonly voice: DuelVoiceChannelsService,
   ) {}
 
   // ── bots (declared before ':id' routes) ──────────────────────────────────
@@ -141,7 +143,9 @@ export class DuelsAdminController {
       'Removes all duels, all rating lines and the queue. Irreversible. Bots leave their lobbies on the next tick.',
   })
   @ApiOkResponse({ type: AdminPurgeDuelsResultDto })
-  purgeAll(@Req() req: AuthedRequest): Promise<AdminPurgeDuelsResultDto> {
+  async purgeAll(@Req() req: AuthedRequest): Promise<AdminPurgeDuelsResultDto> {
+    // The duel rows are the only record of the voice channels — free Discord first.
+    await this.voice.deleteAll();
     return this.duels.adminPurgeAll(req.user.playerId);
   }
 

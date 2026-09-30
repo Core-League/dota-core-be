@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Generated,
   Index,
   JoinColumn,
   ManyToOne,
@@ -27,6 +28,12 @@ import {
 export class Duel {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  /** Human-readable "Duel #N" — a sequence, unique across the whole ladder history. */
+  @Index('IDX_duel_number', { unique: true })
+  @Generated('increment')
+  @Column({ type: 'integer' })
+  number: number;
 
   @Index('IDX_duel_state')
   @Column({ type: 'varchar', length: 24, default: DuelState.PENDING })
@@ -128,6 +135,13 @@ export class Duel {
    */
   @Column({ type: 'jsonb', nullable: true })
   inviteRequests: Record<string, string> | null;
+
+  /**
+   * Private Discord voice channel of the two players ("Duel #N"), created by
+   * api-v1 once both accepted and deleted after the duel ended.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  discordVoiceChannelId: string | null;
 
   @Column({ type: 'varchar', length: 48, nullable: true })
   cancelReason: DuelCancelReason | null;

@@ -106,6 +106,9 @@ export class DuelDto {
   @ApiProperty()
   id: string;
 
+  @ApiProperty({ description: 'Human-readable duel number ("Duel #N")' })
+  number: number;
+
   @ApiProperty({ enum: DuelState })
   state: DuelState;
 
@@ -174,6 +177,14 @@ export class DuelDto {
       'Random hero per player, drawn at pairing time; picking another hero forfeits the duel',
   })
   heroes: DuelHeroDto[] | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Link to the private Discord voice channel of this duel ("Duel #N"). ' +
+      'Only for the two participants from the moment both accepted until the duel ended; null for everyone else',
+  })
+  discordVoiceChannelUrl: string | null;
 
   @ApiPropertyOptional({ type: [DuelLobbyPlayerDto], nullable: true })
   lobbyPlayers: DuelLobbyPlayerDto[] | null;

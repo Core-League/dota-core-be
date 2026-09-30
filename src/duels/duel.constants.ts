@@ -52,6 +52,19 @@ export const DUEL_TERMINAL_STATES: readonly DuelState[] = [
   DuelState.FAILED,
 ];
 
+/**
+ * States in which the duel's Discord voice channel exists and its link is
+ * shown to the two players: from "both accepted" until the result is in.
+ * PROCESSING is included on purpose — the players are in the game then.
+ */
+export const DUEL_VOICE_CHANNEL_STATES: readonly DuelState[] = [
+  DuelState.PENDING,
+  DuelState.LOBBY_CREATING,
+  DuelState.WAITING_PLAYERS,
+  DuelState.LIVE,
+  DuelState.PROCESSING,
+];
+
 export enum DuelCancelReason {
   PLAYERS_NO_SHOW = 'players_no_show',
   LOBBY_NOT_CREATED = 'lobby_not_created',
@@ -192,6 +205,13 @@ export const DUEL_REINVITE_INTERVAL_SECONDS = 30;
 export const DUEL_REINVITE_MAX_AUTO = 4;
 /** "Invite me again" from the site: once per player per this many seconds. */
 export const DUEL_INVITE_REQUEST_COOLDOWN_SECONDS = 15;
+
+// ── Discord voice channel ────────────────────────────────────────────────
+
+/** A finished duel keeps its voice channel this long, so the players can say "gg" before it vanishes. */
+export const DUEL_VOICE_CHANNEL_GRACE_SECONDS = 120;
+/** How often api-v1 re-checks channels against duel states (missed events, restarts, grace expiry). */
+export const DUEL_VOICE_CHANNEL_SWEEP_MS = 30_000;
 
 // ── realtime (socket.io) ─────────────────────────────────────────────────
 

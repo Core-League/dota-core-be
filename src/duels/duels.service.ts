@@ -20,6 +20,7 @@ import {
   Not,
   Repository,
 } from 'typeorm';
+import { discordChannelUrl } from '../discord/discord-links';
 import { Player } from '../players/player.entity';
 import {
   DUEL_ACCEPT_WINDOW_SECONDS,
@@ -38,6 +39,7 @@ import {
   DUEL_RATING_DELTA,
   DUEL_RATING_FLOOR,
   DUEL_TERMINAL_STATES,
+  DUEL_VOICE_CHANNEL_STATES,
   DuelCancelReason,
   DuelFailReason,
   DuelState,
@@ -159,8 +161,13 @@ export class DuelsService {
       viewerId != null &&
       (duel.player1Id === viewerId || duel.player2Id === viewerId);
     const showPassword = isParticipant && this.isLobbyOpen(duel.state);
+    const showVoice =
+      isParticipant &&
+      !!duel.discordVoiceChannelId &&
+      DUEL_VOICE_CHANNEL_STATES.includes(duel.state);
     return {
       id: duel.id,
+      number: duel.number,
       state: duel.state,
       createdAt: duel.createdAt,
       lobbyReadyAt: duel.lobbyReadyAt,
@@ -180,6 +187,9 @@ export class DuelsService {
       lobbyName: duel.lobbyName,
       lobbyPassword: showPassword ? duel.lobbyPassword : null,
       heroes: duel.heroes ? duel.heroes.map((h) => this.toHeroDto(h)) : null,
+      discordVoiceChannelUrl: showVoice
+        ? discordChannelUrl(duel.discordVoiceChannelId as string)
+        : null,
       lobbyPlayers: duel.lobbyPlayers,
       radiantPlayerId: duel.radiantPlayerId,
       direPlayerId: duel.direPlayerId,

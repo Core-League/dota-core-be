@@ -7,6 +7,7 @@ import {
 import { Client, type ClientConfig, type Notification } from 'pg';
 import { getPostgresDataSourceOptions } from '../config/postgres-connection';
 import { DUEL_EVENTS_CHANNEL, parseDuelEvent } from './duel-events';
+import { DuelVoiceChannelsService } from './duel-voice-channels.service';
 import { DuelsGateway } from './duels.gateway';
 
 const RECONNECT_MIN_MS = 1_000;
@@ -16,8 +17,9 @@ const RECONNECT_MAX_MS = 30_000;
  * api-v1 side of the duel event bus: one dedicated Postgres connection that
  * `LISTEN`s on `duel_events` (TypeORM's pool cannot hold a LISTEN session)
  * and hands every notification — from this process, the matchmaker or the
- * bot-worker — to the socket gateway. Reconnects with backoff; while it is
- * down the page falls back to polling, nothing is lost.
+ * bot-worker — to the socket gateway and to the voice channel service.
+ * Reconnects with backoff; while it is down the page falls back to polling
+ * and the voice channel sweep catches up, nothing is lost.
  */
 @Injectable()
 export class DuelEventsListener implements OnModuleInit, OnModuleDestroy {
@@ -27,7 +29,10 @@ export class DuelEventsListener implements OnModuleInit, OnModuleDestroy {
   private backoffMs = RECONNECT_MIN_MS;
   private stopped = false;
 
-  constructor(private readonly gateway: DuelsGateway) {}
+  constructor(
+    private readonly gateway: DuelsGateway,
+    private readonly voice: DuelVoiceChannelsService,
+  ) {}
 
   onModuleInit(): void {
     void this.connect();
@@ -91,6 +96,7 @@ export class DuelEventsListener implements OnModuleInit, OnModuleDestroy {
       `duel_events ← ${msg.payload} (from backend pid ${msg.processId})`,
     );
     this.gateway.onEvent(event);
+    this.voice.onEvent(event);
   }
 
   private scheduleReconnect(): void {
