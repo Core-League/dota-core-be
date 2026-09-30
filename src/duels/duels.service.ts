@@ -27,7 +27,9 @@ import {
   DUEL_ACTIVE_STATES,
   DUEL_HOSTED_STATES,
   DUEL_CANCEL_PENALTY,
+  DUEL_INVITE_REQUEST_COOLDOWN_SECONDS,
   DUEL_JOIN_TIMEOUT_SECONDS,
+  DUEL_MAX_LOBBY_RESTARTS,
   DUEL_NO_SHOW_COOLDOWN_SECONDS,
   DUEL_PLAYER_CANCELLABLE_STATES,
   DUEL_QUEUE_WINDOW_BASE,
@@ -189,6 +191,7 @@ export class DuelsService {
       failReason: duel.failReason,
       cancelledById: duel.cancelledById,
       adminReviewRequired: duel.adminReviewRequired,
+      lobbyRestarts: duel.lobbyRestarts ?? 0,
       stats: duel.stats,
     };
   }
@@ -627,6 +630,60 @@ export class DuelsService {
     return this.getStatus(playerId);
   }
 
+  /**
+   * "Invite me again" from the site: participants only, while the lobby is
+   * open (WAITING_PLAYERS). The request is stored on the duel and the host
+   * bot re-sends the Dota invite on its next tick — once per player per
+   * DUEL_INVITE_REQUEST_COOLDOWN_SECONDS.
+   */
+  async requestInvite(
+    duelId: string,
+    playerId: string,
+  ): Promise<DuelStatusDto> {
+    await this.dataSource.transaction(async (em) => {
+      const duel = await em.findOne(Duel, {
+        where: { id: duelId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!duel) throw new NotFoundException('Duel not found');
+      this.assertParticipant(duel, playerId);
+      if (duel.state !== DuelState.WAITING_PLAYERS) {
+        throw new ConflictException({
+          error: 'lobby_not_open',
+          message:
+            duel.state === DuelState.LOBBY_CREATING
+              ? 'Лобі ще створюється — зачекайте кілька секунд'
+              : 'Лобі вже закрите',
+        });
+      }
+      const now = new Date();
+      const last = duel.inviteRequests?.[playerId];
+      if (
+        last &&
+        now.getTime() - new Date(last).getTime() <
+          DUEL_INVITE_REQUEST_COOLDOWN_SECONDS * 1000
+      ) {
+        throw new HttpException(
+          {
+            error: 'invite_cooldown',
+            message: `Інвайт уже надіслано — повторити можна за ${DUEL_INVITE_REQUEST_COOLDOWN_SECONDS} с`,
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      duel.inviteRequests = {
+        ...(duel.inviteRequests ?? {}),
+        [playerId]: now.toISOString(),
+      };
+      await em.save(duel);
+    });
+    this.events.duelChanged(duelId);
+    this.logger.log(
+      `Duel ${duelId}: player ${playerId} asked for a new invite`,
+    );
+    return this.getStatus(playerId);
+  }
+
   // ── matchmaker helpers ───────────────────────────────────────────────────
 
   static generateLobbyPassword(): string {
@@ -803,6 +860,89 @@ export class DuelsService {
       { state: DuelState.PROCESSING, finishedAt: new Date() },
     );
     if (res.affected) this.events.duelChanged(duelId);
+  }
+
+  /**
+   * The launched game never started (a player failed to load, the server
+   * aborted the match) and the bot relaunches the lobby. LIVE / PROCESSING go
+   * back to WAITING_PLAYERS (`sameLobby`) or LOBBY_CREATING (a fresh lobby),
+   * with everything the launch had produced cleared, and the restart counted.
+   *
+   * PROCESSING had already freed the players, so the transition is refused
+   * (`player_busy`) when one of them is in another duel by now; a queue row
+   * they created meanwhile is removed — their own match resumes instead.
+   * `limit_reached` once `DUEL_MAX_LOBBY_RESTARTS` relaunches were spent; the
+   * caller cancels the duel then.
+   */
+  async restartLobby(
+    duelId: string,
+    opts: { sameLobby: boolean; reason: string },
+  ): Promise<
+    'restarted' | 'player_busy' | 'limit_reached' | 'not_restartable'
+  > {
+    let dequeued = 0;
+    const result = await this.dataSource.transaction(async (em) => {
+      const duel = await em.findOne(Duel, {
+        where: { id: duelId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (
+        !duel ||
+        (duel.state !== DuelState.LIVE && duel.state !== DuelState.PROCESSING)
+      ) {
+        return 'not_restartable' as const;
+      }
+      if ((duel.lobbyRestarts ?? 0) >= DUEL_MAX_LOBBY_RESTARTS) {
+        return 'limit_reached' as const;
+      }
+      const playerIds = [duel.player1Id, duel.player2Id].filter(
+        (id): id is string => !!id,
+      );
+      if (playerIds.length) {
+        const busy = await em
+          .createQueryBuilder(Duel, 'd')
+          .where('d.id != :id', { id: duel.id })
+          .andWhere('d.state IN (:...states)', { states: DUEL_ACTIVE_STATES })
+          .andWhere('(d.player1Id IN (:...ids) OR d.player2Id IN (:...ids))', {
+            ids: playerIds,
+          })
+          .getCount();
+        if (busy > 0) return 'player_busy' as const;
+        const removed = await em.delete(DuelQueueEntry, {
+          playerId: In(playerIds),
+        });
+        dequeued = removed.affected ?? 0;
+      }
+
+      duel.state = opts.sameLobby
+        ? DuelState.WAITING_PLAYERS
+        : DuelState.LOBBY_CREATING;
+      duel.lobbyRestarts = (duel.lobbyRestarts ?? 0) + 1;
+      duel.error = opts.reason;
+      duel.liveAt = null;
+      duel.finishedAt = null;
+      duel.radiantPlayerId = null;
+      duel.direPlayerId = null;
+      duel.dotaMatchId = null;
+      duel.serverSteamId = null;
+      duel.matchOutcome = null;
+      duel.stats = null;
+      duel.inviteRequests = null;
+      if (opts.sameLobby) {
+        duel.lobbyReadyAt = new Date();
+      } else {
+        duel.lobbyId = null;
+        duel.lobbyReadyAt = null;
+        duel.lobbyPlayers = null;
+      }
+      await em.save(duel);
+      return 'restarted' as const;
+    });
+    if (result === 'restarted') {
+      this.events.duelChanged(duelId);
+      if (dequeued > 0) this.events.queueChanged();
+    }
+    return result;
   }
 
   /** Valve match id becomes known at launch; stored early so a restarted worker can still resolve the game. */
@@ -1070,13 +1210,21 @@ export class DuelsService {
     return saved;
   }
 
-  /** Current state only — the worker polls this each tick to notice admin cancels. */
-  async getState(duelId: string): Promise<DuelState | null> {
+  /**
+   * State + pending "invite me" requests — the worker polls this each tick
+   * to notice admin cancels and invite requests from the site.
+   */
+  async getWorkerView(duelId: string): Promise<{
+    state: DuelState;
+    inviteRequests: Record<string, string> | null;
+  } | null> {
     const row = await this.duels.findOne({
       where: { id: duelId },
-      select: { id: true, state: true },
+      select: { id: true, state: true, inviteRequests: true },
     });
-    return row?.state ?? null;
+    return row
+      ? { state: row.state, inviteRequests: row.inviteRequests ?? null }
+      : null;
   }
 
   /** Every duel a bot claimed that has not finished — what a restarted worker must reconcile. */

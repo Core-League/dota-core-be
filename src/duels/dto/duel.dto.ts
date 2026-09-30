@@ -215,6 +215,12 @@ export class DuelDto {
   @ApiProperty()
   adminReviewRequired: boolean;
 
+  @ApiProperty({
+    description:
+      'How many times the lobby was relaunched because the game never started (a player failed to load)',
+  })
+  lobbyRestarts: number;
+
   @ApiPropertyOptional({ type: DuelStatsDto, nullable: true })
   stats: DuelStatsDto | null;
 }

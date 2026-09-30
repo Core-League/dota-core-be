@@ -118,6 +118,17 @@ export class Duel {
   @Column({ type: 'text', nullable: true })
   error: string | null;
 
+  /** How many times the lobby was relaunched after a game that never started (player failed to load). */
+  @Column({ type: 'integer', default: 0 })
+  lobbyRestarts: number;
+
+  /**
+   * "Invite me again" requests from the site: player id → ISO time of the
+   * latest one. The host bot serves each new request on its next tick.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  inviteRequests: Record<string, string> | null;
+
   @Column({ type: 'varchar', length: 48, nullable: true })
   cancelReason: DuelCancelReason | null;
 

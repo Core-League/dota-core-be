@@ -112,6 +112,25 @@ export class DuelsController {
     return this.duels.playerCancelDuel(id, req.user.playerId);
   }
 
+  @Post(':id/invite')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Send me the lobby invite again',
+    description:
+      'Participants only, while the lobby is open (WAITING_PLAYERS). The host bot re-sends the ' +
+      'Dota 2 lobby invite on its next tick (a few seconds). 409 when the lobby is not open, ' +
+      '429 within 15 s of the previous request.',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: DuelStatusDto })
+  requestInvite(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.duels.requestInvite(id, req.user.playerId);
+  }
+
   // ── public ───────────────────────────────────────────────────────────────
 
   @Get('bots/status')

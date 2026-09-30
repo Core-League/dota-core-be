@@ -61,6 +61,12 @@ export enum DuelCancelReason {
   ACCEPT_TIMEOUT = 'accept_timeout',
   /** A participant cancelled before the game started (−10 for them). */
   PLAYER_CANCELLED = 'player_cancelled',
+  /**
+   * The launched game never started (a player failed to load, the server
+   * aborted the match) and the lobby could not be restarted any more.
+   * No rating change.
+   */
+  GAME_ABORTED = 'game_aborted',
 }
 
 /** States in which a participant may still cancel the duel themselves. */
@@ -170,6 +176,22 @@ export const DUEL_GC_DETAILS_INTERVAL_SECONDS = 10;
 export const DUEL_RESULT_RECOVERY_WINDOW_SECONDS = 24 * 3600;
 /** POSTGAME without `match_outcome`: wait this long for the GC to fill it in. */
 export const DUEL_POSTGAME_OUTCOME_WAIT_SECONDS = 180;
+/**
+ * How many times the bot relaunches a lobby whose game never started (a
+ * player failed to load). One more abort after that cancels the duel.
+ */
+export const DUEL_MAX_LOBBY_RESTARTS = 2;
+/** After an aborted launch: let the clients settle before the lobby is launched again. */
+export const DUEL_RELAUNCH_DELAY_SECONDS = 10;
+/**
+ * Lobby invites get lost now and then. While a player is still missing from
+ * the lobby the bot re-sends the invite this often…
+ */
+export const DUEL_REINVITE_INTERVAL_SECONDS = 30;
+/** …at most this many times on its own; the player can ask for more from the site. */
+export const DUEL_REINVITE_MAX_AUTO = 4;
+/** "Invite me again" from the site: once per player per this many seconds. */
+export const DUEL_INVITE_REQUEST_COOLDOWN_SECONDS = 15;
 
 // ── realtime (socket.io) ─────────────────────────────────────────────────
 

@@ -2,7 +2,11 @@ import { Logger } from '@nestjs/common';
 import {
   DUEL_GC_DETAILS_INTERVAL_SECONDS,
   DUEL_LOBBY_LOST_GRACE_SECONDS,
+  DUEL_MAX_LOBBY_RESTARTS,
   DUEL_POSTGAME_OUTCOME_WAIT_SECONDS,
+  DUEL_REINVITE_INTERVAL_SECONDS,
+  DUEL_REINVITE_MAX_AUTO,
+  DUEL_RELAUNCH_DELAY_SECONDS,
   DUEL_RESULT_DELAY_SECONDS,
   DuelCancelReason,
   DuelFailReason,
@@ -60,6 +64,13 @@ const SERVER_GONE_AFTER_MS = 20_000;
 const SERVER_GONE_MIN_MISSES = 3;
 /** How often the "still following" line is logged while a game runs without the lobby. */
 const FOLLOW_LOG_INTERVAL_MS = 30_000;
+/**
+ * `DOTA_GameState` values a match sits in before the game proper: INIT,
+ * WAIT_FOR_PLAYERS_TO_LOAD, WAIT_FOR_MAP_TO_LOAD. A server that vanishes
+ * while its last snapshot shows one of these never started the game — a
+ * player failed to load and the match was aborted.
+ */
+const NEVER_STARTED_GAME_STATES: ReadonlySet<number> = new Set([0, 1, 10]);
 
 export interface HostBotWorkerConfig {
   lobbyName: string;
@@ -81,6 +92,16 @@ interface InvitedPlayer {
   playerId: string;
   steamId64: string;
   accountId: number;
+}
+
+/** Invite bookkeeping for one player of the hosted duel. */
+interface InviteTrack {
+  /** When the last invite went out (epoch ms). */
+  lastAt: number;
+  /** Invites the bot re-sent on its own (capped by DUEL_REINVITE_MAX_AUTO). */
+  autoCount: number;
+  /** The `inviteRequests` timestamp already served, so each site request is answered once. */
+  servedRequest: string | null;
 }
 
 /** In-memory state of the duel this bot is hosting right now. */
@@ -112,6 +133,14 @@ class DuelCtx {
   postgameAt: number | null = null;
   /** The lobby reached RUN after our launch — from then on any other state means the game ended. */
   sawRun = false;
+  /** The lobby left UI after our launch (server setup / assign): the launch was taken. */
+  sawServerSetup = false;
+  /** Relaunches so far (persisted on the duel); capped by DUEL_MAX_LOBBY_RESTARTS. */
+  restarts: number;
+  /** After an aborted game: no launch before this moment, so the clients settle first. */
+  relaunchNotBefore = 0;
+  /** Per player id: when they were last invited, how often on the bot's own initiative, which site request was served. */
+  readonly invites = new Map<string, InviteTrack>();
   /** First moment we knew the game was over (lobby left RUN, or vanished after RUN). */
   gameEndedAt: number | null = null;
   /** GC match-details polling bookkeeping. */
@@ -165,6 +194,7 @@ class DuelCtx {
     this.lobbyId = duel.lobbyId;
     this.lastMatchId = duel.dotaMatchId;
     this.lastServerId = duel.serverSteamId;
+    this.restarts = duel.lobbyRestarts ?? 0;
     this.joinDeadline = this.startedAt + joinTimeoutSeconds * 1000;
   }
 
@@ -172,6 +202,69 @@ class DuelCtx {
     return accountId == null
       ? null
       : (this.invited.get(accountId)?.playerId ?? null);
+  }
+
+  inviteTrackOf(playerId: string): InviteTrack {
+    let track = this.invites.get(playerId);
+    if (!track) {
+      track = { lastAt: 0, autoCount: 0, servedRequest: null };
+      this.invites.set(playerId, track);
+    }
+    return track;
+  }
+
+  /** An invite just went out to this player (lobby created / relaunched). */
+  noteInvite(playerId: string, now: number): void {
+    this.inviteTrackOf(playerId).lastAt = now;
+  }
+
+  /**
+   * Back to the pre-launch state after a game that never started: everything
+   * the launch produced (sides, match / server ids, snapshots, timers) is
+   * dropped. `sameLobby` keeps the lobby id — the bot is still its host and
+   * relaunches it; otherwise a fresh lobby is created next.
+   */
+  resetForRelaunch(
+    now: number,
+    joinTimeoutSeconds: number,
+    sameLobby: boolean,
+  ): void {
+    this.restarts += 1;
+    this.launched = false;
+    this.finished = false;
+    this.sawRun = false;
+    this.sawServerSetup = false;
+    this.radiantAcc = null;
+    this.direAcc = null;
+    this.lastRosterSig = null;
+    this.gameDeadline = null;
+    this.lastServerId = null;
+    this.lastStats = null;
+    this.lastMatchId = null;
+    this.lobbyLostAt = null;
+    this.postgameAt = null;
+    this.gameEndedAt = null;
+    this.gcDetailsAttempts = 0;
+    this.gcDetailsLastAt = 0;
+    this.lastLobby = null;
+    this.lastLobbyState = null;
+    this.lastLobbyOutcome = 0;
+    this.serverSeenAt = null;
+    this.serverMisses = 0;
+    this.lastFollowLogAt = 0;
+    this.lastFollowLine = null;
+    this.serverGoneAt = null;
+    this.webApiLastAt = 0;
+    this.webApiAttempts = 0;
+    this.joinDeadline = now + joinTimeoutSeconds * 1000;
+    this.relaunchNotBefore = now + DUEL_RELAUNCH_DELAY_SECONDS * 1000;
+    this.invites.clear();
+    if (!sameLobby) {
+      this.lobbyId = null;
+      this.expectingCreate = false;
+      this.createAttempts = 0;
+      this.lastCreateAt = 0;
+    }
   }
 }
 
@@ -405,7 +498,11 @@ export class HostBotWorker {
     );
     try {
       gc.setTeamSlot(DOTA_GC_TEAM.PLAYER_POOL);
-      for (const p of ctx.players) gc.inviteToLobby(p.steamId64);
+      const now = Date.now();
+      for (const p of ctx.players) {
+        gc.inviteToLobby(p.steamId64);
+        ctx.noteInvite(p.playerId, now);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`invite failed: ${message}`);
@@ -591,9 +688,11 @@ export class HostBotWorker {
     const now = Date.now();
 
     // Admin cancelled it (or another process finished it) → drop the lobby.
-    const state = await this.deps.duels.getState(ctx.id);
-    if (state == null || DUEL_TERMINAL_STATES.includes(state)) {
-      this.logger.log(`Duel ${ctx.id} is ${state ?? 'gone'} — cleaning up`);
+    const view = await this.deps.duels.getWorkerView(ctx.id);
+    if (!view || DUEL_TERMINAL_STATES.includes(view.state)) {
+      this.logger.log(
+        `Duel ${ctx.id} is ${view?.state ?? 'gone'} — cleaning up`,
+      );
       await this.finish();
       return;
     }
@@ -725,19 +824,22 @@ export class HostBotWorker {
       .filter((m) => m.team === DOTA_GC_TEAM.BAD_GUYS)
       .map((m) => m.accountId);
 
-    // 3) tell the platform who is in (only when it changed)
+    // 3) tell the platform who is in (only when it changed), and chase the
+    //    missing ones with fresh invites — lobby invites do get lost.
     if (!ctx.launched) {
       await this.broadcastRoster(ctx, inLobby, radiant, dire);
+      this.resendInvites(ctx, gc, inLobby, view.inviteRequests, now);
     }
 
-    // 4) launch when both invited players sit on opposite sides
+    // 4) launch when both invited players sit on opposite sides (after an
+    //    aborted game: not before the relaunch delay has passed)
     const allIn = [...ctx.invited.keys()].every((acc) => inLobby.has(acc));
     const sidesOk =
       radiant.length === 1 &&
       dire.length === 1 &&
       ctx.invited.has(radiant[0]) &&
       ctx.invited.has(dire[0]);
-    if (!ctx.launched && allIn && sidesOk) {
+    if (!ctx.launched && allIn && sidesOk && now >= ctx.relaunchNotBefore) {
       ctx.launched = true;
       ctx.gameDeadline = now + this.config.gameTimeoutSeconds * 1000;
       ctx.radiantAcc = radiant[0];
@@ -803,6 +905,27 @@ export class HostBotWorker {
     }
 
     if (ctx.launched && lobby.state === LobbyState.RUN) ctx.sawRun = true;
+
+    // 5b) aborted launch — the lobby left UI for server setup and came back
+    //     without the game ever running: a player failed to load and the
+    //     server dropped the match. Relaunch instead of waiting for the game
+    //     timeout (the lobby carries a NotScored outcome or none at all).
+    if (ctx.launched && !ctx.finished && !ctx.sawRun) {
+      if (lobby.state !== LobbyState.UI) {
+        ctx.sawServerSetup = true;
+      } else if (
+        ctx.sawServerSetup &&
+        lobbyOutcome !== 2 &&
+        lobbyOutcome !== 3 &&
+        (ctx.lastStats == null || this.gameNeverStarted(ctx.lastStats))
+      ) {
+        await this.restartAfterAbort(ctx, now, {
+          sameLobby: true,
+          why: `lobby back to UI after launch without the game running (outcome=${lobbyOutcome}${ctx.lastStats ? `, board: ${this.deps.stats.describe(ctx.lastStats)}` : ''})`,
+        });
+        return;
+      }
+    }
 
     // 6) game hung
     if (
@@ -915,6 +1038,17 @@ export class HostBotWorker {
         ctx.serverMisses < SERVER_GONE_MIN_MISSES ||
         silentMs < SERVER_GONE_AFTER_MS
       ) {
+        return;
+      }
+      // Server gone while the board never got past the loading screen: the
+      // match was aborted (a player failed to load) — nothing to score, the
+      // lobby is restarted. The bot is no longer in the old lobby, so a fresh
+      // one is created and both players are invited again.
+      if (this.gameNeverStarted(ctx.lastStats)) {
+        await this.restartAfterAbort(ctx, now, {
+          sameLobby: false,
+          why: `server gone after ${Math.round(silentMs / 1000)}s of silence, the game never started (${ctx.lastStats ? this.deps.stats.describe(ctx.lastStats) : 'no snapshot'})`,
+        });
         return;
       }
       // Server gone → the game is over. The server does not vanish mid-game
@@ -1114,6 +1248,134 @@ export class HostBotWorker {
       heroesPlayed,
       stats: this.deps.stats.fromGcMatch(match, participants),
     });
+  }
+
+  /**
+   * The snapshot shows a match that never left the loading phase: game state
+   * INIT / WAIT_FOR_PLAYERS_TO_LOAD / WAIT_FOR_MAP_TO_LOAD and no kills. Only
+   * positive evidence counts — no snapshot at all says nothing.
+   */
+  private gameNeverStarted(raw: RealtimeStatsRaw | null): boolean {
+    if (!raw) return false;
+    const state = raw.match?.game_state;
+    if (state == null || !NEVER_STARTED_GAME_STATES.has(state)) return false;
+    const kills = (raw.teams ?? []).reduce(
+      (sum, team) => sum + (team.score ?? 0),
+      0,
+    );
+    return kills === 0;
+  }
+
+  /**
+   * A launched game that never started: relaunch the lobby (same lobby when
+   * the bot still hosts it, a fresh one otherwise). `DuelsService` decides
+   * whether the duel may go back to the lobby stage — it refuses once the
+   * restart budget is spent or a player has moved on to another duel, and
+   * the duel is cancelled without rating changes then.
+   */
+  private async restartAfterAbort(
+    ctx: DuelCtx,
+    now: number,
+    opts: { sameLobby: boolean; why: string },
+  ): Promise<void> {
+    this.stopStatsPolling();
+    const attempt = ctx.restarts + 1;
+    this.logger.warn(
+      `Game never started — ${opts.why}. Restarting the lobby (attempt ${attempt} of ${DUEL_MAX_LOBBY_RESTARTS}, ${opts.sameLobby ? 'same lobby' : 'new lobby'})`,
+    );
+    const verdict = await this.deps.duels.restartLobby(ctx.id, {
+      sameLobby: opts.sameLobby,
+      reason: `lobby restarted (${attempt}): ${opts.why}`,
+    });
+    if (verdict === 'not_restartable') {
+      // Cancelled / finished by someone else meanwhile — the next tick cleans up.
+      this.logger.log(
+        `Duel ${ctx.id} is no longer LIVE / PROCESSING — not restarting`,
+      );
+      return;
+    }
+    if (verdict !== 'restarted') {
+      const why =
+        verdict === 'limit_reached'
+          ? `the game was aborted ${ctx.restarts + 1} times (${DUEL_MAX_LOBBY_RESTARTS} restarts spent)`
+          : 'a player is already in another duel';
+      this.logger.error(
+        `Duel ${ctx.id}: cannot restart the lobby — ${why}. CANCELLED (game_aborted)`,
+      );
+      await this.deps.duels.cancelDuel(ctx.id, DuelCancelReason.GAME_ABORTED, {
+        error: `${why}; last abort: ${opts.why}`,
+      });
+      await this.finish();
+      return;
+    }
+
+    ctx.resetForRelaunch(now, this.config.joinTimeoutSeconds, opts.sameLobby);
+    const gc = this.gc;
+    if (!gc) return;
+    if (!opts.sameLobby) {
+      this.createLobby();
+      return;
+    }
+    // Same lobby: whoever dropped out of it gets a new invite; the tick
+    // relaunches once both sit on their sides again.
+    const present = new Set(
+      (gc.lobby?.all_members ?? [])
+        .filter((m) => !!m.id)
+        .map((m) => accountIdOf(m.id)),
+    );
+    for (const p of ctx.players) {
+      if (present.has(p.accountId)) continue;
+      this.logger.log(`Re-inviting ${p.steamId64} (not in the lobby)`);
+      try {
+        gc.inviteToLobby(p.steamId64);
+        ctx.noteInvite(p.playerId, now);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`re-invite failed: ${message}`);
+      }
+    }
+  }
+
+  /**
+   * Invites for players who are not in the lobby yet: on the bot's own
+   * initiative every DUEL_REINVITE_INTERVAL_SECONDS (a few times), and at
+   * once whenever the player asked for one from the site — each stored
+   * request is served exactly once. A request from a player who is already
+   * in the lobby is simply marked served.
+   */
+  private resendInvites(
+    ctx: DuelCtx,
+    gc: DotaGcClient,
+    inLobby: Set<number>,
+    requests: Record<string, string> | null,
+    now: number,
+  ): void {
+    for (const p of ctx.players) {
+      const track = ctx.inviteTrackOf(p.playerId);
+      const present = inLobby.has(p.accountId);
+      const requested = requests?.[p.playerId] ?? null;
+      let why: string | null = null;
+      if (requested != null && requested !== track.servedRequest) {
+        track.servedRequest = requested;
+        if (!present) why = 'asked for it from the site';
+      } else if (
+        !present &&
+        track.autoCount < DUEL_REINVITE_MAX_AUTO &&
+        now - track.lastAt >= DUEL_REINVITE_INTERVAL_SECONDS * 1000
+      ) {
+        track.autoCount += 1;
+        why = `still not in the lobby (auto ${track.autoCount}/${DUEL_REINVITE_MAX_AUTO})`;
+      }
+      if (!why) continue;
+      track.lastAt = now;
+      this.logger.log(`Re-inviting ${p.steamId64} — ${why}`);
+      try {
+        gc.inviteToLobby(p.steamId64);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`re-invite failed: ${message}`);
+      }
+    }
   }
 
   /** Game finished from the GC's point of view: it ran, and the lobby is no longer running. */
