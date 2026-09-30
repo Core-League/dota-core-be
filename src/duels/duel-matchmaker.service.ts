@@ -2,15 +2,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, LessThan, Repository } from 'typeorm';
 import {
-  DUEL_DEFAULT_REGION,
-  DUEL_LOBBY_NAME_DEFAULT,
   DUEL_PENDING_TIMEOUT_SECONDS,
   DUEL_QUEUE_HEARTBEAT_TTL_SECONDS,
   DUEL_SAME_OPPONENT_DAILY_LIMIT,
   DuelCancelReason,
+  DuelKind,
   DuelState,
 } from './duel.constants';
 import { Duel } from './duel.entity';
+import { DuelChallengesService } from './duel-challenges.service';
 import { DuelEventsPublisher } from './duel-events.publisher';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelsService } from './duels.service';
@@ -30,12 +30,14 @@ export class DuelMatchmakerService {
     private readonly queue: Repository<DuelQueueEntry>,
     @InjectRepository(Duel) private readonly duels: Repository<Duel>,
     private readonly duelsService: DuelsService,
+    private readonly challenges: DuelChallengesService,
     private readonly events: DuelEventsPublisher,
   ) {}
 
   async tick(): Promise<void> {
     await this.pruneStaleQueue();
     await this.duelsService.expireAcceptTimeouts();
+    await this.challenges.expirePending();
     await this.expireUnclaimedDuels();
     await this.pairPlayers();
   }
@@ -72,14 +74,16 @@ export class DuelMatchmakerService {
     }
   }
 
+  /** Ranked duels only — friendly duels have their own daily limit. */
   private async duelsTodayBetween(a: string, b: string): Promise<number> {
     const rows: Array<{ count: number | string }> = await this.dataSource.query(
       `SELECT COUNT(*)::int AS count
          FROM "duel"
         WHERE "state" = $1
+          AND "kind" = $4
           AND (("player1Id" = $2 AND "player2Id" = $3) OR ("player1Id" = $3 AND "player2Id" = $2))
           AND ("finishedAt" AT TIME ZONE 'Europe/Kyiv')::date = (now() AT TIME ZONE 'Europe/Kyiv')::date`,
-      [DuelState.RESOLVED, a, b],
+      [DuelState.RESOLVED, a, b, DuelKind.RANKED],
     );
     return Number(rows[0]?.count ?? 0);
   }
@@ -110,16 +114,12 @@ export class DuelMatchmakerService {
         ) {
           continue;
         }
-        const lobbyName =
-          process.env.HOSTBOT_LOBBY_NAME?.trim() || DUEL_LOBBY_NAME_DEFAULT;
-        // An empty/unset HOSTBOT_REGION (the CI forwards it even when blank) means the default, not region 0.
-        const rawRegion = process.env.HOSTBOT_REGION?.trim();
-        const region = rawRegion ? Number(rawRegion) : NaN;
+        const { lobbyName, region } = DuelsService.lobbySettingsFromEnv();
         const duel = await this.duelsService.createDuelFromQueue(
           a,
           b,
           lobbyName,
-          Number.isFinite(region) && region > 0 ? region : DUEL_DEFAULT_REGION,
+          region,
         );
         if (!duel) continue; // someone left the queue meanwhile
         taken.add(a.playerId);

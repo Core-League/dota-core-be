@@ -7,9 +7,14 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import type { Namespace, Socket } from 'socket.io';
-import type { JwtPayload } from '../auth/strategies/jwt.strategy';
+import type { Namespace } from 'socket.io';
 import { getCorsOrigins } from '../config/cors';
+import {
+  authenticateSocket,
+  extractSocketToken,
+  playerRoom as roomOf,
+  type PlayerSocket as DuelSocket,
+} from '../realtime/socket-auth';
 import {
   DUEL_SOCKET_HEARTBEAT_SECONDS,
   DUEL_SOCKET_NAMESPACE,
@@ -19,14 +24,9 @@ import type { DuelEvent } from './duel-events';
 import { DuelsService } from './duels.service';
 import type { DuelStatusDto } from './dto/duel.dto';
 
-/** `socket.data` is typed through the 4th generic; the first three keep socket.io's defaults. */
-type DuelSocket = Socket<any, any, any, { playerId?: string }>;
-
 /** Server → client events. Mirrored by `IDuelSocketServerEvents` on the frontend. */
 const EVENT_STATUS = 'duel:status';
 const EVENT_ERROR = 'duel:error';
-
-const roomOf = (playerId: string) => `player:${playerId}`;
 
 /** One-line digest of a pushed status for the log. */
 function describeStatus(status: DuelStatusDto): string {
@@ -86,10 +86,10 @@ export class DuelsGateway
   // ── connections ──────────────────────────────────────────────────────────
 
   async handleConnection(client: DuelSocket): Promise<void> {
-    const playerId = await this.authenticate(client);
+    const playerId = await authenticateSocket(client, this.jwt);
     if (!playerId) {
       this.logger.warn(
-        `socket ${client.id} from ${client.handshake.address} rejected: ${extractToken(client) ? 'invalid or expired token' : 'no token'}`,
+        `socket ${client.id} from ${client.handshake.address} rejected: ${extractSocketToken(client) ? 'invalid or expired token' : 'no token'}`,
       );
       client.emit(EVENT_ERROR, { error: 'unauthorized' });
       client.disconnect(true);
@@ -136,19 +136,6 @@ export class DuelsGateway
     );
   }
 
-  private async authenticate(client: DuelSocket): Promise<string | null> {
-    const token = extractToken(client);
-    if (!token) return null;
-    try {
-      const payload = await this.jwt.verifyAsync<JwtPayload>(token);
-      // Access tokens carry no `typ`; OAuth-state / Steam-link tokens do and are not logins.
-      if (payload.typ) return null;
-      return payload.sub || null;
-    } catch {
-      return null;
-    }
-  }
-
   // ── pushes ───────────────────────────────────────────────────────────────
 
   /** A ladder change was announced (by any process): refresh the players it concerns. */
@@ -172,6 +159,10 @@ export class DuelsGateway
             const message = err instanceof Error ? err.message : String(err);
             this.logger.warn(`duel ${event.duelId} lookup failed: ${message}`);
           });
+        return;
+      case 'notification':
+        // Handled by NotificationsGateway; the listener never routes it here.
+        return;
     }
   }
 
@@ -219,16 +210,4 @@ export class DuelsGateway
       this.logger.warn(`queue heartbeat failed: ${message}`);
     }
   }
-}
-
-/** `auth: { token }` (socket.io-client), or a bearer header / `?token=` for other clients. */
-function extractToken(client: DuelSocket): string | null {
-  const auth = client.handshake.auth as Record<string, unknown> | undefined;
-  if (typeof auth?.token === 'string' && auth.token) return auth.token;
-  const header = client.handshake.headers.authorization;
-  if (typeof header === 'string' && header.startsWith('Bearer ')) {
-    return header.slice('Bearer '.length).trim() || null;
-  }
-  const query = client.handshake.query.token;
-  return typeof query === 'string' && query ? query : null;
 }

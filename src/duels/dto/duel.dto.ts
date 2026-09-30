@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { DuelCancelReason, DuelFailReason, DuelState } from '../duel.constants';
+import { IsUUID } from 'class-validator';
+import {
+  DuelCancelReason,
+  DuelChallengeStatus,
+  DuelFailReason,
+  DuelKind,
+  DuelState,
+} from '../duel.constants';
 
 /** Compact player card used everywhere on the 1v1 ladder. */
 export class DuelPlayerDto {
@@ -112,6 +119,13 @@ export class DuelDto {
   @ApiProperty({ enum: DuelState })
   state: DuelState;
 
+  @ApiProperty({
+    enum: DuelKind,
+    description:
+      '`ranked` — paired from the queue (±25); `friend` — created from an accepted friend challenge (±10)',
+  })
+  kind: DuelKind;
+
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt: Date;
 
@@ -206,7 +220,8 @@ export class DuelDto {
 
   @ApiPropertyOptional({
     nullable: true,
-    description: 'Points moved once the result was applied (25)',
+    description:
+      'Points moved once the result was applied (25 for ranked, 10 for friendly duels)',
   })
   ratingDelta: number | null;
 
@@ -306,6 +321,73 @@ export class DuelBotsStatusDto {
   busy: number;
 }
 
+/** A friendly-duel invitation between two friends. */
+export class DuelChallengeDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty({ enum: DuelChallengeStatus })
+  status: DuelChallengeStatus;
+
+  @ApiProperty({ type: DuelPlayerDto, description: 'Who sent the challenge' })
+  challenger: DuelPlayerDto;
+
+  @ApiProperty({ type: DuelPlayerDto, description: 'Who was challenged' })
+  challenged: DuelPlayerDto;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  createdAt: Date;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    description: 'A PENDING challenge nobody answered by then expires',
+  })
+  expiresAt: Date;
+
+  @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
+  respondedAt: Date | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'The friendly duel created once the challenge was accepted',
+  })
+  duelId: string | null;
+}
+
+/** My open challenges plus how many friendly duels I may still accept today. */
+export class DuelChallengesStateDto {
+  @ApiProperty({
+    type: [DuelChallengeDto],
+    description: 'Challenges waiting for my answer',
+  })
+  incoming: DuelChallengeDto[];
+
+  @ApiPropertyOptional({
+    type: DuelChallengeDto,
+    nullable: true,
+    description: 'The challenge I sent that is still open (one at a time)',
+  })
+  outgoing: DuelChallengeDto | null;
+
+  @ApiProperty({
+    description: 'Friendly duels I accepted (either side) today, Kyiv time',
+  })
+  acceptedToday: number;
+
+  @ApiProperty({ description: 'Friendly duels a player may accept per day' })
+  dailyLimit: number;
+
+  @ApiProperty({ description: 'Points a friendly duel moves (10)' })
+  ratingDelta: number;
+}
+
+export class CreateDuelChallengeDto {
+  @ApiProperty({ description: 'Friend to challenge' })
+  @IsUUID()
+  playerId: string;
+}
+
 /** Everything the /1v1 page needs; polled every few seconds while queued or in a duel. */
 export class DuelStatusDto {
   @ApiProperty({ type: DuelRatingDto })
@@ -345,6 +427,12 @@ export class DuelStatusDto {
       'Host bot pool snapshot; queueing is blocked while online is 0',
   })
   bots: DuelBotsStatusDto;
+
+  @ApiProperty({
+    type: DuelChallengesStateDto,
+    description: 'Friendly-duel challenges: open ones and the daily counter',
+  })
+  challenges: DuelChallengesStateDto;
 }
 
 export class DuelLeaderboardRowDto {

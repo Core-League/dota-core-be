@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Client, type ClientConfig, type Notification } from 'pg';
 import { getPostgresDataSourceOptions } from '../config/postgres-connection';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 import { DUEL_EVENTS_CHANNEL, parseDuelEvent } from './duel-events';
 import { DuelVoiceChannelsService } from './duel-voice-channels.service';
 import { DuelsGateway } from './duels.gateway';
@@ -32,6 +33,7 @@ export class DuelEventsListener implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly gateway: DuelsGateway,
     private readonly voice: DuelVoiceChannelsService,
+    private readonly notifications: NotificationsGateway,
   ) {}
 
   onModuleInit(): void {
@@ -95,6 +97,10 @@ export class DuelEventsListener implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `duel_events ← ${msg.payload} (from backend pid ${msg.processId})`,
     );
+    if (event.scope === 'notification') {
+      this.notifications.onEvent(event);
+      return;
+    }
     this.gateway.onEvent(event);
     this.voice.onEvent(event);
   }

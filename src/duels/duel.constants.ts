@@ -150,8 +150,38 @@ export enum HostBotStatus {
 export const MATCH_OUTCOME_RADIANT = 2;
 export const MATCH_OUTCOME_DIRE = 3;
 
+/** Where a duel came from — decides how many points it moves. */
+export enum DuelKind {
+  /** Paired by the matchmaker from the queue: ±DUEL_RATING_DELTA. */
+  RANKED = 'ranked',
+  /** Created from an accepted friend challenge: ±DUEL_FRIEND_RATING_DELTA, never re-queues anyone. */
+  FRIEND = 'friend',
+}
+
+export enum DuelChallengeStatus {
+  PENDING = 'PENDING',
+  /** The challenged friend accepted — `duelId` points at the friendly duel. */
+  ACCEPTED = 'ACCEPTED',
+  DECLINED = 'DECLINED',
+  /** Withdrawn by the challenger. */
+  CANCELLED = 'CANCELLED',
+  /** Nobody answered within DUEL_CHALLENGE_TTL_SECONDS. */
+  EXPIRED = 'EXPIRED',
+}
+
 /** Rating rules (decisions 7, 14, 15, 19). */
 export const DUEL_RATING_DELTA = 25;
+/** Points moved by a friendly duel (challenge between friends). */
+export const DUEL_FRIEND_RATING_DELTA = 10;
+/** Points a duel of this kind moves between winner and loser (and costs an absent player). */
+export const duelRatingDeltaFor = (
+  kind: DuelKind | null | undefined,
+): number =>
+  kind === DuelKind.FRIEND ? DUEL_FRIEND_RATING_DELTA : DUEL_RATING_DELTA;
+/** How many friendly duels a player may accept (either side) per Kyiv calendar day. */
+export const DUEL_CHALLENGE_DAILY_LIMIT = 3;
+/** How long a friend challenge waits for an answer. */
+export const DUEL_CHALLENGE_TTL_SECONDS = 5 * 60;
 export const DUEL_RATING_FLOOR = 0;
 export const DUEL_QUEUE_WINDOW_BASE = 50;
 export const DUEL_QUEUE_WINDOW_STEP = 50;

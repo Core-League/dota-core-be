@@ -42,4 +42,9 @@ export class DuelEventsPublisher {
   botsChanged(): void {
     this.publish({ scope: 'bots' });
   }
+
+  /** These players' inboxes changed — the notification gateway re-pushes their snapshot. */
+  notificationsChanged(playerIds: string[]): void {
+    if (playerIds.length) this.publish({ scope: 'notification', playerIds });
+  }
 }

@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
@@ -17,8 +18,10 @@ import {
 } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { DuelChallengesService } from './duel-challenges.service';
 import { HostBotsService } from './host-bots.service';
 import {
+  CreateDuelChallengeDto,
   DuelBotsStatusDto,
   DuelDto,
   DuelLeaderboardDto,
@@ -35,7 +38,76 @@ export class DuelsController {
   constructor(
     private readonly duels: DuelsService,
     private readonly hostBots: HostBotsService,
+    private readonly challenges: DuelChallengesService,
   ) {}
+
+  // ── friend challenges (JWT) ──────────────────────────────────────────────
+
+  @Post('challenges')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Challenge a friend to a friendly duel (±10)',
+    description:
+      'Friends only; both need a linked Steam account and no active duel, a host bot must be online, ' +
+      'and each may accept at most 3 friendly duels per day. One open challenge per challenger at a time; ' +
+      'challenging a friend who already challenged you accepts their challenge. Expires after 5 minutes.',
+  })
+  @ApiOkResponse({ type: DuelStatusDto })
+  createChallenge(
+    @Body() body: CreateDuelChallengeDto,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.challenges.create(req.user.playerId, body.playerId);
+  }
+
+  @Post('challenges/:id/accept')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Accept a friendly-duel challenge',
+    description:
+      'Challenged player only. Both leave the queue (if there) and a `friend` duel is created ' +
+      'straight in PENDING for the next free host bot. 429 once the daily limit is reached.',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: DuelStatusDto })
+  acceptChallenge(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.challenges.accept(req.user.playerId, id);
+  }
+
+  @Post('challenges/:id/decline')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Decline a friendly-duel challenge (challenged player only)',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: DuelStatusDto })
+  declineChallenge(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.challenges.decline(req.user.playerId, id);
+  }
+
+  @Delete('challenges/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Withdraw my friendly-duel challenge (challenger only)',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: DuelStatusDto })
+  cancelChallenge(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.challenges.cancel(req.user.playerId, id);
+  }
 
   // ── queue (JWT) ──────────────────────────────────────────────────────────
 

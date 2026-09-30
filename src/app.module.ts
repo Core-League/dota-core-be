@@ -16,6 +16,8 @@ import { LocationsModule } from './locations/locations.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { DuelsModule } from './duels/duels.module';
+import { FriendsModule } from './friends/friends.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -44,6 +46,8 @@ import { DuelsModule } from './duels/duels.module';
     AnalyticsModule,
     LeaderboardModule,
     DuelsModule,
+    FriendsModule,
+    NotificationsModule,
   ],
   controllers: [HealthController],
 })

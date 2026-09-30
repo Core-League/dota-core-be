@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 import { Player } from '../players/player.entity';
 import {
+  DuelKind,
   DuelState,
   type DuelCancelReason,
   type DuelFailReason,
@@ -38,6 +39,11 @@ export class Duel {
   @Index('IDX_duel_state')
   @Column({ type: 'varchar', length: 24, default: DuelState.PENDING })
   state: DuelState;
+
+  /** `ranked` from the queue (±25) or `friend` from an accepted challenge (±10). */
+  @Index('IDX_duel_kind')
+  @Column({ type: 'varchar', length: 16, default: DuelKind.RANKED })
+  kind: DuelKind;
 
   @Index('IDX_duel_player1')
   @Column({ type: 'uuid', nullable: true })

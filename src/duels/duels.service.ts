@@ -28,27 +28,34 @@ import {
   DUEL_ACTIVE_STATES,
   DUEL_HOSTED_STATES,
   DUEL_CANCEL_PENALTY,
+  DUEL_CHALLENGE_DAILY_LIMIT,
+  DUEL_DEFAULT_REGION,
+  DUEL_FRIEND_RATING_DELTA,
   DUEL_INVITE_REQUEST_COOLDOWN_SECONDS,
   DUEL_JOIN_TIMEOUT_SECONDS,
+  DUEL_LOBBY_NAME_DEFAULT,
   DUEL_MAX_LOBBY_RESTARTS,
   DUEL_NO_SHOW_COOLDOWN_SECONDS,
   DUEL_PLAYER_CANCELLABLE_STATES,
   DUEL_QUEUE_WINDOW_BASE,
   DUEL_QUEUE_WINDOW_STEP,
   DUEL_QUEUE_WINDOW_STEP_SECONDS,
-  DUEL_RATING_DELTA,
   DUEL_RATING_FLOOR,
   DUEL_TERMINAL_STATES,
   DUEL_VOICE_CHANNEL_STATES,
   DuelCancelReason,
+  DuelChallengeStatus,
   DuelFailReason,
+  DuelKind,
   DuelState,
   MATCH_OUTCOME_DIRE,
   MATCH_OUTCOME_RADIANT,
+  duelRatingDeltaFor,
   type DuelLobbyPlayer,
   type DuelStats,
 } from './duel.constants';
 import { Duel } from './duel.entity';
+import { DuelChallenge } from './duel-challenge.entity';
 import { DuelEventsPublisher } from './duel-events.publisher';
 import { heroById, pickRandomHeroes } from './dota-heroes';
 import { DuelQueueEntry } from './duel-queue.entity';
@@ -58,6 +65,8 @@ import { HostBotsService } from './host-bots.service';
 import { AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
 import {
   DuelBotsStatusDto,
+  DuelChallengeDto,
+  DuelChallengesStateDto,
   DuelDto,
   DuelHeroDto,
   DuelLeaderboardDto,
@@ -96,6 +105,8 @@ export class DuelsService {
     @InjectRepository(DuelQueueEntry)
     private readonly queue: Repository<DuelQueueEntry>,
     @InjectRepository(Player) private readonly players: Repository<Player>,
+    @InjectRepository(DuelChallenge)
+    private readonly challenges: Repository<DuelChallenge>,
     private readonly hostBots: HostBotsService,
     /** Every write below that changes what a player sees announces itself here (→ socket pushes). */
     private readonly events: DuelEventsPublisher,
@@ -169,6 +180,7 @@ export class DuelsService {
       id: duel.id,
       number: duel.number,
       state: duel.state,
+      kind: duel.kind ?? DuelKind.RANKED,
       createdAt: duel.createdAt,
       lobbyReadyAt: duel.lobbyReadyAt,
       liveAt: duel.liveAt,
@@ -222,6 +234,87 @@ export class DuelsService {
   async toDtos(duels: Duel[], viewerId: string | null): Promise<DuelDto[]> {
     const ratings = await this.ratingsFor(duels);
     return duels.map((d) => this.toDuelDto(d, ratings, viewerId));
+  }
+
+  private toChallengeDto(
+    row: DuelChallenge,
+    ratings: Map<string, DuelRating>,
+  ): DuelChallengeDto {
+    return {
+      id: row.id,
+      status: row.status,
+      challenger: this.toPlayerDto(row.challenger, ratings)!,
+      challenged: this.toPlayerDto(row.challenged, ratings)!,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      respondedAt: row.respondedAt,
+      duelId: row.duelId,
+    };
+  }
+
+  // ── friend challenges (reads shared with DuelChallengesService) ──────────
+
+  /** Friendly duels the player accepted (as either side) on the current Kyiv day. */
+  async countAcceptedChallengesToday(playerId: string): Promise<number> {
+    const rows: Array<{ count: number | string }> = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS count
+         FROM "duel_challenge"
+        WHERE "status" = $1
+          AND ("challengerId" = $2 OR "challengedId" = $2)
+          AND ("respondedAt" AT TIME ZONE 'Europe/Kyiv')::date = (now() AT TIME ZONE 'Europe/Kyiv')::date`,
+      [DuelChallengeStatus.ACCEPTED, playerId],
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  /** Open challenges of the player (not yet expired), newest first, with both players loaded. */
+  private listPendingChallenges(playerId: string): Promise<DuelChallenge[]> {
+    const now = new Date();
+    return this.challenges.find({
+      where: [
+        {
+          challengerId: playerId,
+          status: DuelChallengeStatus.PENDING,
+          expiresAt: MoreThan(now),
+        },
+        {
+          challengedId: playerId,
+          status: DuelChallengeStatus.PENDING,
+          expiresAt: MoreThan(now),
+        },
+      ],
+      relations: ['challenger', 'challenged'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  private async challengesState(
+    playerId: string,
+  ): Promise<DuelChallengesStateDto> {
+    const [rows, acceptedToday] = await Promise.all([
+      this.listPendingChallenges(playerId),
+      this.countAcceptedChallengesToday(playerId),
+    ]);
+    const ids = new Set<string>();
+    for (const r of rows) {
+      ids.add(r.challengerId);
+      ids.add(r.challengedId);
+    }
+    const ratings = ids.size
+      ? new Map(
+          (await this.ratings.find({ where: { playerId: In([...ids]) } })).map(
+            (r) => [r.playerId, r],
+          ),
+        )
+      : new Map<string, DuelRating>();
+    const dtos = rows.map((r) => this.toChallengeDto(r, ratings));
+    return {
+      incoming: dtos.filter((c) => c.challenged.id === playerId),
+      outgoing: dtos.find((c) => c.challenger.id === playerId) ?? null,
+      acceptedToday,
+      dailyLimit: DUEL_CHALLENGE_DAILY_LIMIT,
+      ratingDelta: DUEL_FRIEND_RATING_DELTA,
+    };
   }
 
   // ── lookups ──────────────────────────────────────────────────────────────
@@ -414,15 +507,23 @@ export class DuelsService {
     if (opts.touch !== false) {
       await this.queue.update({ playerId }, { lastSeenAt: now });
     }
-    const [entry, playersInQueue, rating, active, lastFinished, bots] =
-      await Promise.all([
-        this.queue.findOne({ where: { playerId } }),
-        this.queue.count(),
-        this.ratings.findOne({ where: { playerId } }),
-        this.findActiveDuelForPlayer(playerId),
-        this.findLastFinishedDuelForPlayer(playerId),
-        this.hostBots.publicStatus(),
-      ]);
+    const [
+      entry,
+      playersInQueue,
+      rating,
+      active,
+      lastFinished,
+      bots,
+      challenges,
+    ] = await Promise.all([
+      this.queue.findOne({ where: { playerId } }),
+      this.queue.count(),
+      this.ratings.findOne({ where: { playerId } }),
+      this.findActiveDuelForPlayer(playerId),
+      this.findLastFinishedDuelForPlayer(playerId),
+      this.hostBots.publicStatus(),
+      this.challengesState(playerId),
+    ]);
 
     const toDto = [active, lastFinished].filter((d): d is Duel => d != null);
     const dtos = await this.toDtos(toDto, playerId);
@@ -458,6 +559,7 @@ export class DuelsService {
       queueBlockedReason: blocked,
       playersInQueue,
       bots,
+      challenges,
     };
   }
 
@@ -705,6 +807,55 @@ export class DuelsService {
     return out;
   }
 
+  /** Lobby name / region of hosted lobbies; env overrides are forwarded by the CI even when blank. */
+  static lobbySettingsFromEnv(): { lobbyName: string; region: number } {
+    const lobbyName =
+      process.env.HOSTBOT_LOBBY_NAME?.trim() || DUEL_LOBBY_NAME_DEFAULT;
+    // An empty/unset HOSTBOT_REGION means the default, not region 0.
+    const rawRegion = process.env.HOSTBOT_REGION?.trim();
+    const region = rawRegion ? Number(rawRegion) : NaN;
+    return {
+      lobbyName,
+      region:
+        Number.isFinite(region) && region > 0 ? region : DUEL_DEFAULT_REGION,
+    };
+  }
+
+  /**
+   * Friendly duel from an accepted challenge, inside the caller's transaction:
+   * both players already agreed, so it starts in PENDING (no accept window)
+   * and the next free host bot claims it like any other duel. ±10 on result.
+   */
+  async createFriendDuel(
+    em: EntityManager,
+    challengerId: string,
+    challengedId: string,
+  ): Promise<Duel> {
+    const [r1, r2] = await Promise.all([
+      this.ensureRating(challengerId, em),
+      this.ensureRating(challengedId, em),
+    ]);
+    const { lobbyName, region } = DuelsService.lobbySettingsFromEnv();
+    const duel = em.create(Duel, {
+      state: DuelState.PENDING,
+      kind: DuelKind.FRIEND,
+      acceptDeadlineAt: null,
+      acceptedPlayerIds: [challengerId, challengedId],
+      heroes: pickRandomHeroes(2).map((hero, ix) => ({
+        playerId: ix === 0 ? challengerId : challengedId,
+        heroId: hero.id,
+      })),
+      player1Id: challengerId,
+      player2Id: challengedId,
+      player1Rating: r1.rating,
+      player2Rating: r2.rating,
+      lobbyName,
+      lobbyPassword: DuelsService.generateLobbyPassword(),
+      region,
+    });
+    return em.save(duel);
+  }
+
   /**
    * Creates the duel and removes both players from the queue atomically.
    * Returns null when either player left the queue in the meantime.
@@ -756,13 +907,15 @@ export class DuelsService {
 
   /**
    * Puts the duel's players back into the queue (after `no_bots_available`,
-   * a cancel by the other side, …). `only` limits it to a subset.
+   * a cancel by the other side, …). `only` limits it to a subset. Friendly
+   * duels never came from the queue, so nobody is put there.
    */
   async requeuePlayers(
     duel: Duel,
     em: EntityManager,
     only?: string[],
   ): Promise<void> {
+    if (duel.kind === DuelKind.FRIEND) return;
     const now = new Date();
     const values = [
       duel.player1Id && {
@@ -974,8 +1127,9 @@ export class DuelsService {
   }
 
   /**
-   * Final result from the Game Coordinator. Applies ±25 to both ladder lines
-   * in one transaction; idempotent (a second call for the same duel is a no-op).
+   * Final result from the Game Coordinator. Applies ±25 (±10 for a friendly
+   * duel) to both ladder lines in one transaction; idempotent (a second call
+   * for the same duel is a no-op).
    * An outcome that names neither side leaves the duel FAILED for an admin.
    */
   async applyGcResult(duelId: string, result: DuelGcResult): Promise<Duel> {
@@ -1086,18 +1240,16 @@ export class DuelsService {
     adminId: string | null,
   ): Promise<void> {
     const now = new Date();
+    const delta = duelRatingDeltaFor(duel.kind);
     const winner = await this.ensureRating(winnerId, em);
     const loser = await this.ensureRating(loserId, em);
 
-    winner.rating += DUEL_RATING_DELTA;
+    winner.rating += delta;
     winner.wins += 1;
     winner.streak = winner.streak > 0 ? winner.streak + 1 : 1;
     winner.lastPlayedAt = now;
 
-    loser.rating = Math.max(
-      DUEL_RATING_FLOOR,
-      loser.rating - DUEL_RATING_DELTA,
-    );
+    loser.rating = Math.max(DUEL_RATING_FLOOR, loser.rating - delta);
     loser.losses += 1;
     loser.streak = loser.streak < 0 ? loser.streak - 1 : -1;
     loser.lastPlayedAt = now;
@@ -1107,7 +1259,7 @@ export class DuelsService {
     duel.state = DuelState.RESOLVED;
     duel.winnerId = winnerId;
     duel.loserId = loserId;
-    duel.ratingDelta = DUEL_RATING_DELTA;
+    duel.ratingDelta = delta;
     duel.ratingAppliedAt = now;
     duel.finishedAt = duel.finishedAt ?? now;
     duel.adminReviewRequired = false;
@@ -1116,8 +1268,9 @@ export class DuelsService {
   }
 
   /**
-   * Nobody (or only one player) showed up. The absent player loses 25 points
-   * (floor 0) and gets a queue cooldown; the present player is untouched.
+   * Nobody (or only one player) showed up. The absent player loses the duel's
+   * delta (25, or 10 in a friendly duel; floor 0) and gets a queue cooldown;
+   * the present player is untouched.
    * A no-show is not a played game, so wins/losses stay as they were.
    */
   async applyNoShow(duelId: string, absentPlayerIds: string[]): Promise<Duel> {
@@ -1130,21 +1283,19 @@ export class DuelsService {
       if (DUEL_TERMINAL_STATES.includes(duel.state)) return duel;
 
       const now = new Date();
+      const delta = duelRatingDeltaFor(duel.kind);
       const cooldownUntil = new Date(
         now.getTime() + DUEL_NO_SHOW_COOLDOWN_SECONDS * 1000,
       );
       for (const playerId of absentPlayerIds) {
         const row = await this.ensureRating(playerId, em);
-        row.rating = Math.max(
-          DUEL_RATING_FLOOR,
-          row.rating - DUEL_RATING_DELTA,
-        );
+        row.rating = Math.max(DUEL_RATING_FLOOR, row.rating - delta);
         row.cooldownUntil = cooldownUntil;
         await em.save(row);
       }
       duel.state = DuelState.CANCELLED;
       duel.cancelReason = DuelCancelReason.PLAYERS_NO_SHOW;
-      duel.ratingDelta = absentPlayerIds.length ? DUEL_RATING_DELTA : null;
+      duel.ratingDelta = absentPlayerIds.length ? delta : null;
       duel.ratingAppliedAt = absentPlayerIds.length ? now : null;
       duel.finishedAt = now;
       duel.error = absentPlayerIds.length
