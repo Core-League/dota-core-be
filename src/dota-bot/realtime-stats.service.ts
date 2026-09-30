@@ -117,7 +117,11 @@ export class RealtimeStatsService {
     // `destroyed` for the post-game screen.
     const lostTower = new Set<number>();
     for (const b of raw.buildings ?? []) {
-      if ((b.type ?? 0) === 0 && b.destroyed && b.team != null) {
+      if (
+        (b.type ?? 0) === 0 &&
+        b.destroyed &&
+        (b.team === 2 || b.team === 3)
+      ) {
         lostTower.add(b.team);
       }
     }
@@ -127,7 +131,7 @@ export class RealtimeStatsService {
     // The server itself says the game is over (post game / disconnect):
     // whoever leads on kills won; a leaver or a "gg" leaves it 1–0 or 0–0.
     const state = raw.match?.game_state ?? 0;
-    if (state >= 6) {
+    if (state === 6 || state === 7) {
       if (radiantKills > direKills) return 2;
       if (direKills > radiantKills) return 3;
     }

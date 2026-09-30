@@ -34,6 +34,7 @@ export const EDOTAGCMsg = {
   PracticeLobbyLaunch: 7041,
   PracticeLobbySetTeamSlot: 7047,
   PracticeLobbyKick: 7081,
+  PracticeLobbyJoinBroadcastChannel: 7149,
   InviteToLobby: 4512,
   MatchDetailsRequest: 7095,
   MatchDetailsResponse: 7096,

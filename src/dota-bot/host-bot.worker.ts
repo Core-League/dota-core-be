@@ -32,8 +32,13 @@ import type {
   RealtimeStatsService,
 } from './realtime-stats.service';
 
-/** After the lobby vanished, how long the live scoreboard is still asked for the result. */
-const EXIT_CAPTURE_WINDOW_MS = 60_000;
+/** Consecutive scoreboard misses after which the game server counts as gone (≈ 4 ticks). */
+const SERVER_GONE_MISSES = 4;
+/** How often the "still following" line is logged while a game runs without the lobby. */
+const FOLLOW_LOG_INTERVAL_MS = 30_000;
+/** Broadcaster-seat requests before launch: how many, and how far apart. */
+const BROADCAST_JOIN_MAX_ATTEMPTS = 3;
+const BROADCAST_JOIN_RETRY_MS = 10_000;
 
 export interface HostBotWorkerConfig {
   lobbyName: string;
@@ -95,6 +100,13 @@ class DuelCtx {
   lastLobby: GcLobby | null = null;
   lastLobbyState: number | null = null;
   lastLobbyOutcome = 0;
+  /** Broadcaster-seat bookkeeping (the seat keeps the bot in the lobby during the game). */
+  broadcastJoinAttempts = 0;
+  lastBroadcastJoinAt = 0;
+  /** Live-scoreboard following once the lobby is gone. */
+  serverSeenAt: number | null = null;
+  serverMisses = 0;
+  lastFollowLogAt = 0;
 
   constructor(duel: Duel, joinTimeoutSeconds: number) {
     if (!duel.player1?.steamId || !duel.player2?.steamId) {
@@ -122,6 +134,7 @@ class DuelCtx {
     this.region = duel.region;
     this.lobbyId = duel.lobbyId;
     this.lastMatchId = duel.dotaMatchId;
+    this.lastServerId = duel.serverSteamId;
     this.joinDeadline = this.startedAt + joinTimeoutSeconds * 1000;
   }
 
@@ -138,8 +151,13 @@ class DuelCtx {
  * drive the active duel; every DB write goes through `DuelsService` so the
  * rating rules live in one place.
  *
- * The bot sits in `PLAYER_POOL`: it is the lobby host but never takes one of
- * the two game slots (the GC ignores `SPECTATOR` for the host).
+ * The bot is the lobby host but never takes one of the two game slots. It
+ * sits in a broadcaster seat: `PLAYER_POOL` members are dropped from the
+ * lobby by the GC when the game server starts, broadcasters stay members for
+ * the whole match, so the lobby object itself delivers `match_outcome` and
+ * the bot leaves only after the result is saved (`finish()`). Should the
+ * seat be refused, the bot stays in the pool and the game is followed through
+ * the live scoreboard instead.
  */
 export class HostBotWorker {
   private readonly logger: Logger;
@@ -353,10 +371,15 @@ export class HostBotWorker {
     ctx.lobbyId = lobby.lobby_id;
     ctx.joinDeadline = Date.now() + this.config.joinTimeoutSeconds * 1000;
     this.logger.log(
-      `Lobby ${lobby.lobby_id} created — moving to player pool, inviting both`,
+      `Lobby ${lobby.lobby_id} created — taking the broadcaster seat, inviting both`,
     );
     try {
+      // Out of the game slots first, then into the caster seat that survives
+      // the launch (see the class comment); the tick re-checks the seat.
       gc.setTeamSlot(DOTA_GC_TEAM.PLAYER_POOL);
+      ctx.broadcastJoinAttempts = 1;
+      ctx.lastBroadcastJoinAt = Date.now();
+      gc.joinBroadcastChannel();
       for (const p of ctx.players) gc.inviteToLobby(p.steamId64);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -406,11 +429,18 @@ export class HostBotWorker {
     const gc = this.gc;
     if (!gc) return;
     const lobby = gc.lobby;
+    const lobbyMatches =
+      !!lobby && !!duel.lobbyId && lobby.lobby_id === duel.lobbyId;
+    // LIVE without the lobby happens when the GC dropped the bot at server
+    // start (no broadcaster seat): with the server id we keep following the
+    // scoreboard.
+    const canFollow =
+      duel.state === DuelState.LIVE &&
+      !!duel.serverSteamId &&
+      this.deps.stats.enabled;
     if (
       duel.state === DuelState.LOBBY_CREATING ||
-      !duel.lobbyId ||
-      !lobby ||
-      lobby.lobby_id !== duel.lobbyId
+      (!lobbyMatches && !canFollow)
     ) {
       if (duel.state === DuelState.LOBBY_CREATING) {
         this.logger.warn(
@@ -470,12 +500,13 @@ export class HostBotWorker {
             ?.accountId ?? null)
         : null;
     }
+    if (!lobbyMatches) ctx.lobbyLostAt = Date.now();
     this.ctx = ctx;
     this.logger.log(
-      `Re-adopted duel ${duel.id} (${duel.state}) in lobby ${lobby.lobby_id}`,
+      `Re-adopted duel ${duel.id} (${duel.state}) ${lobbyMatches ? `in lobby ${lobby?.lobby_id ?? '?'}` : `via server ${duel.serverSteamId ?? '?'}`}`,
     );
     await this.setStatus(HostBotStatus.BUSY);
-    if (ctx.launched) this.startStatsPolling();
+    if (ctx.launched && lobbyMatches) this.startStatsPolling();
   }
 
   private createLobby(): void {
@@ -534,35 +565,60 @@ export class HostBotWorker {
     const lobby = gc.lobby;
     if (!lobby) {
       if (ctx.launched && !ctx.finished) {
-        // The GC drops the lobby from our cache the moment the match ends
-        // (the bot is not in the game), so "lobby gone after launch" is
-        // normally "the game just finished". The result then comes from the
-        // GC's match details: asked 5 s later, re-asked every 10 s. Only when
-        // the whole grace period yields nothing do we try the Web API once
-        // and fail the duel for the background recovery / an admin.
+        // Normally the bot keeps its broadcaster seat and the lobby object
+        // brings the outcome (step 7 below). If the GC still dropped us —
+        // the seat was refused and the bot was an unassigned member at
+        // server start — the whole match is played without the lobby. Valve
+        // keeps no record of 1v1 practice games, so the match is then
+        // followed through the server's live scoreboard until it shows a
+        // winner or the server goes away.
         if (ctx.lobbyLostAt == null) {
           ctx.lobbyLostAt = now;
-          ctx.gameEndedAt ??= now;
+          this.stopStatsPolling();
           this.logger.warn(
-            `Lobby vanished after launch — capturing the result from the last snapshot / live scoreboard`,
+            `Lobby gone after launch (the bot was dropped from the lobby) — following match ${ctx.lastMatchId ?? '?'} on server ${ctx.lastServerId ?? '?'} via the live scoreboard`,
           );
+          const last = ctx.lastLobby;
+          const lastOutcome = last?.match_outcome ?? 0;
+          if (last && (lastOutcome === 2 || lastOutcome === 3)) {
+            ctx.finished = true;
+            this.logger.log(
+              `Result from the last lobby snapshot: outcome=${lastOutcome}`,
+            );
+            await this.reportFromLobby(ctx, last);
+            return;
+          }
         }
-        if (await this.captureResultAtExit(ctx, now)) return;
-        if (now - ctx.lobbyLostAt < DUEL_LOBBY_LOST_GRACE_SECONDS * 1000) {
-          this.maybeRequestGcDetails(ctx, now);
-          return;
-        }
-        if (
-          ctx.lastMatchId &&
-          (await this.resolveFromWebApi(ctx.id, ctx.lastMatchId))
-        ) {
-          ctx.finished = true;
+        if (ctx.gameDeadline != null && now > ctx.gameDeadline) {
+          this.logger.error(
+            `Game did not finish in time — FAILED (game_timeout)`,
+          );
+          await this.deps.duels.failDuel(ctx.id, DuelFailReason.GAME_TIMEOUT);
           await this.finish();
           return;
         }
-        this.logger.error(`Lobby vanished mid-game — FAILED (lobby_lost)`);
-        await this.deps.duels.failDuel(ctx.id, DuelFailReason.LOBBY_LOST);
-        await this.finish();
+        if (!this.deps.stats.enabled || !ctx.lastServerId) {
+          // No scoreboard to follow: wait out the grace period for the lobby
+          // to come back, then the Web API, then admin review.
+          if (now - ctx.lobbyLostAt < DUEL_LOBBY_LOST_GRACE_SECONDS * 1000) {
+            return;
+          }
+          if (
+            ctx.lastMatchId &&
+            (await this.resolveFromWebApi(ctx.id, ctx.lastMatchId))
+          ) {
+            ctx.finished = true;
+            await this.finish();
+            return;
+          }
+          this.logger.error(
+            `Lobby gone and no scoreboard (STEAM_API_KEY / server id) — FAILED (lobby_lost)`,
+          );
+          await this.deps.duels.failDuel(ctx.id, DuelFailReason.LOBBY_LOST);
+          await this.finish();
+          return;
+        }
+        await this.followGameByScoreboard(ctx, now);
         return;
       }
       if (
@@ -598,11 +654,10 @@ export class HostBotWorker {
     }));
     const inLobby = new Set(members.map((m) => m.accountId));
 
-    // 1) keep the bot out of the game slots
+    // 1) keep the bot out of the game slots and in its broadcaster seat
+    //    (seat changes are only sent before launch — never during a game)
     const me = members.find((m) => m.accountId === botAcc);
-    if (me && me.team !== DOTA_GC_TEAM.PLAYER_POOL) {
-      gc.setTeamSlot(DOTA_GC_TEAM.PLAYER_POOL);
-    }
+    if (me && !ctx.launched) this.keepBotSeated(ctx, gc, me.team, now);
 
     // 2) kick anyone who was not invited
     for (const m of members) {
@@ -691,6 +746,14 @@ export class HostBotWorker {
       ctx.lastMatchId = lobby.match_id;
       await this.deps.duels.saveMatchId(ctx.id, lobby.match_id);
     }
+    if (
+      lobby.server_id &&
+      lobby.server_id !== '0' &&
+      lobby.server_id !== ctx.lastServerId
+    ) {
+      ctx.lastServerId = lobby.server_id;
+      await this.deps.duels.saveServerId(ctx.id, lobby.server_id);
+    }
 
     if (ctx.launched && lobby.state === LobbyState.RUN) ctx.sawRun = true;
 
@@ -720,7 +783,14 @@ export class HostBotWorker {
         // Give the GC a moment to sign the match out; meanwhile the live
         // scoreboard may already show the winner.
         if (now - ctx.gameEndedAt < DUEL_RESULT_DELAY_SECONDS * 1000) return;
-        if (await this.captureResultAtExit(ctx, now)) return;
+        if (ctx.lastServerId && this.deps.stats.enabled) {
+          const raw = await this.deps.stats.fetch(ctx.lastServerId);
+          const outcome = raw ? this.deps.stats.deriveOutcome1v1(raw) : null;
+          if (raw && outcome != null) {
+            await this.applyScoreboardResult(ctx, raw, outcome);
+            return;
+          }
+        }
         ctx.postgameAt ??= now;
         if (now - ctx.postgameAt < DUEL_POSTGAME_OUTCOME_WAIT_SECONDS * 1000) {
           this.maybeRequestGcDetails(ctx, now);
@@ -736,44 +806,109 @@ export class HostBotWorker {
   }
 
   /**
-   * The GC drops the lobby the moment the match ends and Valve keeps no
-   * record of 1v1 practice games, so the result must come from what we still
-   * hold: the last lobby snapshot (POSTGAME with an outcome) or the live
-   * scoreboard, whose server stays up for the post-game screen. Retried every
-   * tick for a minute after the lobby went away. True once the duel is resolved.
+   * Follows a running game through the server's live scoreboard (the bot is
+   * no longer in the lobby). Records the result the moment the board shows a
+   * winner by the 1v1 rules; when the server disappears, the last snapshot
+   * decides, or the duel goes to admin review with those stats attached.
    */
-  private async captureResultAtExit(
+  private async followGameByScoreboard(
     ctx: DuelCtx,
     now: number,
-  ): Promise<boolean> {
-    if (ctx.finished) return true;
-    const last = ctx.lastLobby;
-    const lastOutcome = last?.match_outcome ?? 0;
-    if (last && (lastOutcome === 2 || lastOutcome === 3)) {
+  ): Promise<void> {
+    if (ctx.finished || !ctx.lastServerId) return;
+    const raw = await this.deps.stats.fetch(ctx.lastServerId);
+
+    if (raw) {
+      ctx.lastStats = raw;
+      ctx.serverSeenAt = now;
+      ctx.serverMisses = 0;
+      const outcome = this.deps.stats.deriveOutcome1v1(raw);
+      if (outcome != null) {
+        this.logger.log(
+          `Result from the live scoreboard: outcome=${outcome} — ${this.deps.stats.describe(raw)}`,
+        );
+        await this.applyScoreboardResult(ctx, raw, outcome);
+        return;
+      }
+      if (now - ctx.lastFollowLogAt >= FOLLOW_LOG_INTERVAL_MS) {
+        ctx.lastFollowLogAt = now;
+        this.logger.log(`following: ${this.deps.stats.describe(raw)}`);
+      }
+      return;
+    }
+
+    ctx.serverMisses += 1;
+    if (ctx.serverSeenAt != null) {
+      if (ctx.serverMisses < SERVER_GONE_MISSES) return;
+      // Server gone → the game is over. The last snapshot is the final state.
+      const last = ctx.lastStats;
+      const outcome = last ? this.deps.stats.deriveOutcome1v1(last) : null;
+      if (last && outcome != null) {
+        this.logger.log(
+          `Server gone — result from the last snapshot: outcome=${outcome} — ${this.deps.stats.describe(last)}`,
+        );
+        await this.applyScoreboardResult(ctx, last, outcome);
+        return;
+      }
+      this.logger.error(
+        `Server gone and the last snapshot shows no winner — FAILED (undetermined_outcome): ${last ? this.deps.stats.describe(last) : 'no snapshot'}`,
+      );
       ctx.finished = true;
-      this.logger.log(
-        `Result from the last lobby snapshot: outcome=${lastOutcome}`,
+      await this.deps.duels.failDuel(
+        ctx.id,
+        DuelFailReason.UNDETERMINED_OUTCOME,
+        'server gone, scoreboard shows no winner',
       );
-      await this.reportFromLobby(ctx, last);
-      return true;
+      if (last) {
+        try {
+          await this.deps.duels.saveStats(
+            ctx.id,
+            this.deps.stats.summarize(
+              last,
+              ctx.players.map((p) => ({
+                playerId: p.playerId,
+                steamId64: p.steamId64,
+              })),
+              null,
+              ctx.radiantAcc,
+              ctx.direAcc,
+            ),
+          );
+        } catch {
+          /* best effort */
+        }
+      }
+      await this.finish();
+      return;
     }
-    if (!this.deps.stats.enabled || !ctx.lastServerId) return false;
-    if (now - (ctx.gameEndedAt ?? now) > EXIT_CAPTURE_WINDOW_MS) return false;
-    const raw =
-      (await this.deps.stats.fetch(ctx.lastServerId)) ?? ctx.lastStats;
-    if (!raw) {
-      this.logger.warn(`scoreboard ${ctx.lastServerId} unavailable`);
-      return false;
+
+    // Never reached the server at all: give it the grace period, then give up.
+    if (now - (ctx.lobbyLostAt ?? now) < DUEL_LOBBY_LOST_GRACE_SECONDS * 1000) {
+      if (ctx.serverMisses === 1) {
+        this.logger.warn(
+          `scoreboard ${ctx.lastServerId} unreachable — retrying`,
+        );
+      }
+      return;
     }
-    ctx.lastStats = raw;
-    const outcome = this.deps.stats.deriveOutcome1v1(raw);
-    if (outcome == null) {
-      // Dump what the server shows so a rule gap is visible in the log.
-      this.logger.log(
-        `scoreboard shows no winner yet: ${this.deps.stats.describe(raw)}`,
-      );
-      return false;
-    }
+    this.logger.error(
+      `Scoreboard never reachable for ${DUEL_LOBBY_LOST_GRACE_SECONDS}s — FAILED (lobby_lost)`,
+    );
+    ctx.finished = true;
+    await this.deps.duels.failDuel(
+      ctx.id,
+      DuelFailReason.LOBBY_LOST,
+      'lobby gone, scoreboard unreachable',
+    );
+    await this.finish();
+  }
+
+  /** Winner + stats + played heroes from one scoreboard snapshot → DuelsService. */
+  private async applyScoreboardResult(
+    ctx: DuelCtx,
+    raw: RealtimeStatsRaw,
+    outcome: number,
+  ): Promise<void> {
     ctx.finished = true;
     const stats = this.deps.stats.summarize(
       raw,
@@ -791,16 +926,12 @@ export class HostBotWorker {
           !!p.playerId && p.heroId != null && p.heroId > 0,
       )
       .map((p) => ({ playerId: p.playerId, heroId: p.heroId }));
-    this.logger.log(
-      `Result from the live scoreboard: outcome=${outcome} (2 kills / tier-1 tower rule)`,
-    );
     await this.applyResult(ctx, {
       matchId: ctx.lastMatchId,
       outcome,
       heroesPlayed,
       stats,
     });
-    return true;
   }
 
   /** Every 10 s after the delay: `MatchDetailsRequest` for the match we saw running. */
@@ -859,6 +990,42 @@ export class HostBotWorker {
       heroesPlayed,
       stats: this.deps.stats.fromGcMatch(match, participants),
     });
+  }
+
+  /**
+   * Before launch: the bot must never hold a game slot, and it should hold a
+   * broadcaster seat so the GC keeps it in the lobby for the whole match. A
+   * game slot is left for the pool at once; the seat is asked for a few times
+   * (the GC answers only through the next lobby update) and, if refused, the
+   * bot stays in the pool — the scoreboard fallback then covers the game.
+   */
+  private keepBotSeated(
+    ctx: DuelCtx,
+    gc: DotaGcClient,
+    team: number,
+    now: number,
+  ): void {
+    if (team === DOTA_GC_TEAM.BROADCASTER) return;
+    if (team === DOTA_GC_TEAM.GOOD_GUYS || team === DOTA_GC_TEAM.BAD_GUYS) {
+      gc.setTeamSlot(DOTA_GC_TEAM.PLAYER_POOL);
+      return;
+    }
+    if (ctx.broadcastJoinAttempts >= BROADCAST_JOIN_MAX_ATTEMPTS) {
+      if (ctx.broadcastJoinAttempts === BROADCAST_JOIN_MAX_ATTEMPTS) {
+        ctx.broadcastJoinAttempts += 1;
+        this.logger.warn(
+          `Broadcaster seat refused ${BROADCAST_JOIN_MAX_ATTEMPTS} times — staying in the player pool (the game will be followed via the scoreboard)`,
+        );
+      }
+      return;
+    }
+    if (now - ctx.lastBroadcastJoinAt < BROADCAST_JOIN_RETRY_MS) return;
+    ctx.broadcastJoinAttempts += 1;
+    ctx.lastBroadcastJoinAt = now;
+    this.logger.log(
+      `Still on team ${team} — asking for the broadcaster seat (attempt ${ctx.broadcastJoinAttempts})`,
+    );
+    gc.joinBroadcastChannel();
   }
 
   /** Game finished from the GC's point of view: it ran, and the lobby is no longer running. */

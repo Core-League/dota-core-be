@@ -237,10 +237,25 @@ export class DotaGcClient extends EventEmitter {
         return;
       }
       case ESOMsg.CacheUnsubscribed: {
-        if (this._lobby) {
-          this._lobby = null;
-          this.emit('lobbyRemoved');
+        // The GC unsubscribes us from several caches (party, our own account
+        // cache, ...) — only the lobby's own cache means the lobby is gone.
+        const msg = decode<{ owner_soid?: { type?: number; id?: string } }>(
+          'CMsgSOCacheUnsubscribed',
+          payload,
+        );
+        const ownerId = msg.owner_soid?.id;
+        if (!this._lobby) return;
+        if (ownerId && ownerId !== this._lobby.lobby_id) {
+          this.logger.log(
+            `SO cache ${msg.owner_soid?.type ?? '?'}/${ownerId} unsubscribed — not the lobby, keeping it`,
+          );
+          return;
         }
+        this.logger.log(
+          `SO cache unsubscribed for lobby ${this._lobby.lobby_id} — lobby removed`,
+        );
+        this._lobby = null;
+        this.emit('lobbyRemoved');
         return;
       }
       case ESOMsg.Create:
@@ -355,6 +370,22 @@ export class DotaGcClient extends EventEmitter {
     this.send(
       EDOTAGCMsg.PracticeLobbySetTeamSlot,
       encode('CMsgPracticeLobbySetTeamSlot', { team, slot }),
+    );
+  }
+
+  /**
+   * Take a broadcaster (caster) seat. Unlike `PLAYER_POOL` members, whom the
+   * GC drops from the lobby when the game server starts, broadcasters stay
+   * lobby members for the whole match and keep receiving lobby updates —
+   * including the final `match_outcome`.
+   */
+  joinBroadcastChannel(channel = 1): void {
+    this.send(
+      EDOTAGCMsg.PracticeLobbyJoinBroadcastChannel,
+      encode('CMsgPracticeLobbyJoinBroadcastChannel', {
+        channel,
+        preferred_description: 'Core League',
+      }),
     );
   }
 

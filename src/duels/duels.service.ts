@@ -744,6 +744,11 @@ export class DuelsService {
     );
   }
 
+  /** Game server id, stored as soon as the lobby reports it, so a restarted worker can keep following the game. */
+  async saveServerId(duelId: string, serverSteamId: string): Promise<void> {
+    await this.duels.update({ id: duelId }, { serverSteamId });
+  }
+
   async saveStats(duelId: string, stats: DuelStats): Promise<void> {
     await this.duels.update({ id: duelId }, { stats });
   }

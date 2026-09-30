@@ -63,6 +63,10 @@ export class Duel {
   @Column({ type: 'varchar', length: 32, nullable: true })
   lobbyId: string | null;
 
+  /** Game server SteamID once the match launched — the live scoreboard is keyed by it. */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  serverSteamId: string | null;
+
   @Column({ type: 'varchar', length: 64 })
   lobbyName: string;
 
