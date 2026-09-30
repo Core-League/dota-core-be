@@ -5,36 +5,11 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { LoggingInterceptor } from '../../../logging.interceptor';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import express from 'express';
 import { AppModule } from '../../../app.module';
-
-function buildCorsOptions(): CorsOptions {
-  const raw = process.env.CORS_ORIGINS?.trim();
-  const defaultOrigins = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:4200',
-  ];
-
-  const origin = raw
-    ? raw
-        .split(',')
-        .map((o) => o.trim())
-        .filter(Boolean)
-    : defaultOrigins;
-
-  return {
-    origin,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-    credentials: process.env.CORS_CREDENTIALS === 'true',
-  };
-}
+import { buildCorsOptions } from '../../../config/cors';
 
 async function createHttpApplication(): Promise<INestApplication> {
   // rawBody is required by the Monobank acquiring callback: its signature is

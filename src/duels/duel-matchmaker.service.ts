@@ -11,6 +11,7 @@ import {
   DuelState,
 } from './duel.constants';
 import { Duel } from './duel.entity';
+import { DuelEventsPublisher } from './duel-events.publisher';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelsService } from './duels.service';
 
@@ -29,6 +30,7 @@ export class DuelMatchmakerService {
     private readonly queue: Repository<DuelQueueEntry>,
     @InjectRepository(Duel) private readonly duels: Repository<Duel>,
     private readonly duelsService: DuelsService,
+    private readonly events: DuelEventsPublisher,
   ) {}
 
   async tick(): Promise<void> {
@@ -45,6 +47,7 @@ export class DuelMatchmakerService {
     const result = await this.queue.delete({ lastSeenAt: LessThan(cutoff) });
     if (result.affected) {
       this.logger.log(`Dropped ${result.affected} silent queue entr(ies)`);
+      this.events.queueChanged();
     }
   }
 

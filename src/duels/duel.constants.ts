@@ -155,3 +155,12 @@ export const DUEL_GC_DETAILS_INTERVAL_SECONDS = 10;
 export const DUEL_RESULT_RECOVERY_WINDOW_SECONDS = 24 * 3600;
 /** POSTGAME without `match_outcome`: wait this long for the GC to fill it in. */
 export const DUEL_POSTGAME_OUTCOME_WAIT_SECONDS = 180;
+
+// ── realtime (socket.io) ─────────────────────────────────────────────────
+
+/** socket.io namespace the duels page connects to (`<api origin>/duels`). */
+export const DUEL_SOCKET_NAMESPACE = 'duels';
+/** A connected socket is the queue heartbeat: rows of connected players are refreshed this often (well inside the TTL). */
+export const DUEL_SOCKET_HEARTBEAT_SECONDS = 5;
+/** Change notifications for the same player arriving within this window are merged into one status push. */
+export const DUEL_SOCKET_REFRESH_DEBOUNCE_MS = 150;

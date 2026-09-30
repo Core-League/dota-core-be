@@ -374,10 +374,11 @@ export class DotaGcClient extends EventEmitter {
   }
 
   /**
-   * Take a broadcaster (caster) seat. Unlike `PLAYER_POOL` members, whom the
-   * GC drops from the lobby when the game server starts, broadcasters stay
-   * lobby members for the whole match and keep receiving lobby updates —
-   * including the final `match_outcome`.
+   * Take a broadcaster (caster) seat. Broadcasters do stay lobby members
+   * through the launch, but the game server waits for them on the loading
+   * screen and aborts the match (~45 s, lobby back to UI, no match id) when
+   * a headless bot never connects — so the host bot must NOT use this while
+   * hosting a game. Kept for tooling / experiments only.
    */
   joinBroadcastChannel(channel = 1): void {
     this.send(

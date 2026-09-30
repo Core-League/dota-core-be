@@ -36,9 +36,6 @@ import type {
 const SERVER_GONE_MISSES = 4;
 /** How often the "still following" line is logged while a game runs without the lobby. */
 const FOLLOW_LOG_INTERVAL_MS = 30_000;
-/** Broadcaster-seat requests before launch: how many, and how far apart. */
-const BROADCAST_JOIN_MAX_ATTEMPTS = 3;
-const BROADCAST_JOIN_RETRY_MS = 10_000;
 
 export interface HostBotWorkerConfig {
   lobbyName: string;
@@ -100,9 +97,6 @@ class DuelCtx {
   lastLobby: GcLobby | null = null;
   lastLobbyState: number | null = null;
   lastLobbyOutcome = 0;
-  /** Broadcaster-seat bookkeeping (the seat keeps the bot in the lobby during the game). */
-  broadcastJoinAttempts = 0;
-  lastBroadcastJoinAt = 0;
   /** Live-scoreboard following once the lobby is gone. */
   serverSeenAt: number | null = null;
   serverMisses = 0;
@@ -151,13 +145,13 @@ class DuelCtx {
  * drive the active duel; every DB write goes through `DuelsService` so the
  * rating rules live in one place.
  *
- * The bot is the lobby host but never takes one of the two game slots. It
- * sits in a broadcaster seat: `PLAYER_POOL` members are dropped from the
- * lobby by the GC when the game server starts, broadcasters stay members for
- * the whole match, so the lobby object itself delivers `match_outcome` and
- * the bot leaves only after the result is saved (`finish()`). Should the
- * seat be refused, the bot stays in the pool and the game is followed through
- * the live scoreboard instead.
+ * The bot is the lobby host but never takes one of the two game slots: it
+ * sits in `PLAYER_POOL`. The GC drops pool members from the lobby when the
+ * game server starts, so the match itself is followed through the server's
+ * live scoreboard (`followGameByScoreboard`). Seats that would keep the bot
+ * in the lobby do not work for a headless client: the GC ignores `SPECTATOR`
+ * for the host, and a `BROADCASTER` is waited for on the loading screen — the
+ * server aborts the match ~45 s later because the bot never connects.
  */
 export class HostBotWorker {
   private readonly logger: Logger;
@@ -371,15 +365,10 @@ export class HostBotWorker {
     ctx.lobbyId = lobby.lobby_id;
     ctx.joinDeadline = Date.now() + this.config.joinTimeoutSeconds * 1000;
     this.logger.log(
-      `Lobby ${lobby.lobby_id} created — taking the broadcaster seat, inviting both`,
+      `Lobby ${lobby.lobby_id} created — moving to player pool, inviting both`,
     );
     try {
-      // Out of the game slots first, then into the caster seat that survives
-      // the launch (see the class comment); the tick re-checks the seat.
       gc.setTeamSlot(DOTA_GC_TEAM.PLAYER_POOL);
-      ctx.broadcastJoinAttempts = 1;
-      ctx.lastBroadcastJoinAt = Date.now();
-      gc.joinBroadcastChannel();
       for (const p of ctx.players) gc.inviteToLobby(p.steamId64);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -431,9 +420,8 @@ export class HostBotWorker {
     const lobby = gc.lobby;
     const lobbyMatches =
       !!lobby && !!duel.lobbyId && lobby.lobby_id === duel.lobbyId;
-    // LIVE without the lobby happens when the GC dropped the bot at server
-    // start (no broadcaster seat): with the server id we keep following the
-    // scoreboard.
+    // LIVE without the lobby is the normal case (the GC drops the bot at
+    // server start): with the server id we keep following the scoreboard.
     const canFollow =
       duel.state === DuelState.LIVE &&
       !!duel.serverSteamId &&
@@ -565,18 +553,16 @@ export class HostBotWorker {
     const lobby = gc.lobby;
     if (!lobby) {
       if (ctx.launched && !ctx.finished) {
-        // Normally the bot keeps its broadcaster seat and the lobby object
-        // brings the outcome (step 7 below). If the GC still dropped us —
-        // the seat was refused and the bot was an unassigned member at
-        // server start — the whole match is played without the lobby. Valve
-        // keeps no record of 1v1 practice games, so the match is then
+        // The GC removes unassigned members — the bot — from the lobby when
+        // the game server starts, so the whole match is played after this
+        // point. Valve keeps no record of 1v1 practice games, so the match is
         // followed through the server's live scoreboard until it shows a
         // winner or the server goes away.
         if (ctx.lobbyLostAt == null) {
           ctx.lobbyLostAt = now;
           this.stopStatsPolling();
-          this.logger.warn(
-            `Lobby gone after launch (the bot was dropped from the lobby) — following match ${ctx.lastMatchId ?? '?'} on server ${ctx.lastServerId ?? '?'} via the live scoreboard`,
+          this.logger.log(
+            `Lobby gone after launch (the bot is not in the game) — following match ${ctx.lastMatchId ?? '?'} on server ${ctx.lastServerId ?? '?'} via the live scoreboard`,
           );
           const last = ctx.lastLobby;
           const lastOutcome = last?.match_outcome ?? 0;
@@ -648,16 +634,22 @@ export class HostBotWorker {
     }
 
     const botAcc = gc.accountId;
-    const members = (lobby.all_members ?? []).map((m) => ({
-      accountId: accountIdOf(m.id),
-      team: m.team,
-    }));
+    // A member row without a steam id (seen after an aborted launch) must not
+    // kill the tick — it is simply nobody.
+    const members = (lobby.all_members ?? [])
+      .filter((m) => !!m.id)
+      .map((m) => ({
+        accountId: accountIdOf(m.id),
+        team: m.team,
+      }));
     const inLobby = new Set(members.map((m) => m.accountId));
 
-    // 1) keep the bot out of the game slots and in its broadcaster seat
-    //    (seat changes are only sent before launch — never during a game)
+    // 1) keep the bot out of the game slots (only before launch — never
+    //    send seat changes during a game)
     const me = members.find((m) => m.accountId === botAcc);
-    if (me && !ctx.launched) this.keepBotSeated(ctx, gc, me.team, now);
+    if (me && !ctx.launched && me.team !== DOTA_GC_TEAM.PLAYER_POOL) {
+      gc.setTeamSlot(DOTA_GC_TEAM.PLAYER_POOL);
+    }
 
     // 2) kick anyone who was not invited
     for (const m of members) {
@@ -992,42 +984,6 @@ export class HostBotWorker {
     });
   }
 
-  /**
-   * Before launch: the bot must never hold a game slot, and it should hold a
-   * broadcaster seat so the GC keeps it in the lobby for the whole match. A
-   * game slot is left for the pool at once; the seat is asked for a few times
-   * (the GC answers only through the next lobby update) and, if refused, the
-   * bot stays in the pool — the scoreboard fallback then covers the game.
-   */
-  private keepBotSeated(
-    ctx: DuelCtx,
-    gc: DotaGcClient,
-    team: number,
-    now: number,
-  ): void {
-    if (team === DOTA_GC_TEAM.BROADCASTER) return;
-    if (team === DOTA_GC_TEAM.GOOD_GUYS || team === DOTA_GC_TEAM.BAD_GUYS) {
-      gc.setTeamSlot(DOTA_GC_TEAM.PLAYER_POOL);
-      return;
-    }
-    if (ctx.broadcastJoinAttempts >= BROADCAST_JOIN_MAX_ATTEMPTS) {
-      if (ctx.broadcastJoinAttempts === BROADCAST_JOIN_MAX_ATTEMPTS) {
-        ctx.broadcastJoinAttempts += 1;
-        this.logger.warn(
-          `Broadcaster seat refused ${BROADCAST_JOIN_MAX_ATTEMPTS} times — staying in the player pool (the game will be followed via the scoreboard)`,
-        );
-      }
-      return;
-    }
-    if (now - ctx.lastBroadcastJoinAt < BROADCAST_JOIN_RETRY_MS) return;
-    ctx.broadcastJoinAttempts += 1;
-    ctx.lastBroadcastJoinAt = now;
-    this.logger.log(
-      `Still on team ${team} — asking for the broadcaster seat (attempt ${ctx.broadcastJoinAttempts})`,
-    );
-    gc.joinBroadcastChannel();
-  }
-
   /** Game finished from the GC's point of view: it ran, and the lobby is no longer running. */
   private gameOver(ctx: DuelCtx, lobby: GcLobby): boolean {
     if (lobby.state === LobbyState.POSTGAME) return true;
@@ -1095,6 +1051,7 @@ export class HostBotWorker {
 
     // Heroes actually played: the lobby members carry hero_id after the pick.
     const heroesPlayed = (lobby.all_members ?? [])
+      .filter((m) => !!m.id)
       .map((m) => ({
         playerId: ctx.playerIdOf(accountIdOf(m.id)),
         heroId: m.hero_id ?? 0,

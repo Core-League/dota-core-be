@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { HostBotStatus } from './duel.constants';
+import { DuelEventsPublisher } from './duel-events.publisher';
 import { HostBot } from './host-bot.entity';
 import {
   decryptHostBotPassword,
@@ -40,6 +41,7 @@ export interface HostBotAccount {
 export class HostBotsService {
   constructor(
     @InjectRepository(HostBot) private readonly repo: Repository<HostBot>,
+    private readonly events: DuelEventsPublisher,
   ) {}
 
   private toDto(bot: HostBot): HostBotDto {
@@ -116,7 +118,9 @@ export class HostBotsService {
     if (dto.enabled != null) {
       bot.enabled = dto.enabled;
     }
-    return this.toDto(await this.repo.save(bot));
+    const saved = await this.repo.save(bot);
+    if (dto.enabled != null) this.events.botsChanged();
+    return this.toDto(saved);
   }
 
   /**
@@ -150,6 +154,7 @@ export class HostBotsService {
       });
     }
     await this.repo.remove(bot);
+    this.events.botsChanged();
   }
 
   // ── worker ───────────────────────────────────────────────────────────────
@@ -183,6 +188,8 @@ export class HostBotsService {
     },
   ): Promise<void> {
     await this.repo.update({ id }, { ...patch, lastHeartbeatAt: new Date() });
+    // A status flip changes `bots` / `canQueue` on every player's page.
+    if (patch.status != null) this.events.botsChanged();
   }
 
   async heartbeat(ids: number[]): Promise<void> {

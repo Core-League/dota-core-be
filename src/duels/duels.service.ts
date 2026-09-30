@@ -44,6 +44,7 @@ import {
   type DuelStats,
 } from './duel.constants';
 import { Duel } from './duel.entity';
+import { DuelEventsPublisher } from './duel-events.publisher';
 import { heroById, pickRandomHeroes } from './dota-heroes';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
@@ -91,6 +92,8 @@ export class DuelsService {
     private readonly queue: Repository<DuelQueueEntry>,
     @InjectRepository(Player) private readonly players: Repository<Player>,
     private readonly hostBots: HostBotsService,
+    /** Every write below that changes what a player sees announces itself here (→ socket pushes). */
+    private readonly events: DuelEventsPublisher,
   ) {}
 
   // ── mapping ──────────────────────────────────────────────────────────────
@@ -235,6 +238,15 @@ export class DuelsService {
     });
   }
 
+  /** The two participants of a duel (for pushes); empty when the duel is gone. */
+  async findDuelPlayerIds(duelId: string): Promise<string[]> {
+    const row = await this.duels.findOne({
+      where: { id: duelId },
+      select: { id: true, player1Id: true, player2Id: true },
+    });
+    return [row?.player1Id, row?.player2Id].filter((p): p is string => !!p);
+  }
+
   private findLastFinishedDuelForPlayer(
     playerId: string,
   ): Promise<Duel | null> {
@@ -346,21 +358,43 @@ export class DuelsService {
       })
       .orIgnore()
       .execute();
+    this.events.queueChanged();
     return this.getStatus(playerId);
   }
 
   async leaveQueue(playerId: string): Promise<DuelStatusDto> {
-    await this.queue.delete({ playerId });
+    const removed = await this.queue.delete({ playerId });
+    if (removed.affected) this.events.queueChanged();
     return this.getStatus(playerId);
   }
 
-  /** Page snapshot. Also the queue heartbeat: refreshes `lastSeenAt`. */
-  async getStatus(playerId: string): Promise<DuelStatusDto> {
+  /**
+   * Queue heartbeat for players whose socket is connected: their rows stay
+   * fresh without any HTTP polling (the matchmaker prunes everyone else).
+   */
+  async touchQueue(playerIds: string[]): Promise<void> {
+    if (!playerIds.length) return;
+    await this.queue.update(
+      { playerId: In(playerIds) },
+      { lastSeenAt: new Date() },
+    );
+  }
+
+  /**
+   * Page snapshot. By default also the queue heartbeat (`lastSeenAt`) — the
+   * REST poll and the socket's first snapshot; pushes pass `touch: false`.
+   */
+  async getStatus(
+    playerId: string,
+    opts: { touch?: boolean } = {},
+  ): Promise<DuelStatusDto> {
     const player = await this.players.findOne({ where: { id: playerId } });
     if (!player) throw new NotFoundException('Player not found');
 
     const now = new Date();
-    await this.queue.update({ playerId }, { lastSeenAt: now });
+    if (opts.touch !== false) {
+      await this.queue.update({ playerId }, { lastSeenAt: now });
+    }
     const [entry, playersInQueue, rating, active, lastFinished, bots] =
       await Promise.all([
         this.queue.findOne({ where: { playerId } }),
@@ -479,6 +513,7 @@ export class DuelsService {
       if (both) duel.state = DuelState.PENDING;
       await em.save(duel);
     });
+    this.events.duelChanged(duelId);
     return this.getStatus(playerId);
   }
 
@@ -533,6 +568,8 @@ export class DuelsService {
         const saved = await em.save(duel);
         if (present.length) await this.requeuePlayers(saved, em, present);
       });
+      this.events.duelChanged(id);
+      this.events.queueChanged();
       this.logger.log(`Duel ${id} expired: accept timeout`);
     }
     return stale.length;
@@ -575,6 +612,8 @@ export class DuelsService {
       const saved = await em.save(duel);
       if (opponentId) await this.requeuePlayers(saved, em, [opponentId]);
     });
+    this.events.duelChanged(duelId);
+    this.events.queueChanged();
     this.logger.log(
       `Duel ${duelId} cancelled by player ${playerId} (−${DUEL_CANCEL_PENALTY})`,
     );
@@ -602,7 +641,7 @@ export class DuelsService {
     lobbyName: string,
     region: number,
   ): Promise<Duel | null> {
-    return this.dataSource
+    const duel = await this.dataSource
       .transaction(async (em) => {
         const removed = await em.delete(DuelQueueEntry, {
           playerId: In([p1.playerId, p2.playerId]),
@@ -634,6 +673,11 @@ export class DuelsService {
         if (err instanceof QueueRaceError) return null;
         throw err;
       });
+    if (duel) {
+      this.events.duelChanged(duel.id);
+      this.events.queueChanged();
+    }
+    return duel;
   }
 
   /**
@@ -695,6 +739,7 @@ export class DuelsService {
     ) as Array<{ id: string }>;
     const id = rows?.[0]?.id;
     if (!id) return null;
+    this.events.duelChanged(id);
     return this.findDuelEntity(id);
   }
 
@@ -704,6 +749,7 @@ export class DuelsService {
       { id: duelId, state: DuelState.LOBBY_CREATING },
       { hostBotId: null, state: DuelState.PENDING },
     );
+    this.events.duelChanged(duelId);
   }
 
   async markLobbyReady(duelId: string, lobbyId: string): Promise<void> {
@@ -711,6 +757,7 @@ export class DuelsService {
       { id: duelId },
       { lobbyId, state: DuelState.WAITING_PLAYERS, lobbyReadyAt: new Date() },
     );
+    this.events.duelChanged(duelId);
   }
 
   async updateLobbyPlayers(
@@ -718,6 +765,7 @@ export class DuelsService {
     players: DuelLobbyPlayer[],
   ): Promise<void> {
     await this.duels.update({ id: duelId }, { lobbyPlayers: players });
+    this.events.duelChanged(duelId);
   }
 
   async markLive(
@@ -734,6 +782,7 @@ export class DuelsService {
         direPlayerId,
       },
     );
+    this.events.duelChanged(duelId);
   }
 
   /** Valve match id becomes known at launch; stored early so a restarted worker can still resolve the game. */
@@ -751,6 +800,7 @@ export class DuelsService {
 
   async saveStats(duelId: string, stats: DuelStats): Promise<void> {
     await this.duels.update({ id: duelId }, { stats });
+    this.events.duelChanged(duelId);
   }
 
   /**
@@ -759,7 +809,7 @@ export class DuelsService {
    * An outcome that names neither side leaves the duel FAILED for an admin.
    */
   async applyGcResult(duelId: string, result: DuelGcResult): Promise<Duel> {
-    return this.dataSource.transaction(async (em) => {
+    const saved = await this.dataSource.transaction(async (em) => {
       const duel = await em.findOne(Duel, {
         where: { id: duelId },
         lock: { mode: 'pessimistic_write' },
@@ -813,6 +863,8 @@ export class DuelsService {
       duel.cancelReason = null;
       return em.save(duel);
     });
+    this.events.duelChanged(duelId);
+    return saved;
   }
 
   /**
@@ -898,7 +950,7 @@ export class DuelsService {
    * A no-show is not a played game, so wins/losses stay as they were.
    */
   async applyNoShow(duelId: string, absentPlayerIds: string[]): Promise<Duel> {
-    return this.dataSource.transaction(async (em) => {
+    const saved = await this.dataSource.transaction(async (em) => {
       const duel = await em.findOne(Duel, {
         where: { id: duelId },
         lock: { mode: 'pessimistic_write' },
@@ -929,6 +981,8 @@ export class DuelsService {
         : 'no-show: both';
       return em.save(duel);
     });
+    this.events.duelChanged(duelId);
+    return saved;
   }
 
   async cancelDuel(
@@ -942,7 +996,8 @@ export class DuelsService {
       cancelledById?: string | null;
     } = {},
   ): Promise<Duel | null> {
-    return this.dataSource.transaction(async (em) => {
+    let requeued = false;
+    const saved = await this.dataSource.transaction(async (em) => {
       const duel = await em.findOne(Duel, {
         where: { id: duelId },
         lock: { mode: 'pessimistic_write' },
@@ -957,11 +1012,18 @@ export class DuelsService {
       const saved = await em.save(duel);
       if (opts.requeueOnly?.length) {
         await this.requeuePlayers(saved, em, opts.requeueOnly);
+        requeued = true;
       } else if (opts.requeue) {
         await this.requeuePlayers(saved, em);
+        requeued = true;
       }
       return saved;
     });
+    if (saved) {
+      this.events.duelChanged(duelId);
+      if (requeued) this.events.queueChanged();
+    }
+    return saved;
   }
 
   async failDuel(
@@ -969,7 +1031,7 @@ export class DuelsService {
     reason: DuelFailReason,
     error?: string,
   ): Promise<Duel | null> {
-    return this.dataSource.transaction(async (em) => {
+    const saved = await this.dataSource.transaction(async (em) => {
       const duel = await em.findOne(Duel, {
         where: { id: duelId },
         lock: { mode: 'pessimistic_write' },
@@ -983,6 +1045,8 @@ export class DuelsService {
       if (error) duel.error = error;
       return em.save(duel);
     });
+    if (saved) this.events.duelChanged(duelId);
+    return saved;
   }
 
   /** Current state only — the worker polls this each tick to notice admin cancels. */
@@ -1142,6 +1206,7 @@ export class DuelsService {
       await this.applyWinLoss(em, duel, winnerId, loserId, adminId);
       await em.save(duel);
     });
+    this.events.duelChanged(duelId);
     this.logger.log(
       `Duel ${duelId} resolved by admin ${adminId}: winner=${winnerId ?? 'void'}`,
     );
@@ -1171,6 +1236,8 @@ export class DuelsService {
         .execute();
       return { duels, ratings, queue };
     });
+    // Every connected player's snapshot is stale now — a queue event refreshes them all.
+    this.events.queueChanged();
     this.logger.warn(
       `Ladder purged by admin ${adminId}: ${result.duels} duels, ${result.ratings} ratings, ${result.queue} queue entries`,
     );
@@ -1222,6 +1289,7 @@ export class DuelsService {
     const row = await this.ensureRating(playerId);
     row.rating = Math.max(DUEL_RATING_FLOOR, rating);
     await this.ratings.save(row);
+    this.events.playersChanged([playerId]);
     return this.toRatingDto(row, playerId);
   }
 }

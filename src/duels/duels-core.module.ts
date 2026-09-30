@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Player } from '../players/player.entity';
 import { Duel } from './duel.entity';
+import { DuelEventsPublisher } from './duel-events.publisher';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
 import { DuelsService } from './duels.service';
@@ -23,7 +24,7 @@ import { HostBotsService } from './host-bots.service';
       Player,
     ]),
   ],
-  providers: [DuelsService, HostBotsService],
-  exports: [DuelsService, HostBotsService, TypeOrmModule],
+  providers: [DuelsService, HostBotsService, DuelEventsPublisher],
+  exports: [DuelsService, HostBotsService, DuelEventsPublisher, TypeOrmModule],
 })
 export class DuelsCoreModule {}
