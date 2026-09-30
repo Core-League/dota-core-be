@@ -41,17 +41,21 @@ import {
  * within seconds instead of on the next recovery pass.
  */
 const WEB_API_POLL_MS = 5_000;
-/** After the server is gone: how long Valve gets to publish the match before the last snapshot decides. */
+/**
+ * After the server is gone with a tie on the last snapshot: how long Valve
+ * gets to publish the match before the duel goes to admin review. A kill
+ * lead on the last snapshot decides at once and never waits for this.
+ */
 const WEB_API_WAIT_MS = 3 * 60_000;
 
 /**
  * How long the live scoreboard may stay silent, after it has answered at
- * least once, before the game server counts as gone. `GetRealtimeStats`
- * regularly returns 5xx / empty payloads for a few ticks while the game is
- * still running, so this is a wall-clock window, not a tick count. The Web
- * API is asked throughout, so a real end is normally recorded long before.
+ * least once, before the game server counts as gone and the last snapshot
+ * decides. `GetRealtimeStats` returns 5xx / empty payloads for a few seconds
+ * fairly often mid-game, so this is a wall-clock window, not a tick count —
+ * but every second here is added to the time until the result is saved.
  */
-const SERVER_GONE_AFTER_MS = 60_000;
+const SERVER_GONE_AFTER_MS = 20_000;
 /** …and at least this many consecutive misses (guards against one slow tick). */
 const SERVER_GONE_MIN_MISSES = 3;
 /** How often the "still following" line is logged while a game runs without the lobby. */
@@ -902,18 +906,26 @@ export class HostBotWorker {
       ) {
         return;
       }
-      // Server gone → the game is over.
+      // Server gone → the game is over. The server does not vanish mid-game
+      // (a leaver or a "gg" ends it early), so the last snapshot decides on
+      // the spot: two kills / a tower by the 1v1 rules, otherwise whoever led
+      // on kills. Waiting for Valve's record here only delays the result by
+      // minutes — the Web API is still asked every tick, so it wins when it
+      // answers first.
       const last = ctx.lastStats;
-      // 1) The last snapshot already shows a finished game by the 1v1 rules.
-      const strict = last ? this.deps.stats.deriveOutcome1v1(last) : null;
-      if (last && strict != null) {
+      const outcome = last
+        ? this.deps.stats.deriveOutcome1v1(last, { gameOver: true })
+        : null;
+      if (last && outcome != null) {
         this.logger.log(
-          `Server gone after ${Math.round(silentMs / 1000)}s of silence — result from the last snapshot: outcome=${strict} — ${this.deps.stats.describe(last)}`,
+          `Server gone after ${Math.round(silentMs / 1000)}s of silence — result from the last snapshot: outcome=${outcome} — ${this.deps.stats.describe(last)}`,
         );
-        await this.applyScoreboardResult(ctx, last, strict);
+        await this.applyScoreboardResult(ctx, last, outcome);
         return;
       }
-      // 2) Valve's record (asked every tick above) gets a little longer.
+      // A tie on the board: only Valve's record (asked every tick above) can
+      // name the winner — give it a little longer. Then admin review; the
+      // recovery pass keeps asking the Web API for it.
       if (ctx.serverGoneAt == null) {
         ctx.serverGoneAt = now;
         this.logger.warn(
@@ -921,19 +933,6 @@ export class HostBotWorker {
         );
       }
       if (ctx.lastMatchId && now - ctx.serverGoneAt < WEB_API_WAIT_MS) return;
-      // 3) Valve has nothing: whoever led on kills won (the server does not
-      //    vanish mid-game — a leaver or a "gg" ends it early). A tie goes to
-      //    admin review; the recovery pass keeps asking the Web API for it.
-      const leader = last
-        ? this.deps.stats.deriveOutcome1v1(last, { gameOver: true })
-        : null;
-      if (last && leader != null) {
-        this.logger.warn(
-          `Web API has no record of match ${ctx.lastMatchId ?? '?'} after ${ctx.webApiAttempts} attempts — kill leader from the last snapshot decides: outcome=${leader} — ${this.deps.stats.describe(last)}`,
-        );
-        await this.applyScoreboardResult(ctx, last, leader);
-        return;
-      }
       this.logger.error(
         `Server gone, Web API has no record of match ${ctx.lastMatchId ?? '?'} (${ctx.webApiAttempts} attempts) and the last snapshot shows no winner — FAILED (undetermined_outcome): ${last ? this.deps.stats.describe(last) : 'no snapshot'}`,
       );
