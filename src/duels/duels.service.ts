@@ -35,12 +35,15 @@ import {
   DUEL_JOIN_TIMEOUT_SECONDS,
   DUEL_LOBBY_NAME_DEFAULT,
   DUEL_MAX_LOBBY_RESTARTS,
+  DUEL_NEVER_STARTED_GAME_STATES,
   DUEL_NO_SHOW_COOLDOWN_SECONDS,
   DUEL_PLAYER_CANCELLABLE_STATES,
   DUEL_QUEUE_WINDOW_BASE,
   DUEL_QUEUE_WINDOW_STEP,
   DUEL_QUEUE_WINDOW_STEP_SECONDS,
   DUEL_RATING_FLOOR,
+  DUEL_RESTART_REQUEST_COOLDOWN_SECONDS,
+  DUEL_RESTART_REQUEST_WINDOW_SECONDS,
   DUEL_TERMINAL_STATES,
   DUEL_VOICE_CHANNEL_STATES,
   DuelCancelReason,
@@ -214,6 +217,7 @@ export class DuelsService {
       cancelledById: duel.cancelledById,
       adminReviewRequired: duel.adminReviewRequired,
       lobbyRestarts: duel.lobbyRestarts ?? 0,
+      gameState: duel.gameState ?? null,
       stats: duel.stats,
     };
   }
@@ -796,6 +800,89 @@ export class DuelsService {
     return this.getStatus(playerId);
   }
 
+  /**
+   * "Restart the match" from the site: a player failed to load and the game
+   * sits on the loading screen. Participants only, while the duel is LIVE,
+   * the pick phase has not begun (`gameState` still a loading state), the
+   * launch is recent and the restart budget is not spent. The request is
+   * stored on the duel; the host bot double-checks the live scoreboard on its
+   * next tick and relaunches the lobby (same one when it still hosts it).
+   * Once per player per DUEL_RESTART_REQUEST_COOLDOWN_SECONDS.
+   */
+  async requestRestart(
+    duelId: string,
+    playerId: string,
+  ): Promise<DuelStatusDto> {
+    await this.dataSource.transaction(async (em) => {
+      const duel = await em.findOne(Duel, {
+        where: { id: duelId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!duel) throw new NotFoundException('Duel not found');
+      this.assertParticipant(duel, playerId);
+      if (duel.state !== DuelState.LIVE) {
+        const message =
+          duel.state === DuelState.LOBBY_CREATING ||
+          duel.state === DuelState.WAITING_PLAYERS
+            ? 'Лобі ще не запущено — перезапуск потрібен лише коли гра не стартувала'
+            : duel.state === DuelState.PROCESSING
+              ? 'Гра вже зіграна — результат обробляється'
+              : 'Дуель не активна';
+        throw new ConflictException({ error: 'not_restartable', message });
+      }
+      if ((duel.lobbyRestarts ?? 0) >= DUEL_MAX_LOBBY_RESTARTS) {
+        throw new ConflictException({
+          error: 'restart_limit',
+          message: `Ліміт перезапусків лобі (${DUEL_MAX_LOBBY_RESTARTS}) вичерпано`,
+        });
+      }
+      if (
+        duel.gameState != null &&
+        !DUEL_NEVER_STARTED_GAME_STATES.has(duel.gameState)
+      ) {
+        throw new ConflictException({
+          error: 'game_started',
+          message: 'Гра вже стартувала — герої обрані, перезапуск неможливий',
+        });
+      }
+      const now = new Date();
+      if (
+        duel.liveAt &&
+        now.getTime() - duel.liveAt.getTime() >
+          DUEL_RESTART_REQUEST_WINDOW_SECONDS * 1000
+      ) {
+        throw new ConflictException({
+          error: 'game_started',
+          message: 'Гра запущена надто давно — перезапуск більше недоступний',
+        });
+      }
+      const last = duel.restartRequests?.[playerId];
+      if (
+        last &&
+        now.getTime() - new Date(last).getTime() <
+          DUEL_RESTART_REQUEST_COOLDOWN_SECONDS * 1000
+      ) {
+        throw new HttpException(
+          {
+            error: 'restart_cooldown',
+            message: `Запит уже надіслано — повторити можна за ${DUEL_RESTART_REQUEST_COOLDOWN_SECONDS} с`,
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      duel.restartRequests = {
+        ...(duel.restartRequests ?? {}),
+        [playerId]: now.toISOString(),
+      };
+      await em.save(duel);
+    });
+    this.events.duelChanged(duelId);
+    this.logger.log(
+      `Duel ${duelId}: player ${playerId} asked to restart the match`,
+    );
+    return this.getStatus(playerId);
+  }
+
   // ── matchmaker helpers ───────────────────────────────────────────────────
 
   static generateLobbyPassword(): string {
@@ -1091,6 +1178,8 @@ export class DuelsService {
       duel.matchOutcome = null;
       duel.stats = null;
       duel.inviteRequests = null;
+      duel.restartRequests = null;
+      duel.gameState = null;
       if (opts.sameLobby) {
         duel.lobbyReadyAt = new Date();
       } else {
@@ -1124,6 +1213,19 @@ export class DuelsService {
   async saveStats(duelId: string, stats: DuelStats): Promise<void> {
     await this.duels.update({ id: duelId }, { stats });
     this.events.duelChanged(duelId);
+  }
+
+  /**
+   * Dota `game_state` from the live scoreboard, stored while the duel is LIVE
+   * so the API and the site can tell whether the pick phase has begun. Only
+   * the LIVE row is touched — a relaunch already cleared it.
+   */
+  async saveGameState(duelId: string, gameState: number): Promise<void> {
+    const res = await this.duels.update(
+      { id: duelId, state: DuelState.LIVE },
+      { gameState },
+    );
+    if (res.affected) this.events.duelChanged(duelId);
   }
 
   /**
@@ -1378,13 +1480,23 @@ export class DuelsService {
   async getWorkerView(duelId: string): Promise<{
     state: DuelState;
     inviteRequests: Record<string, string> | null;
+    restartRequests: Record<string, string> | null;
   } | null> {
     const row = await this.duels.findOne({
       where: { id: duelId },
-      select: { id: true, state: true, inviteRequests: true },
+      select: {
+        id: true,
+        state: true,
+        inviteRequests: true,
+        restartRequests: true,
+      },
     });
     return row
-      ? { state: row.state, inviteRequests: row.inviteRequests ?? null }
+      ? {
+          state: row.state,
+          inviteRequests: row.inviteRequests ?? null,
+          restartRequests: row.restartRequests ?? null,
+        }
       : null;
   }
 

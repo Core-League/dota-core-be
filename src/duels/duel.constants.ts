@@ -235,6 +235,22 @@ export const DUEL_REINVITE_INTERVAL_SECONDS = 30;
 export const DUEL_REINVITE_MAX_AUTO = 4;
 /** "Invite me again" from the site: once per player per this many seconds. */
 export const DUEL_INVITE_REQUEST_COOLDOWN_SECONDS = 15;
+/** "Restart the match" from the site: once per player per this many seconds. */
+export const DUEL_RESTART_REQUEST_COOLDOWN_SECONDS = 60;
+/**
+ * A player may ask for a restart only this long after the launch. A game that
+ * never started is aborted by the server well within it; past it the match
+ * is assumed to be running (a losing player must not be able to void it).
+ */
+export const DUEL_RESTART_REQUEST_WINDOW_SECONDS = 10 * 60;
+/**
+ * `DOTA_GameState` values a match sits in before the game proper: INIT,
+ * WAIT_FOR_PLAYERS_TO_LOAD, WAIT_FOR_MAP_TO_LOAD. Hero selection (2) and
+ * everything after it mean the picks are on — no restart from then on.
+ */
+export const DUEL_NEVER_STARTED_GAME_STATES: ReadonlySet<number> = new Set([
+  0, 1, 10,
+]);
 
 // ── Discord voice channel ────────────────────────────────────────────────
 

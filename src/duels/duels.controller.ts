@@ -203,6 +203,26 @@ export class DuelsController {
     return this.duels.requestInvite(id, req.user.playerId);
   }
 
+  @Post(':id/restart')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Restart the match (a player failed to load)',
+    description:
+      'Participants only, while the duel is LIVE and the game has not started (no hero picks yet, ' +
+      'launch not older than 10 min, restart budget not spent). The host bot re-checks the live ' +
+      'scoreboard on its next tick and relaunches the lobby. 409 when the game is on or the duel is ' +
+      'not in the lobby-launched stage, 429 within 60 s of the previous request.',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: DuelStatusDto })
+  requestRestart(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.duels.requestRestart(id, req.user.playerId);
+  }
+
   // ── public ───────────────────────────────────────────────────────────────
 
   @Get('bots/status')

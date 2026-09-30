@@ -247,6 +247,15 @@ export class DuelDto {
   })
   lobbyRestarts: number;
 
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    description:
+      'Dota game_state last seen on the live scoreboard while LIVE (0/1/10 = still loading, ' +
+      '2 = hero selection, 5 = in progress); null before the first snapshot or after a relaunch',
+  })
+  gameState: number | null;
+
   @ApiPropertyOptional({ type: DuelStatsDto, nullable: true })
   stats: DuelStatsDto | null;
 }

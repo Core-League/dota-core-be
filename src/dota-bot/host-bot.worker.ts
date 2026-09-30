@@ -3,6 +3,7 @@ import {
   DUEL_GC_DETAILS_INTERVAL_SECONDS,
   DUEL_LOBBY_LOST_GRACE_SECONDS,
   DUEL_MAX_LOBBY_RESTARTS,
+  DUEL_NEVER_STARTED_GAME_STATES,
   DUEL_POSTGAME_OUTCOME_WAIT_SECONDS,
   DUEL_REINVITE_INTERVAL_SECONDS,
   DUEL_REINVITE_MAX_AUTO,
@@ -68,9 +69,10 @@ const FOLLOW_LOG_INTERVAL_MS = 30_000;
  * `DOTA_GameState` values a match sits in before the game proper: INIT,
  * WAIT_FOR_PLAYERS_TO_LOAD, WAIT_FOR_MAP_TO_LOAD. A server that vanishes
  * while its last snapshot shows one of these never started the game — a
- * player failed to load and the match was aborted.
+ * player failed to load and the match was aborted. Shared with the API, which
+ * refuses a player's restart request by the same rule.
  */
-const NEVER_STARTED_GAME_STATES: ReadonlySet<number> = new Set([0, 1, 10]);
+const NEVER_STARTED_GAME_STATES = DUEL_NEVER_STARTED_GAME_STATES;
 
 export interface HostBotWorkerConfig {
   lobbyName: string;
@@ -150,6 +152,10 @@ class DuelCtx {
   lastLobby: GcLobby | null = null;
   lastLobbyState: number | null = null;
   lastLobbyOutcome = 0;
+  /** Dota `game_state` last persisted on the duel (from the live scoreboard), so it is written only on change. */
+  lastGameState: number | null = null;
+  /** The `restartRequests` timestamp already served, so each site request is answered once. */
+  restartServed: string | null = null;
   /** Live-scoreboard following once the lobby is gone. */
   serverSeenAt: number | null = null;
   serverMisses = 0;
@@ -249,6 +255,7 @@ class DuelCtx {
     this.lastLobby = null;
     this.lastLobbyState = null;
     this.lastLobbyOutcome = 0;
+    this.lastGameState = null;
     this.serverSeenAt = null;
     this.serverMisses = 0;
     this.lastFollowLogAt = 0;
@@ -698,6 +705,17 @@ export class HostBotWorker {
     }
 
     const lobby = gc.lobby;
+
+    // A player asked the site to restart the match (someone failed to load).
+    // Served once per request, and only while the game has not started.
+    if (
+      ctx.launched &&
+      !ctx.finished &&
+      (await this.serveRestartRequest(ctx, view.restartRequests, lobby, now))
+    ) {
+      return;
+    }
+
     if (!lobby) {
       if (ctx.launched && !ctx.finished) {
         // The GC removes unassigned members — the bot — from the lobby when
@@ -992,6 +1010,7 @@ export class HostBotWorker {
       ctx.lastStats = raw;
       ctx.serverSeenAt = now;
       ctx.serverMisses = 0;
+      await this.noteGameState(ctx, raw);
       const outcome = this.deps.stats.deriveOutcome1v1(raw);
       if (outcome != null) {
         this.logger.log(
@@ -1264,6 +1283,67 @@ export class HostBotWorker {
       0,
     );
     return kills === 0;
+  }
+
+  /**
+   * Persists the scoreboard's `game_state` on the duel when it changes, so
+   * the API and the site know whether the pick phase has begun (a player's
+   * restart request is refused from then on).
+   */
+  private async noteGameState(
+    ctx: DuelCtx,
+    raw: RealtimeStatsRaw,
+  ): Promise<void> {
+    const state = raw.match?.game_state;
+    if (state == null || state === ctx.lastGameState) return;
+    ctx.lastGameState = state;
+    try {
+      await this.deps.duels.saveGameState(ctx.id, state);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`could not save game state ${state}: ${message}`);
+    }
+  }
+
+  /**
+   * "Restart the match" from the site: the newest request timestamp is served
+   * once. The API already refused requests past the pick phase by the stored
+   * `game_state`; the live snapshot is the last word here — a game that shows
+   * heroes picked or a kill is never restarted. The same lobby is relaunched
+   * when the bot still sits in it (back in UI); otherwise a fresh one is
+   * created and both players are invited again. Returns true when the tick
+   * is done (the lobby is being relaunched).
+   */
+  private async serveRestartRequest(
+    ctx: DuelCtx,
+    requests: Record<string, string> | null,
+    lobby: GcLobby | null,
+    now: number,
+  ): Promise<boolean> {
+    if (!requests) return false;
+    let latest: string | null = null;
+    let by: string | null = null;
+    for (const [playerId, at] of Object.entries(requests)) {
+      if (latest == null || at > latest) {
+        latest = at;
+        by = playerId;
+      }
+    }
+    if (latest == null || latest === ctx.restartServed) return false;
+    ctx.restartServed = latest;
+
+    if (ctx.lastStats && !this.gameNeverStarted(ctx.lastStats)) {
+      this.logger.warn(
+        `Duel ${ctx.id}: player ${by ?? '?'} asked to restart, but the game is on (${this.deps.stats.describe(ctx.lastStats)}) — ignored`,
+      );
+      return false;
+    }
+    const sameLobby = !!lobby && lobby.state === LobbyState.UI;
+    await this.restartAfterAbort(ctx, now, {
+      sameLobby,
+      why: `restart requested by player ${by ?? '?'} (a player failed to load; ${ctx.lastStats ? this.deps.stats.describe(ctx.lastStats) : 'no scoreboard snapshot'})`,
+    });
+    return true;
   }
 
   /**
@@ -1575,7 +1655,10 @@ export class HostBotWorker {
       if (!serverId) return;
       ctx.lastServerId = serverId;
       const raw = await this.deps.stats.fetch(serverId);
-      if (raw) ctx.lastStats = raw;
+      if (raw) {
+        ctx.lastStats = raw;
+        await this.noteGameState(ctx, raw);
+      }
     };
     this.statsTimer = setInterval(() => void poll(), this.config.statsPollMs);
     void poll();

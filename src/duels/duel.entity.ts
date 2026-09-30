@@ -143,6 +143,22 @@ export class Duel {
   inviteRequests: Record<string, string> | null;
 
   /**
+   * "Restart the match" requests from the site (a player failed to load):
+   * player id → ISO time of the latest one. The host bot serves a new request
+   * on its next tick — only while the game has not started.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  restartRequests: Record<string, string> | null;
+
+  /**
+   * Dota `game_state` last seen on the live scoreboard while LIVE
+   * (1 = loading, 2 = hero selection, 5 = in progress…). Lets the API and the
+   * site refuse a restart once the pick phase has begun. Cleared on relaunch.
+   */
+  @Column({ type: 'integer', nullable: true })
+  gameState: number | null;
+
+  /**
    * Private Discord voice channel of the two players ("Duel #N"), created by
    * api-v1 once both accepted and deleted after the duel ended.
    */
