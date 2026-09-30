@@ -76,7 +76,7 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
       ),
       gameMode: envInt('HOSTBOT_GAME_MODE', DUEL_DEFAULT_GAME_MODE),
       tickMs: 3_000,
-      statsPollMs: 15_000,
+      statsPollMs: 5_000,
     };
   }
 

@@ -21,7 +21,18 @@ export interface RealtimeStatsRaw {
   };
   teams?: Array<{
     team_number?: number;
+    /** Team kills */
+    score?: number;
     players?: Array<Record<string, unknown>>;
+  }>;
+  buildings?: Array<{
+    /** 2 Radiant, 3 Dire */
+    team?: number;
+    /** 0 tower, 1 barracks, 2 ancient */
+    type?: number;
+    tier?: number;
+    lane?: number;
+    destroyed?: boolean;
   }>;
 }
 
@@ -75,6 +86,40 @@ export class RealtimeStatsService {
       this.logger.warn(`GetRealtimeStats(${serverSteamId}) failed: ${message}`);
       return null;
     }
+  }
+
+  /**
+   * Winner of a 1v1 Solo Mid game read off the live scoreboard, by the mode's
+   * own rules: first to two kills, or the enemy tier-1 tower down. Valve keeps
+   * no record of practice 1v1 games and the GC drops the lobby the moment the
+   * match ends, so this snapshot, taken while the server is still up for the
+   * post-game screen, is the result. `EMatchOutcome` (2 Radiant, 3 Dire) or
+   * null when the snapshot shows no finished game.
+   */
+  deriveOutcome1v1(raw: RealtimeStatsRaw): number | null {
+    const kills = new Map<number, number>();
+    for (const team of raw.teams ?? []) {
+      if (team.team_number == null) continue;
+      const fromPlayers = (team.players ?? []).reduce(
+        (sum, p) => sum + (pick(p, 'kill_count', 'kills') ?? 0),
+        0,
+      );
+      kills.set(team.team_number, Math.max(team.score ?? 0, fromPlayers));
+    }
+    const radiantKills = kills.get(2) ?? 0;
+    const direKills = kills.get(3) ?? 0;
+    if (radiantKills >= 2 && direKills < 2) return 2;
+    if (direKills >= 2 && radiantKills < 2) return 3;
+
+    const lostTower = new Set<number>();
+    for (const b of raw.buildings ?? []) {
+      if ((b.type ?? 0) === 0 && b.destroyed && b.team != null) {
+        lostTower.add(b.team);
+      }
+    }
+    if (lostTower.has(2) && !lostTower.has(3)) return 3;
+    if (lostTower.has(3) && !lostTower.has(2)) return 2;
+    return null;
   }
 
   /**

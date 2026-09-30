@@ -32,6 +32,9 @@ import type {
   RealtimeStatsService,
 } from './realtime-stats.service';
 
+/** After the lobby vanished, how long the live scoreboard is still asked for the result. */
+const EXIT_CAPTURE_WINDOW_MS = 60_000;
+
 export interface HostBotWorkerConfig {
   lobbyName: string;
   /** `DOTA_GameMode` of the hosted lobby (5 All Random, 21 1v1 Solo Mid). */
@@ -88,6 +91,10 @@ class DuelCtx {
   /** GC match-details polling bookkeeping. */
   gcDetailsAttempts = 0;
   gcDetailsLastAt = 0;
+  /** Last lobby object we saw — the GC removes it the moment the match ends, so this is the final snapshot. */
+  lastLobby: GcLobby | null = null;
+  lastLobbyState: number | null = null;
+  lastLobbyOutcome = 0;
 
   constructor(duel: Duel, joinTimeoutSeconds: number) {
     if (!duel.player1?.steamId || !duel.player2?.steamId) {
@@ -537,10 +544,10 @@ export class HostBotWorker {
           ctx.lobbyLostAt = now;
           ctx.gameEndedAt ??= now;
           this.logger.warn(
-            `Lobby vanished after launch — asking the GC for match ${ctx.lastMatchId ?? '?'} in ${DUEL_RESULT_DELAY_SECONDS}s`,
+            `Lobby vanished after launch — capturing the result from the last snapshot / live scoreboard`,
           );
-          return;
         }
+        if (await this.captureResultAtExit(ctx, now)) return;
         if (now - ctx.lobbyLostAt < DUEL_LOBBY_LOST_GRACE_SECONDS * 1000) {
           this.maybeRequestGcDetails(ctx, now);
           return;
@@ -664,6 +671,18 @@ export class HostBotWorker {
       this.logger.log('Lobby is back');
       ctx.lobbyLostAt = null;
     }
+    const lobbyOutcome = lobby.match_outcome ?? 0;
+    if (
+      lobby.state !== ctx.lastLobbyState ||
+      lobbyOutcome !== ctx.lastLobbyOutcome
+    ) {
+      this.logger.log(
+        `lobby state ${ctx.lastLobbyState ?? '-'}→${lobby.state} outcome=${lobbyOutcome} match=${lobby.match_id ?? '?'} server=${lobby.server_id ?? '?'}`,
+      );
+      ctx.lastLobbyState = lobby.state;
+      ctx.lastLobbyOutcome = lobbyOutcome;
+    }
+    ctx.lastLobby = lobby;
     if (
       lobby.match_id &&
       lobby.match_id !== '0' &&
@@ -696,10 +715,12 @@ export class HostBotWorker {
     //    "RUN was seen and the state is no longer RUN", whatever it is now.
     if (ctx.launched && !ctx.finished && this.gameOver(ctx, lobby)) {
       ctx.gameEndedAt ??= now;
-      // Give the GC a moment to sign the match out before we record anything.
-      if (now - ctx.gameEndedAt < DUEL_RESULT_DELAY_SECONDS * 1000) return;
       const outcome = lobby.match_outcome ?? 0;
       if (outcome === 0) {
+        // Give the GC a moment to sign the match out; meanwhile the live
+        // scoreboard may already show the winner.
+        if (now - ctx.gameEndedAt < DUEL_RESULT_DELAY_SECONDS * 1000) return;
+        if (await this.captureResultAtExit(ctx, now)) return;
         ctx.postgameAt ??= now;
         if (now - ctx.postgameAt < DUEL_POSTGAME_OUTCOME_WAIT_SECONDS * 1000) {
           this.maybeRequestGcDetails(ctx, now);
@@ -712,6 +733,73 @@ export class HostBotWorker {
       ctx.finished = true;
       await this.reportFromLobby(ctx, lobby);
     }
+  }
+
+  /**
+   * The GC drops the lobby the moment the match ends and Valve keeps no
+   * record of 1v1 practice games, so the result must come from what we still
+   * hold: the last lobby snapshot (POSTGAME with an outcome) or the live
+   * scoreboard, whose server stays up for the post-game screen. Retried every
+   * tick for a minute after the lobby went away. True once the duel is resolved.
+   */
+  private async captureResultAtExit(
+    ctx: DuelCtx,
+    now: number,
+  ): Promise<boolean> {
+    if (ctx.finished) return true;
+    const last = ctx.lastLobby;
+    const lastOutcome = last?.match_outcome ?? 0;
+    if (last && (lastOutcome === 2 || lastOutcome === 3)) {
+      ctx.finished = true;
+      this.logger.log(
+        `Result from the last lobby snapshot: outcome=${lastOutcome}`,
+      );
+      await this.reportFromLobby(ctx, last);
+      return true;
+    }
+    if (!this.deps.stats.enabled || !ctx.lastServerId) return false;
+    if (now - (ctx.gameEndedAt ?? now) > EXIT_CAPTURE_WINDOW_MS) return false;
+    const raw =
+      (await this.deps.stats.fetch(ctx.lastServerId)) ?? ctx.lastStats;
+    if (!raw) {
+      this.logger.warn(`scoreboard ${ctx.lastServerId} unavailable`);
+      return false;
+    }
+    ctx.lastStats = raw;
+    const outcome = this.deps.stats.deriveOutcome1v1(raw);
+    if (outcome == null) {
+      this.logger.log(
+        'scoreboard shows no winner yet (2 kills / tier-1 tower)',
+      );
+      return false;
+    }
+    ctx.finished = true;
+    const stats = this.deps.stats.summarize(
+      raw,
+      ctx.players.map((p) => ({
+        playerId: p.playerId,
+        steamId64: p.steamId64,
+      })),
+      outcome,
+      ctx.radiantAcc,
+      ctx.direAcc,
+    );
+    const heroesPlayed = stats.players
+      .filter(
+        (p): p is typeof p & { playerId: string; heroId: number } =>
+          !!p.playerId && p.heroId != null && p.heroId > 0,
+      )
+      .map((p) => ({ playerId: p.playerId, heroId: p.heroId }));
+    this.logger.log(
+      `Result from the live scoreboard: outcome=${outcome} (2 kills / tier-1 tower rule)`,
+    );
+    await this.applyResult(ctx, {
+      matchId: ctx.lastMatchId,
+      outcome,
+      heroesPlayed,
+      stats,
+    });
+    return true;
   }
 
   /** Every 10 s after the delay: `MatchDetailsRequest` for the match we saw running. */
@@ -736,8 +824,8 @@ export class HostBotWorker {
     if (!ctx || ctx.finished) return;
     const match = details.match;
     if (!match?.match_id || match.match_id !== ctx.lastMatchId) {
-      this.logger.debug?.(
-        `match details for ${match?.match_id ?? '?'} ignored (ours: ${ctx.lastMatchId ?? '?'})`,
+      this.logger.log(
+        `GC match details: result=${details.result ?? '?'} match=${match?.match_id ?? 'none'} (ours: ${ctx.lastMatchId ?? '?'}) — ignored`,
       );
       return;
     }
@@ -911,7 +999,9 @@ export class HostBotWorker {
       const lobby = this.gc?.lobby;
       if (!ctx || ctx.finished) return;
       const serverId =
-        lobby?.server_id && lobby.server_id !== '0' ? lobby.server_id : null;
+        lobby?.server_id && lobby.server_id !== '0'
+          ? lobby.server_id
+          : ctx.lastServerId;
       if (!serverId) return;
       ctx.lastServerId = serverId;
       const raw = await this.deps.stats.fetch(serverId);
