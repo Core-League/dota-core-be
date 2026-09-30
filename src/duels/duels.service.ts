@@ -887,6 +887,7 @@ export class DuelsService {
         dotaMatchId: Not(IsNull()),
         finishedAt: MoreThan(since),
       },
+      relations: ['player1', 'player2'],
       order: { finishedAt: 'ASC' },
       take: 20,
     });

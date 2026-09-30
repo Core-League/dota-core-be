@@ -27,13 +27,27 @@ import {
   type GcLobby,
   type GcMatchDetails,
 } from './dota-gc.protocol';
-import type {
-  RealtimeStatsRaw,
-  RealtimeStatsService,
+import {
+  duelParticipants,
+  type RealtimeStatsRaw,
+  type RealtimeStatsService,
+  type StatsParticipant,
 } from './realtime-stats.service';
 
-/** Consecutive scoreboard misses after which the game server counts as gone (≈ 4 ticks). */
-const SERVER_GONE_MISSES = 4;
+/** After the server is gone: how long Valve gets to publish the match before the last snapshot decides. */
+const WEB_API_WAIT_MS = 5 * 60_000;
+/** …and how often `GetMatchDetails` is asked meanwhile. */
+const WEB_API_POLL_MS = 30_000;
+
+/**
+ * How long the live scoreboard may stay silent, after it has answered at
+ * least once, before the game server counts as gone. `GetRealtimeStats`
+ * regularly returns 5xx / empty payloads for a few ticks while the game is
+ * still running, so this is a wall-clock window, not a tick count.
+ */
+const SERVER_GONE_AFTER_MS = 90_000;
+/** …and at least this many consecutive misses (guards against one slow tick). */
+const SERVER_GONE_MIN_MISSES = 3;
 /** How often the "still following" line is logged while a game runs without the lobby. */
 const FOLLOW_LOG_INTERVAL_MS = 30_000;
 
@@ -101,6 +115,18 @@ class DuelCtx {
   serverSeenAt: number | null = null;
   serverMisses = 0;
   lastFollowLogAt = 0;
+  lastFollowLine: string | null = null;
+  /** When the scoreboard was declared gone; the Web API is polled for the match from then on. */
+  serverGoneAt: number | null = null;
+  webApiLastAt = 0;
+  webApiAttempts = 0;
+
+  get participants(): StatsParticipant[] {
+    return this.players.map((p) => ({
+      playerId: p.playerId,
+      steamId64: p.steamId64,
+    }));
+  }
 
   constructor(duel: Duel, joinTimeoutSeconds: number) {
     if (!duel.player1?.steamId || !duel.player2?.steamId) {
@@ -438,7 +464,11 @@ export class HostBotWorker {
       } else if (
         duel.state === DuelState.LIVE &&
         duel.dotaMatchId &&
-        (await this.resolveFromWebApi(duel.id, duel.dotaMatchId))
+        (await this.resolveFromWebApi(
+          duel.id,
+          duel.dotaMatchId,
+          duelParticipants(duel),
+        ))
       ) {
         this.logger.log(
           `Duel ${duel.id}: lobby gone after restart, result recovered from the Web API`,
@@ -591,7 +621,11 @@ export class HostBotWorker {
           }
           if (
             ctx.lastMatchId &&
-            (await this.resolveFromWebApi(ctx.id, ctx.lastMatchId))
+            (await this.resolveFromWebApi(
+              ctx.id,
+              ctx.lastMatchId,
+              ctx.participants,
+            ))
           ) {
             ctx.finished = true;
             await this.finish();
@@ -822,28 +856,87 @@ export class HostBotWorker {
         await this.applyScoreboardResult(ctx, raw, outcome);
         return;
       }
-      if (now - ctx.lastFollowLogAt >= FOLLOW_LOG_INTERVAL_MS) {
+      // Every change on the board (state, kills, heroes, towers) is logged;
+      // an unchanged board only every FOLLOW_LOG_INTERVAL_MS.
+      const line = this.deps.stats.describe(raw);
+      if (
+        line !== ctx.lastFollowLine ||
+        now - ctx.lastFollowLogAt >= FOLLOW_LOG_INTERVAL_MS
+      ) {
         ctx.lastFollowLogAt = now;
-        this.logger.log(`following: ${this.deps.stats.describe(raw)}`);
+        ctx.lastFollowLine = line;
+        this.logger.log(`following: ${line}`);
       }
       return;
     }
 
     ctx.serverMisses += 1;
     if (ctx.serverSeenAt != null) {
-      if (ctx.serverMisses < SERVER_GONE_MISSES) return;
-      // Server gone → the game is over. The last snapshot is the final state.
-      const last = ctx.lastStats;
-      const outcome = last ? this.deps.stats.deriveOutcome1v1(last) : null;
-      if (last && outcome != null) {
-        this.logger.log(
-          `Server gone — result from the last snapshot: outcome=${outcome} — ${this.deps.stats.describe(last)}`,
+      const silentMs = now - ctx.serverSeenAt;
+      if (ctx.serverMisses === 1) {
+        this.logger.warn(
+          `scoreboard ${ctx.lastServerId} stopped answering — the server counts as gone after ${SERVER_GONE_AFTER_MS / 1000}s of silence`,
         );
-        await this.applyScoreboardResult(ctx, last, outcome);
+      }
+      if (
+        ctx.serverMisses < SERVER_GONE_MIN_MISSES ||
+        silentMs < SERVER_GONE_AFTER_MS
+      ) {
+        return;
+      }
+      // Server gone → the game is over.
+      const last = ctx.lastStats;
+      // 1) The last snapshot already shows a finished game by the 1v1 rules.
+      const strict = last ? this.deps.stats.deriveOutcome1v1(last) : null;
+      if (last && strict != null) {
+        this.logger.log(
+          `Server gone after ${Math.round(silentMs / 1000)}s of silence — result from the last snapshot: outcome=${strict} — ${this.deps.stats.describe(last)}`,
+        );
+        await this.applyScoreboardResult(ctx, last, strict);
+        return;
+      }
+      // 2) The end data Valve publishes for the match, a few minutes after
+      //    the game — authoritative when the last poll missed the final kill.
+      if (ctx.serverGoneAt == null) {
+        ctx.serverGoneAt = now;
+        this.logger.warn(
+          `Server gone after ${Math.round(silentMs / 1000)}s of silence, last snapshot shows no winner (${last ? this.deps.stats.describe(last) : 'no snapshot'}) — asking the Web API for match ${ctx.lastMatchId ?? '?'} every ${WEB_API_POLL_MS / 1000}s for up to ${WEB_API_WAIT_MS / 60_000} min`,
+        );
+      }
+      if (ctx.lastMatchId && now - ctx.webApiLastAt >= WEB_API_POLL_MS) {
+        ctx.webApiLastAt = now;
+        ctx.webApiAttempts += 1;
+        this.logger.log(
+          `Web API attempt ${ctx.webApiAttempts} for match ${ctx.lastMatchId} (${Math.round((now - ctx.serverGoneAt) / 1000)}s since the server went away)`,
+        );
+        if (
+          await this.resolveFromWebApi(
+            ctx.id,
+            ctx.lastMatchId,
+            ctx.participants,
+          )
+        ) {
+          ctx.finished = true;
+          await this.finish();
+          return;
+        }
+      }
+      if (ctx.lastMatchId && now - ctx.serverGoneAt < WEB_API_WAIT_MS) return;
+      // 3) Valve has nothing: whoever led on kills won (the server does not
+      //    vanish mid-game — a leaver or a "gg" ends it early). A tie goes to
+      //    admin review; the recovery pass keeps asking the Web API for it.
+      const leader = last
+        ? this.deps.stats.deriveOutcome1v1(last, { gameOver: true })
+        : null;
+      if (last && leader != null) {
+        this.logger.warn(
+          `Web API has no record of match ${ctx.lastMatchId ?? '?'} after ${ctx.webApiAttempts} attempts — kill leader from the last snapshot decides: outcome=${leader} — ${this.deps.stats.describe(last)}`,
+        );
+        await this.applyScoreboardResult(ctx, last, leader);
         return;
       }
       this.logger.error(
-        `Server gone and the last snapshot shows no winner — FAILED (undetermined_outcome): ${last ? this.deps.stats.describe(last) : 'no snapshot'}`,
+        `Server gone, Web API has no record of match ${ctx.lastMatchId ?? '?'} (${ctx.webApiAttempts} attempts) and the last snapshot shows no winner — FAILED (undetermined_outcome): ${last ? this.deps.stats.describe(last) : 'no snapshot'}`,
       );
       ctx.finished = true;
       await this.deps.duels.failDuel(
@@ -991,22 +1084,59 @@ export class HostBotWorker {
   }
 
   /**
-   * Last resort when the GC lobby is gone: `GetMatchDetails` by match id.
-   * Applies the result and returns true, or returns false when Valve has no
-   * outcome (yet) — the caller then fails the duel for admin review.
+   * The end data Valve publishes for the match (`GetMatchDetails`): winner,
+   * heroes, per-player stats. Applies it and returns true, or returns false
+   * when Valve has no record (yet) — the caller decides what happens then.
    */
   private async resolveFromWebApi(
     duelId: string,
     matchId: string,
+    participants: StatsParticipant[],
   ): Promise<boolean> {
-    if (!this.deps.stats.enabled) return false;
-    const outcome = await this.deps.stats.fetchMatchOutcome(matchId);
-    if (outcome == null) return false;
-    this.logger.log(`Web API ✅ match_id=${matchId} outcome=${outcome}`);
-    await this.deps.duels.applyGcResult(duelId, {
+    if (!this.deps.stats.enabled) {
+      this.logger.warn(
+        `Web API: STEAM_API_KEY is not set — cannot ask GetMatchDetails for match ${matchId}`,
+      );
+      return false;
+    }
+    this.logger.log(`Web API: asking GetMatchDetails for match ${matchId}`);
+    const match = await this.deps.stats.fetchMatchDetails(matchId);
+    if (!match) {
+      this.logger.log(`Web API: no record of match ${matchId} yet`);
+      return false;
+    }
+    const result = this.deps.stats.fromWebApiMatch(match, participants);
+    this.logger.log(
+      `Web API ✅ match_id=${matchId} outcome=${result.outcome} duration=${result.stats.durationSeconds ?? '?'}s — ${this.deps.stats.describeWebApi(match)}`,
+    );
+    this.logger.log(
+      `Web API stats per duel player: ${result.stats.players
+        .map(
+          (p) =>
+            `${p.playerId}(${p.steamId64}) side=${p.isRadiant == null ? '?' : p.isRadiant ? 'radiant' : 'dire'} win=${p.win ?? '?'} h${p.heroId ?? '?'} k${p.kills ?? '?'}/d${p.deaths ?? '?'}`,
+        )
+        .join(' | ')}`,
+    );
+    if (result.heroesPlayed.length) {
+      this.logger.log(
+        `heroes played: ${result.heroesPlayed.map((h) => `${h.playerId}=${h.heroId}`).join(', ')}`,
+      );
+    }
+    const saved = await this.deps.duels.applyGcResult(duelId, {
       dotaMatchId: matchId,
-      matchOutcome: outcome,
+      matchOutcome: result.outcome,
+      heroesPlayed: result.heroesPlayed,
     });
+    this.logger.log(
+      `Duel ${duelId} → ${saved.state}${saved.failReason ? ` (${saved.failReason})` : ''} winner=${saved.winnerId ?? 'none'}`,
+    );
+    try {
+      await this.deps.duels.saveStats(duelId, result.stats);
+      this.logger.log(`Duel ${duelId}: Web API stats saved`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`stats not saved: ${message}`);
+    }
     return true;
   }
 
@@ -1101,14 +1231,26 @@ export class HostBotWorker {
         `heroes played: ${result.heroesPlayed.map((h) => `${h.playerId}=${h.heroId}`).join(', ')}`,
       );
     }
-    await this.deps.duels.applyGcResult(ctx.id, {
+    const saved = await this.deps.duels.applyGcResult(ctx.id, {
       dotaMatchId: result.matchId,
       matchOutcome: result.outcome,
       heroesPlayed: result.heroesPlayed,
     });
+    this.logger.log(
+      `Duel ${ctx.id} → ${saved.state}${saved.failReason ? ` (${saved.failReason})` : ''} match=${result.matchId ?? '?'} outcome=${result.outcome} winner=${saved.winnerId ?? 'none'} loser=${saved.loserId ?? 'none'}`,
+    );
     if (result.stats) {
+      this.logger.log(
+        `stats: duration=${result.stats.durationSeconds ?? '?'}s ${result.stats.players
+          .map(
+            (p) =>
+              `${p.playerId ?? '?'}(${p.steamId64}) side=${p.isRadiant == null ? '?' : p.isRadiant ? 'radiant' : 'dire'} win=${p.win ?? '?'} h${p.heroId ?? '?'} k${p.kills ?? '?'}/d${p.deaths ?? '?'} lh${p.lastHits ?? '?'} nw${p.netWorth ?? '?'} lvl${p.level ?? '?'}`,
+          )
+          .join(' | ')}`,
+      );
       try {
         await this.deps.duels.saveStats(ctx.id, result.stats);
+        this.logger.log(`Duel ${ctx.id}: stats saved`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.warn(`stats not saved: ${message}`);

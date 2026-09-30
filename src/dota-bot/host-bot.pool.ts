@@ -20,7 +20,10 @@ import {
   type HostBotAccount,
 } from '../duels/host-bots.service';
 import { HostBotWorker, type HostBotWorkerConfig } from './host-bot.worker';
-import { RealtimeStatsService } from './realtime-stats.service';
+import {
+  RealtimeStatsService,
+  duelParticipants,
+} from './realtime-stats.service';
 
 const CLAIM_INTERVAL_MS = 3_000;
 /** How often FAILED duels with a match id are retried against the Web API. */
@@ -276,16 +279,37 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
     this.recovering = true;
     try {
       const duels = await this.duels.findRecoverableFailedDuels();
+      if (duels.length) {
+        this.logger.log(
+          `Result recovery: ${duels.length} FAILED duel(s) with a match id — asking the Web API: ${duels.map((d) => `${d.id}→${d.dotaMatchId} (${d.failReason})`).join(', ')}`,
+        );
+      }
       for (const duel of duels) {
         if (!duel.dotaMatchId) continue;
-        const outcome = await this.stats.fetchMatchOutcome(duel.dotaMatchId);
-        if (outcome == null) continue;
-        await this.duels.applyGcResult(duel.id, {
+        const match = await this.stats.fetchMatchDetails(duel.dotaMatchId);
+        if (!match) {
+          this.logger.log(
+            `Duel ${duel.id}: Web API has no record of match ${duel.dotaMatchId} yet`,
+          );
+          continue;
+        }
+        const result = this.stats.fromWebApiMatch(
+          match,
+          duelParticipants(duel),
+        );
+        const saved = await this.duels.applyGcResult(duel.id, {
           dotaMatchId: duel.dotaMatchId,
-          matchOutcome: outcome,
+          matchOutcome: result.outcome,
+          heroesPlayed: result.heroesPlayed,
         });
+        try {
+          await this.duels.saveStats(duel.id, result.stats);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`Duel ${duel.id}: stats not saved: ${message}`);
+        }
         this.logger.log(
-          `Duel ${duel.id} recovered from the Web API: match ${duel.dotaMatchId} outcome ${outcome}`,
+          `Duel ${duel.id} recovered from the Web API: match ${duel.dotaMatchId} outcome ${result.outcome} → ${saved.state}${saved.failReason ? ` (${saved.failReason})` : ''} winner=${saved.winnerId ?? 'none'} — ${this.stats.describeWebApi(match)}`,
         );
       }
     } catch (err) {
