@@ -2,7 +2,7 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 import type { DuelStats, DuelStatsPlayer } from '../duels/duel.constants';
-import { accountIdOf } from './dota-gc.protocol';
+import { accountIdOf, type GcMatchDetails } from './dota-gc.protocol';
 
 const URL =
   'https://api.steampowered.com/IDOTA2MatchStats_570/GetRealtimeStats/v1/';
@@ -75,6 +75,40 @@ export class RealtimeStatsService {
       this.logger.warn(`GetRealtimeStats(${serverSteamId}) failed: ${message}`);
       return null;
     }
+  }
+
+  /**
+   * Per-duel summary straight from the GC's signed-out match — the most
+   * complete stats source we have, no Web API involved.
+   */
+  fromGcMatch(
+    match: NonNullable<GcMatchDetails['match']>,
+    participants: StatsParticipant[],
+  ): DuelStats {
+    const outcome = match.match_outcome ?? 0;
+    const players: DuelStatsPlayer[] = participants.map((who) => {
+      const acc = accountIdOf(who.steamId64);
+      const p = (match.players ?? []).find((x) => x.account_id === acc);
+      const isRadiant = p?.player_slot == null ? null : p.player_slot < 128;
+      return {
+        playerId: who.playerId,
+        steamId64: who.steamId64,
+        heroId: p?.hero_id ?? null,
+        kills: p?.kills ?? null,
+        deaths: p?.deaths ?? null,
+        assists: p?.assists ?? null,
+        lastHits: p?.last_hits ?? null,
+        denies: p?.denies ?? null,
+        netWorth: p?.net_worth ?? p?.gold ?? null,
+        level: p?.level ?? null,
+        isRadiant,
+        win:
+          isRadiant == null || (outcome !== 2 && outcome !== 3)
+            ? null
+            : isRadiant === (outcome === 2),
+      };
+    });
+    return { durationSeconds: match.duration ?? null, players };
   }
 
   /**

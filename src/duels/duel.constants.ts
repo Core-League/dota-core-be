@@ -146,6 +146,12 @@ export const DUEL_LOBBY_NAME_DEFAULT = 'Core League 1v1';
  */
 export const DUEL_DEFAULT_GAME_MODE = 21;
 /** After the game launched, how long a vanished lobby may stay missing before we give up on the GC. */
-export const DUEL_LOBBY_LOST_GRACE_SECONDS = 120;
+export const DUEL_LOBBY_LOST_GRACE_SECONDS = 180;
+/** The result is asked for this long after the game ended (lets the GC sign the match out). */
+export const DUEL_RESULT_DELAY_SECONDS = 5;
+/** How often the bot re-asks the GC for match details while the outcome is unknown. */
+export const DUEL_GC_DETAILS_INTERVAL_SECONDS = 10;
+/** FAILED duels with a Valve match id are retried against the Web API for this long after they finished. */
+export const DUEL_RESULT_RECOVERY_WINDOW_SECONDS = 24 * 3600;
 /** POSTGAME without `match_outcome`: wait this long for the GC to fill it in. */
-export const DUEL_POSTGAME_OUTCOME_WAIT_SECONDS = 60;
+export const DUEL_POSTGAME_OUTCOME_WAIT_SECONDS = 180;

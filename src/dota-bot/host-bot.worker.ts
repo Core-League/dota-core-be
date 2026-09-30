@@ -1,7 +1,9 @@
 import { Logger } from '@nestjs/common';
 import {
+  DUEL_GC_DETAILS_INTERVAL_SECONDS,
   DUEL_LOBBY_LOST_GRACE_SECONDS,
   DUEL_POSTGAME_OUTCOME_WAIT_SECONDS,
+  DUEL_RESULT_DELAY_SECONDS,
   DuelCancelReason,
   DuelFailReason,
   DuelState,
@@ -9,6 +11,7 @@ import {
   HostBotStatus,
   type DuelLobbyPlayer,
   type DuelLobbySide,
+  type DuelStats,
 } from '../duels/duel.constants';
 import type { Duel } from '../duels/duel.entity';
 import type { DuelsService } from '../duels/duels.service';
@@ -22,6 +25,7 @@ import {
   LobbyState,
   accountIdOf,
   type GcLobby,
+  type GcMatchDetails,
 } from './dota-gc.protocol';
 import type {
   RealtimeStatsRaw,
@@ -75,8 +79,15 @@ class DuelCtx {
   lastMatchId: string | null = null;
   /** When the lobby object disappeared after launch; null while we still see it. */
   lobbyLostAt: number | null = null;
-  /** When we first saw POSTGAME (outcome may lag behind the state). */
+  /** When we first saw the game end (outcome may lag behind the state). */
   postgameAt: number | null = null;
+  /** The lobby reached RUN after our launch — from then on any other state means the game ended. */
+  sawRun = false;
+  /** First moment we knew the game was over (lobby left RUN, or vanished after RUN). */
+  gameEndedAt: number | null = null;
+  /** GC match-details polling bookkeeping. */
+  gcDetailsAttempts = 0;
+  gcDetailsLastAt = 0;
 
   constructor(duel: Duel, joinTimeoutSeconds: number) {
     if (!duel.player1?.steamId || !duel.player2?.steamId) {
@@ -232,6 +243,7 @@ export class HostBotWorker {
     gc.on('lobbyNew', (lobby: GcLobby) => void this.onLobbyNew(lobby));
     gc.on('lobbyChanged', () => void this.safeTick());
     gc.on('lobbyRemoved', () => void this.safeTick());
+    gc.on('matchDetails', (d: GcMatchDetails) => void this.onMatchDetails(d));
     gc.on('disconnected', (eresult: number, msg?: string) => {
       this.logger.warn(
         `Steam disconnected (${eresult} ${msg ?? ''}) — steam-user will reconnect`,
@@ -438,6 +450,7 @@ export class HostBotWorker {
     }
     if (duel.state === DuelState.LIVE) {
       ctx.launched = true;
+      ctx.sawRun = true;
       ctx.gameDeadline =
         (duel.liveAt?.getTime() ?? Date.now()) +
         this.config.gameTimeoutSeconds * 1000;
@@ -514,17 +527,22 @@ export class HostBotWorker {
     const lobby = gc.lobby;
     if (!lobby) {
       if (ctx.launched && !ctx.finished) {
-        // A GC hiccup drops the SO cache for a moment; the lobby usually comes
-        // back. Only after the grace period do we try Valve's Web API for the
-        // result, and only if that has nothing do we give up.
+        // The GC drops the lobby from our cache the moment the match ends
+        // (the bot is not in the game), so "lobby gone after launch" is
+        // normally "the game just finished". The result then comes from the
+        // GC's match details: asked 5 s later, re-asked every 10 s. Only when
+        // the whole grace period yields nothing do we try the Web API once
+        // and fail the duel for the background recovery / an admin.
         if (ctx.lobbyLostAt == null) {
           ctx.lobbyLostAt = now;
+          ctx.gameEndedAt ??= now;
           this.logger.warn(
-            `Lobby vanished after launch — waiting up to ${DUEL_LOBBY_LOST_GRACE_SECONDS}s for it to come back`,
+            `Lobby vanished after launch — asking the GC for match ${ctx.lastMatchId ?? '?'} in ${DUEL_RESULT_DELAY_SECONDS}s`,
           );
           return;
         }
         if (now - ctx.lobbyLostAt < DUEL_LOBBY_LOST_GRACE_SECONDS * 1000) {
+          this.maybeRequestGcDetails(ctx, now);
           return;
         }
         if (
@@ -655,13 +673,15 @@ export class HostBotWorker {
       await this.deps.duels.saveMatchId(ctx.id, lobby.match_id);
     }
 
+    if (ctx.launched && lobby.state === LobbyState.RUN) ctx.sawRun = true;
+
     // 6) game hung
     if (
       ctx.launched &&
       !ctx.finished &&
       ctx.gameDeadline != null &&
       now > ctx.gameDeadline &&
-      lobby.state !== LobbyState.POSTGAME
+      !this.gameOver(ctx, lobby)
     ) {
       this.logger.error(
         `Game did not reach POSTGAME in time — FAILED (game_timeout)`,
@@ -671,21 +691,89 @@ export class HostBotWorker {
       return;
     }
 
-    // 7) result — POSTGAME may arrive a beat before match_outcome is filled in
-    if (ctx.launched && !ctx.finished && lobby.state === LobbyState.POSTGAME) {
+    // 7) result — the lobby shows POSTGAME briefly and then drops back to UI,
+    //    sometimes before match_outcome is filled in, so "game over" is
+    //    "RUN was seen and the state is no longer RUN", whatever it is now.
+    if (ctx.launched && !ctx.finished && this.gameOver(ctx, lobby)) {
+      ctx.gameEndedAt ??= now;
+      // Give the GC a moment to sign the match out before we record anything.
+      if (now - ctx.gameEndedAt < DUEL_RESULT_DELAY_SECONDS * 1000) return;
       const outcome = lobby.match_outcome ?? 0;
       if (outcome === 0) {
         ctx.postgameAt ??= now;
         if (now - ctx.postgameAt < DUEL_POSTGAME_OUTCOME_WAIT_SECONDS * 1000) {
+          this.maybeRequestGcDetails(ctx, now);
           return;
         }
         this.logger.warn(
-          `POSTGAME without match_outcome for ${DUEL_POSTGAME_OUTCOME_WAIT_SECONDS}s — asking the Web API`,
+          `Game over without match_outcome for ${DUEL_POSTGAME_OUTCOME_WAIT_SECONDS}s — asking the Web API`,
         );
       }
       ctx.finished = true;
-      await this.reportResult(ctx, lobby);
+      await this.reportFromLobby(ctx, lobby);
     }
+  }
+
+  /** Every 10 s after the delay: `MatchDetailsRequest` for the match we saw running. */
+  private maybeRequestGcDetails(ctx: DuelCtx, now: number): void {
+    const gc = this.gc;
+    if (!gc?.ready || !ctx.lastMatchId || ctx.gameEndedAt == null) return;
+    if (now - ctx.gameEndedAt < DUEL_RESULT_DELAY_SECONDS * 1000) return;
+    if (now - ctx.gcDetailsLastAt < DUEL_GC_DETAILS_INTERVAL_SECONDS * 1000) {
+      return;
+    }
+    ctx.gcDetailsLastAt = now;
+    ctx.gcDetailsAttempts += 1;
+    this.logger.log(
+      `MatchDetailsRequest ${ctx.lastMatchId} (attempt ${ctx.gcDetailsAttempts})`,
+    );
+    gc.requestMatchDetails(ctx.lastMatchId);
+  }
+
+  /** GC answered a match-details request: record the result if it is ours and final. */
+  private async onMatchDetails(details: GcMatchDetails): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx || ctx.finished) return;
+    const match = details.match;
+    if (!match?.match_id || match.match_id !== ctx.lastMatchId) {
+      this.logger.debug?.(
+        `match details for ${match?.match_id ?? '?'} ignored (ours: ${ctx.lastMatchId ?? '?'})`,
+      );
+      return;
+    }
+    const outcome = match.match_outcome ?? 0;
+    if (outcome !== 2 && outcome !== 3) {
+      this.logger.log(
+        `GC match ${match.match_id}: result=${details.result ?? '?'} outcome=${outcome} — not final yet`,
+      );
+      return;
+    }
+    ctx.finished = true;
+    const participants = ctx.players.map((p) => ({
+      playerId: p.playerId,
+      steamId64: p.steamId64,
+    }));
+    const heroesPlayed = (match.players ?? [])
+      .map((p) => ({
+        playerId: ctx.playerIdOf(p.account_id ?? null),
+        heroId: p.hero_id ?? 0,
+      }))
+      .filter((h): h is { playerId: string; heroId: number } => !!h.playerId);
+    this.logger.log(
+      `GC match ${match.match_id} ✅ outcome=${outcome} duration=${match.duration ?? '?'}s`,
+    );
+    await this.applyResult(ctx, {
+      matchId: match.match_id,
+      outcome,
+      heroesPlayed,
+      stats: this.deps.stats.fromGcMatch(match, participants),
+    });
+  }
+
+  /** Game finished from the GC's point of view: it ran, and the lobby is no longer running. */
+  private gameOver(ctx: DuelCtx, lobby: GcLobby): boolean {
+    if (lobby.state === LobbyState.POSTGAME) return true;
+    return ctx.sawRun && lobby.state !== LobbyState.RUN;
   }
 
   /**
@@ -735,7 +823,8 @@ export class HostBotWorker {
     await this.deps.duels.updateLobbyPlayers(ctx.id, players);
   }
 
-  private async reportResult(ctx: DuelCtx, lobby: GcLobby): Promise<void> {
+  /** The lobby itself carried the outcome (POSTGAME with match_outcome). */
+  private async reportFromLobby(ctx: DuelCtx, lobby: GcLobby): Promise<void> {
     const matchId =
       lobby.match_id && lobby.match_id !== '0'
         ? lobby.match_id
@@ -745,7 +834,6 @@ export class HostBotWorker {
       outcome = (await this.deps.stats.fetchMatchOutcome(matchId)) ?? 0;
     }
     this.logger.log(`POSTGAME ✅ match_id=${matchId} outcome=${outcome}`);
-    this.stopStatsPolling();
 
     // Heroes actually played: the lobby members carry hero_id after the pick.
     const heroesPlayed = (lobby.all_members ?? [])
@@ -754,26 +842,16 @@ export class HostBotWorker {
         heroId: m.hero_id ?? 0,
       }))
       .filter((h): h is { playerId: string; heroId: number } => !!h.playerId);
-    if (heroesPlayed.length) {
-      this.logger.log(
-        `heroes played: ${heroesPlayed.map((h) => `${h.playerId}=${h.heroId}`).join(', ')}`,
-      );
-    }
-
-    await this.deps.duels.applyGcResult(ctx.id, {
-      dotaMatchId: matchId,
-      matchOutcome: outcome,
-      heroesPlayed,
-    });
 
     // Final scoreboard: the server may live a few more seconds after the game.
+    let stats: DuelStats | null = null;
     try {
       const raw =
         (ctx.lastServerId
           ? await this.deps.stats.fetch(ctx.lastServerId)
           : null) ?? ctx.lastStats;
       if (raw) {
-        const stats = this.deps.stats.summarize(
+        stats = this.deps.stats.summarize(
           raw,
           ctx.players.map((p) => ({
             playerId: p.playerId,
@@ -783,13 +861,44 @@ export class HostBotWorker {
           ctx.radiantAcc,
           ctx.direAcc,
         );
-        await this.deps.duels.saveStats(ctx.id, stats);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`stats not saved: ${message}`);
+      this.logger.warn(`live stats not available: ${message}`);
     }
 
+    await this.applyResult(ctx, { matchId, outcome, heroesPlayed, stats });
+  }
+
+  /** Writes the result (+ stats) through DuelsService and frees the bot. */
+  private async applyResult(
+    ctx: DuelCtx,
+    result: {
+      matchId: string | null;
+      outcome: number;
+      heroesPlayed: Array<{ playerId: string; heroId: number }>;
+      stats: DuelStats | null;
+    },
+  ): Promise<void> {
+    this.stopStatsPolling();
+    if (result.heroesPlayed.length) {
+      this.logger.log(
+        `heroes played: ${result.heroesPlayed.map((h) => `${h.playerId}=${h.heroId}`).join(', ')}`,
+      );
+    }
+    await this.deps.duels.applyGcResult(ctx.id, {
+      dotaMatchId: result.matchId,
+      matchOutcome: result.outcome,
+      heroesPlayed: result.heroesPlayed,
+    });
+    if (result.stats) {
+      try {
+        await this.deps.duels.saveStats(ctx.id, result.stats);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`stats not saved: ${message}`);
+      }
+    }
     await this.finish();
   }
 

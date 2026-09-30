@@ -23,6 +23,8 @@ import { HostBotWorker, type HostBotWorkerConfig } from './host-bot.worker';
 import { RealtimeStatsService } from './realtime-stats.service';
 
 const CLAIM_INTERVAL_MS = 3_000;
+/** How often FAILED duels with a match id are retried against the Web API. */
+const RECOVER_INTERVAL_MS = 60_000;
 const RELOAD_INTERVAL_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 /** Git-ignored seed file at the repo root; `HOSTBOT_ACCOUNTS_FILE` overrides the path. */
@@ -52,6 +54,7 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
   private timers: NodeJS.Timeout[] = [];
   private claiming = false;
   private reloading = false;
+  private recovering = false;
 
   constructor(
     private readonly duels: DuelsService,
@@ -85,6 +88,7 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
       setInterval(() => void this.claim(), CLAIM_INTERVAL_MS),
       setInterval(() => void this.reload(), RELOAD_INTERVAL_MS),
       setInterval(() => void this.heartbeat(), HEARTBEAT_INTERVAL_MS),
+      setInterval(() => void this.recoverFailedResults(), RECOVER_INTERVAL_MS),
     ];
 
     if (!this.hasSecretKey()) {
@@ -261,6 +265,37 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
    * After a restart: duels that were mid-flight get re-adopted by their bot
    * (if it is still in the pool) or failed so an admin can decide.
    */
+  /**
+   * FAILED duels with a known Valve match id: ask `GetMatchDetails` again.
+   * Valve publishes lobby games a few minutes after they end, so a result
+   * the bot missed (lobby gone, POSTGAME without outcome) usually lands here
+   * on one of the next passes instead of waiting for an admin.
+   */
+  private async recoverFailedResults(): Promise<void> {
+    if (this.recovering || !this.stats.enabled) return;
+    this.recovering = true;
+    try {
+      const duels = await this.duels.findRecoverableFailedDuels();
+      for (const duel of duels) {
+        if (!duel.dotaMatchId) continue;
+        const outcome = await this.stats.fetchMatchOutcome(duel.dotaMatchId);
+        if (outcome == null) continue;
+        await this.duels.applyGcResult(duel.id, {
+          dotaMatchId: duel.dotaMatchId,
+          matchOutcome: outcome,
+        });
+        this.logger.log(
+          `Duel ${duel.id} recovered from the Web API: match ${duel.dotaMatchId} outcome ${outcome}`,
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`result recovery pass failed: ${message}`);
+    } finally {
+      this.recovering = false;
+    }
+  }
+
   private async recoverOrphans(): Promise<void> {
     const active = await this.duels.findActiveClaimedDuels();
     for (const duel of active) {

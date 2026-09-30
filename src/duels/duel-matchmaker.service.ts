@@ -109,14 +109,14 @@ export class DuelMatchmakerService {
         }
         const lobbyName =
           process.env.HOSTBOT_LOBBY_NAME?.trim() || DUEL_LOBBY_NAME_DEFAULT;
-        const region = Number(
-          process.env.HOSTBOT_REGION ?? DUEL_DEFAULT_REGION,
-        );
+        // An empty/unset HOSTBOT_REGION (the CI forwards it even when blank) means the default, not region 0.
+        const rawRegion = process.env.HOSTBOT_REGION?.trim();
+        const region = rawRegion ? Number(rawRegion) : NaN;
         const duel = await this.duelsService.createDuelFromQueue(
           a,
           b,
           lobbyName,
-          Number.isFinite(region) ? region : DUEL_DEFAULT_REGION,
+          Number.isFinite(region) && region > 0 ? region : DUEL_DEFAULT_REGION,
         );
         if (!duel) continue; // someone left the queue meanwhile
         taken.add(a.playerId);

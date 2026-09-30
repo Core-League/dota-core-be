@@ -16,6 +16,7 @@ import {
   decode,
   encode,
   type GcLobby,
+  type GcMatchDetails,
 } from './dota-gc.protocol';
 
 const HELLO_INTERVAL_MS = 5_000;
@@ -273,11 +274,27 @@ export class DotaGcClient extends EventEmitter {
         }
         return;
       }
+      case EDOTAGCMsg.MatchDetailsResponse: {
+        const details = decode<GcMatchDetails>(
+          'CMsgGCMatchDetailsResponse',
+          payload,
+        );
+        this.emit('matchDetails', details);
+        return;
+      }
       default:
         this.logger.debug?.(
           `GC message ${msgType} ignored (${payload.length} bytes)`,
         );
     }
+  }
+
+  /** Ask the GC for a finished match by id; the answer arrives as the `matchDetails` event. */
+  requestMatchDetails(matchId: string): void {
+    this.send(
+      EDOTAGCMsg.MatchDetailsRequest,
+      encode('CMsgGCMatchDetailsRequest', { match_id: matchId }),
+    );
   }
 
   private applySubscribed(

@@ -35,6 +35,8 @@ export const EDOTAGCMsg = {
   PracticeLobbySetTeamSlot: 7047,
   PracticeLobbyKick: 7081,
   InviteToLobby: 4512,
+  MatchDetailsRequest: 7095,
+  MatchDetailsResponse: 7096,
 } as const;
 
 /**
@@ -100,6 +102,39 @@ export interface GcLobby {
   game_name?: string;
 }
 
+/** One line of `CMsgDOTAMatch.players` (subset, see core_match_details.proto). */
+export interface GcMatchPlayer {
+  account_id?: number;
+  /** 0–4 Radiant, 128–132 Dire */
+  player_slot?: number;
+  hero_id?: number;
+  kills?: number;
+  deaths?: number;
+  assists?: number;
+  leaver_status?: number;
+  gold?: number;
+  last_hits?: number;
+  denies?: number;
+  level?: number;
+  net_worth?: number;
+  team_number?: number;
+}
+
+/** Decoded `k_EMsgGCMatchDetailsResponse` — the GC's signed-out match. */
+export interface GcMatchDetails {
+  result?: number;
+  match?: {
+    match_id?: string;
+    duration?: number;
+    starttime?: number;
+    players?: GcMatchPlayer[];
+    lobby_type?: number;
+    game_mode?: number;
+    /** `EMatchOutcome`: 2 Radiant, 3 Dire, 0 unknown */
+    match_outcome?: number;
+  };
+}
+
 const PROTO_DIR = join(__dirname, 'protobufs');
 
 const PROTO_FILES = [
@@ -110,6 +145,7 @@ const PROTO_FILES = [
   'dota_gcmessages_common_lobby.proto',
   'dota_gcmessages_client_match_management.proto',
   'dota_gcmessages_msgid.proto',
+  'core_match_details.proto',
 ];
 
 let cachedRoot: protobuf.Root | null = null;

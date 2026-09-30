@@ -35,6 +35,7 @@ import { DuelDto, DuelRatingDto } from './dto/duel.dto';
 import { AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
 import { DuelsService } from './duels.service';
 import { HostBotsService } from './host-bots.service';
+import { RealtimeStatsService } from '../dota-bot/realtime-stats.service';
 
 type AuthedRequest = Request & { user: { playerId: string } };
 
@@ -46,6 +47,7 @@ export class DuelsAdminController {
   constructor(
     private readonly duels: DuelsService,
     private readonly hostBots: HostBotsService,
+    private readonly stats: RealtimeStatsService,
   ) {}
 
   // ── bots (declared before ':id' routes) ──────────────────────────────────
@@ -157,6 +159,20 @@ export class DuelsAdminController {
     @Req() req: AuthedRequest,
   ): Promise<DuelDto> {
     return this.duels.adminCancel(id, req.user.playerId);
+  }
+
+  @Post(':id/recover')
+  @ApiOperation({
+    summary: 'Fetch the result of a FAILED duel from the Steam Web API',
+    description:
+      'Uses the stored Valve match id (GetMatchDetails). 409 when there is no match id or Valve has no outcome yet.',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  @ApiOkResponse({ type: DuelDto })
+  recover(@Param('id', ParseUUIDPipe) id: string): Promise<DuelDto> {
+    return this.duels.adminRecoverFromWebApi(id, (matchId) =>
+      this.stats.fetchMatchOutcome(matchId),
+    );
   }
 
   @Post(':id/resolve')

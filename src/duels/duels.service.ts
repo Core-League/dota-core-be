@@ -16,11 +16,14 @@ import {
   In,
   IsNull,
   LessThan,
+  MoreThan,
+  Not,
   Repository,
 } from 'typeorm';
 import { Player } from '../players/player.entity';
 import {
   DUEL_ACCEPT_WINDOW_SECONDS,
+  DUEL_RESULT_RECOVERY_WINDOW_SECONDS,
   DUEL_ACTIVE_STATES,
   DUEL_CANCEL_PENALTY,
   DUEL_JOIN_TIMEOUT_SECONDS,
@@ -759,7 +762,7 @@ export class DuelsService {
       if (!duel) throw new NotFoundException('Duel not found');
       if (duel.ratingAppliedAt) return duel;
 
-      duel.dotaMatchId = result.dotaMatchId;
+      duel.dotaMatchId = result.dotaMatchId ?? duel.dotaMatchId;
       duel.matchOutcome = result.matchOutcome;
 
       let winnerId =
@@ -801,7 +804,34 @@ export class DuelsService {
       }
 
       await this.applyWinLoss(em, duel, winnerId, loserId, null);
+      duel.failReason = null;
+      duel.cancelReason = null;
       return em.save(duel);
+    });
+  }
+
+  /**
+   * FAILED duels whose result may still be fetched from Valve: the lobby was
+   * lost or POSTGAME came without an outcome, but the match id is known and
+   * the game finished recently enough for `GetMatchDetails` to have it.
+   */
+  findRecoverableFailedDuels(): Promise<Duel[]> {
+    const since = new Date(
+      Date.now() - DUEL_RESULT_RECOVERY_WINDOW_SECONDS * 1000,
+    );
+    return this.duels.find({
+      where: {
+        state: DuelState.FAILED,
+        adminReviewRequired: true,
+        failReason: In([
+          DuelFailReason.LOBBY_LOST,
+          DuelFailReason.UNDETERMINED_OUTCOME,
+        ]),
+        dotaMatchId: Not(IsNull()),
+        finishedAt: MoreThan(since),
+      },
+      order: { finishedAt: 'ASC' },
+      take: 20,
     });
   }
 
@@ -1140,6 +1170,42 @@ export class DuelsService {
       `Ladder purged by admin ${adminId}: ${result.duels} duels, ${result.ratings} ratings, ${result.queue} queue entries`,
     );
     return result;
+  }
+
+  /**
+   * Admin asks Valve for the outcome of a FAILED duel right now (same path
+   * the worker retries in the background). 409 when the match id is unknown
+   * or Valve has no result yet.
+   */
+  async adminRecoverFromWebApi(
+    duelId: string,
+    fetchOutcome: (matchId: string) => Promise<number | null>,
+  ): Promise<DuelDto> {
+    const duel = await this.duels.findOne({ where: { id: duelId } });
+    if (!duel) throw new NotFoundException('Duel not found');
+    if (!duel.dotaMatchId) {
+      throw new ConflictException({
+        error: 'no_match_id',
+        message: 'У дуелі немає match id — визначте переможця вручну',
+      });
+    }
+    if (duel.ratingAppliedAt) return this.getDuel(duelId, null);
+    const outcome = await fetchOutcome(duel.dotaMatchId);
+    if (outcome == null) {
+      throw new ConflictException({
+        error: 'no_outcome_yet',
+        message:
+          'Valve ще не віддає результат цього матчу — спробуйте за кілька хвилин або визначте переможця вручну',
+      });
+    }
+    await this.applyGcResult(duelId, {
+      dotaMatchId: duel.dotaMatchId,
+      matchOutcome: outcome,
+    });
+    this.logger.log(
+      `Duel ${duelId} recovered by admin from the Web API: outcome ${outcome}`,
+    );
+    return this.getDuel(duelId, null);
   }
 
   async adminSetRating(
