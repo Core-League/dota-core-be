@@ -768,8 +768,9 @@ export class HostBotWorker {
     ctx.lastStats = raw;
     const outcome = this.deps.stats.deriveOutcome1v1(raw);
     if (outcome == null) {
+      // Dump what the server shows so a rule gap is visible in the log.
       this.logger.log(
-        'scoreboard shows no winner yet (2 kills / tier-1 tower)',
+        `scoreboard shows no winner yet: ${this.deps.stats.describe(raw)}`,
       );
       return false;
     }
@@ -827,6 +828,8 @@ export class HostBotWorker {
       this.logger.log(
         `GC match details: result=${details.result ?? '?'} match=${match?.match_id ?? 'none'} (ours: ${ctx.lastMatchId ?? '?'}) — ignored`,
       );
+      // EResult 15 = AccessDenied: the GC will never hand this match out, stop asking.
+      if (details.result === 15) ctx.gcDetailsLastAt = Number.MAX_SAFE_INTEGER;
       return;
     }
     const outcome = match.match_outcome ?? 0;

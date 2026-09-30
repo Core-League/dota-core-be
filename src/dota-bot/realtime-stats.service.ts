@@ -16,6 +16,8 @@ export interface RealtimeStatsRaw {
     match_id?: string;
     matchid?: string;
     game_time?: number;
+    /** DOTA_GameState: 5 in progress, 6 post game, 7 disconnect */
+    game_state?: number;
     game_mode?: number;
     timestamp?: number;
   };
@@ -111,6 +113,8 @@ export class RealtimeStatsService {
     if (radiantKills >= 2 && direKills < 2) return 2;
     if (direKills >= 2 && radiantKills < 2) return 3;
 
+    // Towers: a tier-1 tower down ends the game; the server keeps it flagged
+    // `destroyed` for the post-game screen.
     const lostTower = new Set<number>();
     for (const b of raw.buildings ?? []) {
       if ((b.type ?? 0) === 0 && b.destroyed && b.team != null) {
@@ -119,7 +123,35 @@ export class RealtimeStatsService {
     }
     if (lostTower.has(2) && !lostTower.has(3)) return 3;
     if (lostTower.has(3) && !lostTower.has(2)) return 2;
+
+    // The server itself says the game is over (post game / disconnect):
+    // whoever leads on kills won; a leaver or a "gg" leaves it 1–0 or 0–0.
+    const state = raw.match?.game_state ?? 0;
+    if (state >= 6) {
+      if (radiantKills > direKills) return 2;
+      if (direKills > radiantKills) return 3;
+    }
     return null;
+  }
+
+  /** One-line digest of a snapshot for the log: state, time, kills, heroes, destroyed towers. */
+  describe(raw: RealtimeStatsRaw): string {
+    const teams = (raw.teams ?? [])
+      .map((t) => {
+        const players = (t.players ?? [])
+          .map(
+            (p) =>
+              `${pick(p, 'accountid', 'account_id') ?? '?'}:h${pick(p, 'heroid', 'hero_id') ?? '?'} k${pick(p, 'kill_count', 'kills') ?? '?'}/d${pick(p, 'death_count', 'deaths') ?? '?'} nw${pick(p, 'net_worth', 'networth') ?? '?'}`,
+          )
+          .join(' ');
+        return `T${t.team_number ?? '?'} score=${t.score ?? '?'} [${players}]`;
+      })
+      .join(' | ');
+    const destroyed = (raw.buildings ?? [])
+      .filter((b) => b.destroyed)
+      .map((b) => `T${b.team}/type${b.type}/tier${b.tier}/lane${b.lane}`)
+      .join(',');
+    return `state=${raw.match?.game_state ?? '?'} t=${raw.match?.game_time ?? '?'} ${teams} destroyed=[${destroyed}] buildings=${raw.buildings?.length ?? 0}`;
   }
 
   /**
