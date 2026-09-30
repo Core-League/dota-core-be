@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { DuelBotsStatusDto } from '../../duels/dto/duel.dto';
 import { TournamentStatus } from '../../tournaments/tournaments.model';
 import { SocialChannel, type SocialFollowersSource } from '../analytics.model';
 
@@ -140,6 +141,48 @@ export class CityBucketDto {
   players: number;
 }
 
+export class AnalyticsDuelsDto {
+  @ApiProperty({ description: 'Every 1v1 duel ever created, any state.' })
+  total: number;
+
+  @ApiProperty({
+    description:
+      'Duels that finished with a result and had the rating applied (RESOLVED).',
+  })
+  played: number;
+
+  @ApiProperty({
+    description:
+      'Duels that ended without a game: no-show, accept timeout, no free bot, admin cancel (CANCELLED).',
+  })
+  cancelled: number;
+
+  @ApiProperty({
+    description:
+      'Duels that broke mid-way and need an admin decision (FAILED).',
+  })
+  failed: number;
+
+  @ApiProperty({
+    description:
+      'Duels in progress right now: ACCEPTING, PENDING, LOBBY_CREATING, WAITING_PLAYERS or LIVE.',
+  })
+  active: number;
+
+  @ApiProperty({ description: 'Duels whose game is running right now (LIVE).' })
+  live: number;
+
+  @ApiProperty({ description: 'Players waiting in the 1v1 queue right now.' })
+  inQueue: number;
+
+  @ApiProperty({
+    type: DuelBotsStatusDto,
+    description:
+      'Host bot pool snapshot — same numbers as GET /duels/bots/status.',
+  })
+  bots: DuelBotsStatusDto;
+}
+
 export class AnalyticsOverviewDto {
   @ApiProperty({ description: 'ISO timestamp the overview was built at.' })
   generatedAt: string;
@@ -173,4 +216,7 @@ export class AnalyticsOverviewDto {
     description: 'Sorted by players, descending.',
   })
   cities: CityBucketDto[];
+
+  @ApiProperty({ type: AnalyticsDuelsDto })
+  duels: AnalyticsDuelsDto;
 }

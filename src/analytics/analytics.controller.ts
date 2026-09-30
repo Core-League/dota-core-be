@@ -55,8 +55,9 @@ export class AnalyticsController {
     description:
       'Aggregated dashboard data: social followers (live where a platform API is configured, ' +
       'otherwise the admin-entered value), totals, rank distribution, team verification split, ' +
-      'tournament participants, wantToPlay breakdown and player cities. Live follower counts ' +
-      'are cached for 10 minutes.',
+      'tournament participants, wantToPlay breakdown, player cities and the 1v1 ladder ' +
+      '(duel counts by outcome, duels in progress, queue length, host-bot pool). Live follower ' +
+      'counts are cached for 10 minutes.',
   })
   @ApiOkResponse({ type: AnalyticsOverviewDto })
   getOverview(): Promise<AnalyticsOverviewDto> {

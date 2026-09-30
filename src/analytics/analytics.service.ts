@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, MoreThan, Repository } from 'typeorm';
+import { DUEL_ACTIVE_STATES, DuelState } from '../duels/duel.constants';
+import { Duel } from '../duels/duel.entity';
+import { DuelQueueEntry } from '../duels/duel-queue.entity';
+import { HostBotsService } from '../duels/host-bots.service';
 import { Player, TournamentFormat } from '../players/player.entity';
 import {
   UK_NAMES,
@@ -15,6 +19,7 @@ import {
   SocialChannel,
 } from './analytics.model';
 import {
+  AnalyticsDuelsDto,
   AnalyticsOverviewDto,
   AnalyticsTotalsDto,
   CityBucketDto,
@@ -40,15 +45,20 @@ export class AnalyticsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(SocialChannelStat)
     private readonly socialRepo: Repository<SocialChannelStat>,
+    @InjectRepository(Duel) private readonly duelRepo: Repository<Duel>,
+    @InjectRepository(DuelQueueEntry)
+    private readonly duelQueueRepo: Repository<DuelQueueEntry>,
     private readonly socialFollowers: SocialFollowersService,
+    private readonly hostBots: HostBotsService,
   ) {}
 
   async getOverview(): Promise<AnalyticsOverviewDto> {
-    const [players, teams, tournaments, socials] = await Promise.all([
+    const [players, teams, tournaments, socials, duels] = await Promise.all([
       this.loadPlayers(),
       this.loadTeams(),
       this.loadTournaments(),
       this.loadSocials(),
+      this.loadDuels(),
     ]);
 
     const totals: AnalyticsTotalsDto = {
@@ -71,6 +81,7 @@ export class AnalyticsService {
       tournaments,
       wantToPlay: this.bucketWantToPlay(players),
       cities: this.bucketCities(players),
+      duels,
     };
   }
 
@@ -144,6 +155,41 @@ export class AnalyticsService {
       slots: row.slots == null ? null : Number(row.slots),
       startsAt: new Date(row.startsAt).toISOString(),
     }));
+  }
+
+  /**
+   * 1v1 ladder in numbers: one GROUP BY over `duel.state`, the queue length and
+   * the same bot-pool snapshot the public /duels/bots/status endpoint serves.
+   */
+  private async loadDuels(): Promise<AnalyticsDuelsDto> {
+    const [rows, inQueue, bots] = await Promise.all([
+      this.duelRepo
+        .createQueryBuilder('d')
+        .select('d.state', 'state')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('d.state')
+        .getRawMany<{ state: DuelState; count: string }>(),
+      this.duelQueueRepo.count(),
+      this.hostBots.publicStatus(),
+    ]);
+
+    const byState = new Map<DuelState, number>();
+    for (const row of rows) byState.set(row.state, Number(row.count));
+    const countOf = (state: DuelState) => byState.get(state) ?? 0;
+
+    let total = 0;
+    for (const count of byState.values()) total += count;
+
+    return {
+      total,
+      played: countOf(DuelState.RESOLVED),
+      cancelled: countOf(DuelState.CANCELLED),
+      failed: countOf(DuelState.FAILED),
+      active: DUEL_ACTIVE_STATES.reduce((sum, s) => sum + countOf(s), 0),
+      live: countOf(DuelState.LIVE),
+      inQueue,
+      bots,
+    };
   }
 
   private async loadSocials(): Promise<SocialChannelStatDto[]> {
