@@ -24,6 +24,7 @@ import type { Request } from 'express';
 import { AdminGuard } from '../admin/guards/admin.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
+  AdminDuelDto,
   AdminListDuelsQueryDto,
   AdminResolveDuelDto,
   AdminSetDuelRatingDto,
@@ -130,10 +131,33 @@ export class DuelsAdminController {
   // ── duels ────────────────────────────────────────────────────────────────
 
   @Get()
-  @ApiOperation({ summary: 'List duels, newest first (optional state filter)' })
-  @ApiOkResponse({ type: DuelDto, isArray: true })
-  list(@Query() query: AdminListDuelsQueryDto): Promise<DuelDto[]> {
+  @ApiOperation({
+    summary: 'List duels, newest first (optional state filter)',
+    description:
+      'Each row carries the processing bookkeeping on top of the public duel: the host bot following it, ' +
+      'the Valve lobby / server / match ids, the outcome once known and the last error.',
+  })
+  @ApiOkResponse({ type: AdminDuelDto, isArray: true })
+  list(@Query() query: AdminListDuelsQueryDto): Promise<AdminDuelDto[]> {
     return this.duels.adminList(query.state, query.limit ?? 50);
+  }
+
+  @Delete(':id')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Delete one duel',
+    description:
+      'Removes the duel row in any state. A bot still hosting it leaves the lobby on its next tick and its ' +
+      'Discord voice channel is deleted. Rating changes the duel already applied are NOT rolled back. Irreversible.',
+  })
+  @ApiParam({ name: 'id', type: String, format: 'uuid' })
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: AuthedRequest,
+  ): Promise<void> {
+    // The duel row is the only record of the voice channel — free Discord first.
+    await this.voice.deleteOne(id);
+    await this.duels.adminDelete(id, req.user.playerId);
   }
 
   @Delete()

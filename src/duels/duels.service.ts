@@ -65,7 +65,7 @@ import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
 import { HostBot } from './host-bot.entity';
 import { HostBotsService } from './host-bots.service';
-import { AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
+import { AdminDuelDto, AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
 import {
   DuelBotsStatusDto,
   DuelChallengeDto,
@@ -1566,14 +1566,62 @@ export class DuelsService {
   async adminList(
     state: DuelState | undefined,
     limit: number,
-  ): Promise<DuelDto[]> {
+  ): Promise<AdminDuelDto[]> {
     const rows = await this.duels.find({
       where: state ? { state } : {},
       relations: ['player1', 'player2'],
       order: { createdAt: 'DESC' },
       take: limit,
     });
-    return this.toDtos(rows, null);
+    const dtos = await this.toDtos(rows, null);
+    return rows.map((duel, ix) => this.toAdminDto(duel, dtos[ix]));
+  }
+
+  /** Public DTO plus the bookkeeping only an admin needs to judge a stuck duel. */
+  private toAdminDto(duel: Duel, dto: DuelDto): AdminDuelDto {
+    return {
+      ...dto,
+      hostBotId: duel.hostBotId,
+      lobbyId: duel.lobbyId,
+      serverSteamId: duel.serverSteamId,
+      matchOutcome: duel.matchOutcome,
+      ratingAppliedAt: duel.ratingAppliedAt,
+      error: duel.error,
+      resolvedByAdminId: duel.resolvedByAdminId,
+      updatedAt: duel.updatedAt,
+    };
+  }
+
+  /**
+   * Delete one duel row for good. Any state is allowed: a bot still hosting
+   * it sees the row gone on its next tick and leaves the lobby, and the bot's
+   * `currentDuelId` is cleared here so the pool view does not point at a
+   * ghost. Rating changes the duel already applied are NOT rolled back —
+   * that is what resolve / set-rating are for. Irreversible — admin only.
+   */
+  async adminDelete(duelId: string, adminId: string): Promise<void> {
+    const duel = await this.duels.findOne({ where: { id: duelId } });
+    if (!duel) throw new NotFoundException('Duel not found');
+    await this.dataSource.transaction(async (em) => {
+      await em
+        .createQueryBuilder()
+        .update(HostBot)
+        .set({ currentDuelId: null })
+        .where({ currentDuelId: duelId })
+        .execute();
+      await em
+        .createQueryBuilder()
+        .delete()
+        .from(Duel)
+        .where({ id: duelId })
+        .execute();
+    });
+    // The participants' snapshots (active duel, result banner) are stale now.
+    this.events.queueChanged();
+    this.events.botsChanged();
+    this.logger.warn(
+      `Duel #${duel.number} (${duelId}, ${duel.state}) deleted by admin ${adminId}`,
+    );
   }
 
   /**

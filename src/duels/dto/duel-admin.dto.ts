@@ -1,4 +1,64 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DuelDto } from './duel.dto';
+
+/**
+ * A duel as the admin panel sees it: the public `DuelDto` plus the internal
+ * bookkeeping that explains what the platform is doing with the result
+ * (which bot follows it, what Valve ids it has, the last error).
+ */
+export class AdminDuelDto extends DuelDto {
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    description:
+      '`host_bot.id` of the bot that hosts / follows the duel; null while PENDING or once the bot let go',
+  })
+  hostBotId: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Dota lobby id from the Game Coordinator',
+  })
+  lobbyId: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Game server SteamID once the match launched — the live scoreboard the result is read from',
+  })
+  serverSteamId: string | null;
+
+  @ApiPropertyOptional({
+    type: Number,
+    nullable: true,
+    description: 'Valve `EMatchOutcome` once known (2 Radiant, 3 Dire)',
+  })
+  matchOutcome: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    format: 'date-time',
+    description:
+      'When the rating change was applied; null until the result is in',
+  })
+  ratingAppliedAt: Date | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Last technical note the bot / API left on the duel',
+  })
+  error: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Admin who resolved or voided the duel by hand',
+  })
+  resolvedByAdminId: string | null;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  updatedAt: Date;
+}
 
 /** What `DELETE /admin/duels` removed. */
 export class AdminPurgeDuelsResultDto {

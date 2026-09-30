@@ -108,6 +108,20 @@ export class DuelVoiceChannelsService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Admin delete of one duel: its channel goes before the row does (otherwise
+   * nothing would remember it). False when there was no channel or Discord
+   * refused — the caller deletes the duel either way.
+   */
+  async deleteOne(duelId: string): Promise<boolean> {
+    const row = await this.duels.findOne({
+      select: { id: true, number: true, discordVoiceChannelId: true },
+      where: { id: duelId },
+    });
+    if (!row) return false;
+    return this.remove(row);
+  }
+
   /** Admin purge: every channel goes before the duels do (otherwise nothing would remember them). */
   async deleteAll(): Promise<number> {
     const rows = await this.duels.find({
