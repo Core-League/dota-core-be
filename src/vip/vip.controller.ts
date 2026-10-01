@@ -48,7 +48,7 @@ export class VipController {
   @Post('checkout')
   @HttpCode(200)
   @ApiOperation({
-    summary: 'Create the first VIP invoice (250 ₴) with card tokenization',
+    summary: 'Create the first VIP invoice (200 ₴) with card tokenization',
     description:
       'Returns the Monobank payment page. The card is saved and charged monthly until auto-renewal ' +
       'is cancelled. 409 while auto-renewal is already on.',

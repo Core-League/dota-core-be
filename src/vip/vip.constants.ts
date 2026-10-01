@@ -1,5 +1,5 @@
-/** VIP price per month, kopecks (250 ₴). */
-export const VIP_MONTHLY_PRICE_KOPECKS = 25_000;
+/** VIP price per month, kopecks (200 ₴). */
+export const VIP_MONTHLY_PRICE_KOPECKS = 20_000;
 
 /** A paid VIP period; renewals extend `vipUntil` by the same step. */
 export const VIP_PERIOD_MONTHS = 1;

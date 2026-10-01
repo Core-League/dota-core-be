@@ -62,7 +62,7 @@ const RENEWAL_BATCH = 20;
 const FAILED_INVOICE_STATUSES = new Set(['failure', 'expired', 'reversed']);
 
 /**
- * VIP status: 250 ₴ a month through Monobank acquiring, or granted by an admin.
+ * VIP status: 200 ₴ a month through Monobank acquiring, or granted by an admin.
  *
  * Payment rail (Monobank's recommendation for recurring payments):
  * 1. The first invoice is created with `saveCardData { saveCard, walletId }`;
