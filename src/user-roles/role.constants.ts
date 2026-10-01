@@ -11,6 +11,7 @@ export const Role = {
 
 export type RoleName = (typeof Role)[keyof typeof Role];
 
+/** Синхронізовано з DB constraint `CHK_user_roles_name_allowed` — нова роль потребує міграції. */
 export const ROLE_NAMES: readonly RoleName[] = [
   Role.GUEST,
   Role.PLAYER,
