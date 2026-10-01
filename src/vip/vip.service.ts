@@ -255,6 +255,15 @@ export class VipService {
     playerId: string,
     color: string | null,
   ): Promise<VipStatusDto> {
+    await this.applyFrameColor(playerId, color);
+    return this.getStatus(playerId);
+  }
+
+  /** Shared by the player's own picker and the admin override: same palette, VIP only. */
+  private async applyFrameColor(
+    playerId: string,
+    color: string | null,
+  ): Promise<Player> {
     const player = await this.findPlayer(playerId);
     if (!isVipActive(player)) {
       throw new ForbiddenException({
@@ -272,7 +281,8 @@ export class VipService {
     await this.dataSource
       .getRepository(Player)
       .update({ id: playerId }, { vipFrameColor: normalized });
-    return this.getStatus(playerId);
+    player.vipFrameColor = normalized;
+    return player;
   }
 
   // ── admin ────────────────────────────────────────────────────────────────
@@ -330,6 +340,19 @@ export class VipService {
       return row;
     });
     this.logger.log(`VIP revoked by admin ${adminId} from ${playerId}`);
+    return this.toAdminResult(player);
+  }
+
+  /** Admin sets (or resets with null) a VIP player's card frame colour. */
+  async adminSetFrameColor(
+    playerId: string,
+    color: string | null,
+    adminId: string,
+  ): Promise<AdminVipResultDto> {
+    const player = await this.applyFrameColor(playerId, color);
+    this.logger.log(
+      `VIP frame colour set by admin ${adminId} for ${playerId}: ${player.vipFrameColor ?? 'default'}`,
+    );
     return this.toAdminResult(player);
   }
 

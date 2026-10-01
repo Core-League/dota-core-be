@@ -5,6 +5,8 @@ export const Role = {
   CAPTAIN: 'Капітан',
   ADMIN: 'Адмін',
   MEDIA: 'Медіа',
+  /** Ті самі права, що й «Адмін» (`isAdminRole: true`); відрізняється лише відображенням на фронті. */
+  IT: 'ІТ',
 } as const;
 
 export type RoleName = (typeof Role)[keyof typeof Role];
@@ -15,6 +17,7 @@ export const ROLE_NAMES: readonly RoleName[] = [
   Role.CAPTAIN,
   Role.MEDIA,
   Role.ADMIN,
+  Role.IT,
 ];
 
 /** Stable IDs for system role catalog rows (`playerId` is null in DB). */
@@ -24,6 +27,7 @@ export const ROLE_CATALOG_IDS = {
   CAPTAIN: 'a30f9d64-2336-4502-beac-f1d6dcb01987',
   MEDIA: 'b21f4c8a-6d3e-4f1b-9c7a-8e5d2b1f4a6c',
   ADMIN: '5c298c1d-33ce-4465-b2df-5b783c0513f9',
+  IT: '6efbd553-5838-4bdc-bfba-49a47e5628d1',
 } as const;
 
 export const ROLE_CATALOG_DISPLAY_ORDER: readonly string[] = [
@@ -32,6 +36,7 @@ export const ROLE_CATALOG_DISPLAY_ORDER: readonly string[] = [
   ROLE_CATALOG_IDS.CAPTAIN,
   ROLE_CATALOG_IDS.MEDIA,
   ROLE_CATALOG_IDS.ADMIN,
+  ROLE_CATALOG_IDS.IT,
 ];
 
 /** Defaults for stable catalog UUIDs (used when DB row is missing or mis-linked). */
@@ -44,13 +49,15 @@ export function getSystemCatalogRoleSpec(
     [ROLE_CATALOG_IDS.CAPTAIN]: { name: Role.CAPTAIN, isAdminRole: false },
     [ROLE_CATALOG_IDS.MEDIA]: { name: Role.MEDIA, isAdminRole: false },
     [ROLE_CATALOG_IDS.ADMIN]: { name: Role.ADMIN, isAdminRole: true },
+    [ROLE_CATALOG_IDS.IT]: { name: Role.IT, isAdminRole: true },
   };
   return table[id];
 }
 
 /**
  * Hex for UI (`#RRGGBB`), під parseHexColor на фронті.
- * Гість — нейтральний сірий, гравець — синій, капітан — золотистий, медіа — фіолетовий, адмін — контрастний акцент.
+ * Гість — нейтральний сірий, гравець — синій, капітан — золотистий, медіа — фіолетовий, адмін — контрастний акцент,
+ * ІТ — нейтральний сірий (без власного акценту).
  */
 export const ROLE_COLOR_HEX: Record<RoleName, string> = {
   [Role.GUEST]: '#64748B',
@@ -58,7 +65,15 @@ export const ROLE_COLOR_HEX: Record<RoleName, string> = {
   [Role.CAPTAIN]: '#D97706',
   [Role.MEDIA]: '#7C3AED',
   [Role.ADMIN]: '#B91C1C',
+  [Role.IT]: '#64748B',
 };
+
+/** Ролі з адмінськими правами (`isAdminRole: true`). */
+export const ADMIN_ROLE_NAMES: readonly RoleName[] = [Role.ADMIN, Role.IT];
+
+export function isAdminRoleName(name: string): boolean {
+  return (ADMIN_ROLE_NAMES as readonly string[]).includes(name);
+}
 
 export function getRoleColorByName(name: string): string | null {
   if (!(ROLE_NAMES as readonly string[]).includes(name)) {

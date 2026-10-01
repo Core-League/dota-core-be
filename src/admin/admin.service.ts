@@ -11,7 +11,9 @@ import { Player } from '../players/player.entity';
 import { Team } from '../teams/team.entity';
 import { UserRoles } from '../user-roles/user-roles.entity';
 import {
+  ADMIN_ROLE_NAMES,
   getRoleColorByName,
+  isAdminRoleName,
   Role,
   RoleName,
   ROLE_NAMES,
@@ -189,14 +191,12 @@ export class AdminService {
       throw new BadRequestException('Не більше одного призначення «Капітан»');
     }
 
-    const adminRows = items.filter((r) => r.isAdminRole);
-    if (adminRows.length > 1) {
-      throw new BadRequestException('Не більше одного адмінського призначення');
-    }
-    for (const r of adminRows) {
-      if (r.name !== Role.ADMIN) {
+    // «Адмін» та «ІТ» мають однакові права; прапор має збігатися з назвою,
+    // інакше роль показувалась би без прав (або права — під чужою назвою).
+    for (const r of items) {
+      if (r.isAdminRole !== isAdminRoleName(r.name)) {
         throw new BadRequestException(
-          'Для isAdminRole: true очікується лише роль «Адмін»',
+          `isAdminRole: true допустимий лише для ролей ${ADMIN_ROLE_NAMES.join(' / ')}`,
         );
       }
     }

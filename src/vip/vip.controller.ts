@@ -130,4 +130,19 @@ export class VipAdminController {
   ): Promise<AdminVipResultDto> {
     return this.vip.adminRevoke(id, req.user.playerId);
   }
+
+  @Patch(':id/vip/frame-color')
+  @ApiOperation({
+    summary: "Set a VIP player's card frame colour",
+    description:
+      'Same palette and rules as the player picker (VIP only, role colours reserved). null resets.',
+  })
+  @ApiOkResponse({ type: AdminVipResultDto })
+  setFrameColor(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdateVipFrameColorDto,
+  ): Promise<AdminVipResultDto> {
+    return this.vip.adminSetFrameColor(id, body.color, req.user.playerId);
+  }
 }
