@@ -130,10 +130,12 @@ export class AdminService {
         );
       }
 
-      const hasPlayerTier = items.some(
-        (r) => !r.isAdminRole && r.name === Role.PLAYER,
+      // «Адмін» / «ІТ» верифіковані автоматично — базова роль «Гравець» їм не потрібна.
+      const isVerifiedByRoles = items.some(
+        (r) =>
+          (!r.isAdminRole && r.name === Role.PLAYER) || isAdminRoleName(r.name),
       );
-      const newVerifiedAt = hasPlayerTier
+      const newVerifiedAt = isVerifiedByRoles
         ? (player.verifiedAt ?? new Date())
         : null;
       await manager
@@ -251,6 +253,16 @@ export class AdminService {
       await this.rolesRepo.save(adminRole);
     }
 
+    // Адмін верифікований автоматично.
+    if (!player.verifiedAt) {
+      await this.dataSource
+        .createQueryBuilder()
+        .update(Player)
+        .set({ verifiedAt: new Date() })
+        .where('id = :playerId', { playerId })
+        .execute();
+    }
+
     const refreshed = await this.findPlayerWithRoles(playerId);
     await this.authService.syncPlayerGuildRoles(refreshed);
 
@@ -300,7 +312,9 @@ export class AdminService {
     tier.name = name;
     await this.rolesRepo.save(tier);
 
-    if (name === Role.PLAYER || name === Role.GUEST) {
+    // «Гість» знімає верифікацію, але не з адміна / ІТ — вони верифіковані автоматично.
+    const hasAdminRole = player.roles.some((r) => isAdminRoleName(r.name));
+    if (name === Role.PLAYER || (name === Role.GUEST && !hasAdminRole)) {
       const newVerifiedAt = name === Role.PLAYER ? new Date() : null;
       await this.dataSource
         .createQueryBuilder()
