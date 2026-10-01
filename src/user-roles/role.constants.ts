@@ -6,7 +6,7 @@ export const Role = {
   ADMIN: 'Адмін',
   MEDIA: 'Медіа',
   /** Ті самі права, що й «Адмін» (`isAdminRole: true`); відрізняється лише відображенням на фронті. */
-  IT: 'ІТ',
+  IT: 'IT',
 } as const;
 
 export type RoleName = (typeof Role)[keyof typeof Role];
@@ -57,7 +57,7 @@ export function getSystemCatalogRoleSpec(
 /**
  * Hex for UI (`#RRGGBB`), під parseHexColor на фронті.
  * Гість — нейтральний сірий, гравець — синій, капітан — золотистий, медіа — фіолетовий, адмін — контрастний акцент,
- * ІТ — нейтральний сірий (без власного акценту).
+ * IT — нейтральний сірий (без власного акценту).
  */
 export const ROLE_COLOR_HEX: Record<RoleName, string> = {
   [Role.GUEST]: '#64748B',

@@ -133,7 +133,7 @@ export class AdminService {
         );
       }
 
-      // «Адмін» / «ІТ» верифіковані автоматично — базова роль «Гравець» їм не потрібна.
+      // «Адмін» / «IT» верифіковані автоматично — базова роль «Гравець» їм не потрібна.
       const isVerifiedByRoles = items.some(
         (r) =>
           (!r.isAdminRole && r.name === Role.PLAYER) || isAdminRoleName(r.name),
@@ -196,7 +196,7 @@ export class AdminService {
       throw new BadRequestException('Не більше одного призначення «Капітан»');
     }
 
-    // «Адмін» та «ІТ» мають однакові права; прапор має збігатися з назвою,
+    // «Адмін» та «IT» мають однакові права; прапор має збігатися з назвою,
     // інакше роль показувалась би без прав (або права — під чужою назвою).
     for (const r of items) {
       if (r.isAdminRole !== isAdminRoleName(r.name)) {
@@ -321,7 +321,7 @@ export class AdminService {
       await this.rolesRepo.save(tier);
     }
 
-    // «Гість» знімає верифікацію, але не з адміна / ІТ — вони верифіковані автоматично.
+    // «Гість» знімає верифікацію, але не з адміна / IT — вони верифіковані автоматично.
     const hasAdminRole = player.roles.some((r) => isAdminRoleName(r.name));
     if (name === Role.PLAYER || (name === Role.GUEST && !hasAdminRole)) {
       const newVerifiedAt = name === Role.PLAYER ? new Date() : null;
@@ -345,7 +345,7 @@ export class AdminService {
 
   /**
    * Знімає лише «Гравець»: «Медіа» лишається; якщо базових ролей не лишилось — «Гість».
-   * verifiedAt очищається (крім адміна / ІТ — вони верифіковані автоматично).
+   * verifiedAt очищається (крім адміна / IT — вони верифіковані автоматично).
    */
   private async revokePlayerTier(playerId: string): Promise<PlayerRoleResult> {
     const player = await this.findPlayerWithRoles(playerId);
