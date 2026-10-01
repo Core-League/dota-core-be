@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module';
 import { DuelsCoreModule } from '../duels/duels-core.module';
 import { PlayersModule } from '../players/players.module';
 import { AnalyticsController } from './analytics.controller';
+import { AnalyticsInsightsService } from './analytics-insights.service';
 import { AnalyticsService } from './analytics.service';
 import { SocialChannelStat } from './social-channel-stat.entity';
 import { SocialFollowersService } from './social-followers.service';
@@ -19,6 +20,10 @@ import { SocialFollowersService } from './social-followers.service';
     DuelsCoreModule,
   ],
   controllers: [AnalyticsController],
-  providers: [AnalyticsService, SocialFollowersService],
+  providers: [
+    AnalyticsService,
+    AnalyticsInsightsService,
+    SocialFollowersService,
+  ],
 })
 export class AnalyticsModule {}
