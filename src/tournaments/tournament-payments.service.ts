@@ -1,3 +1,5 @@
+import { VIP_TOURNAMENT_DISCOUNT_PERCENT } from '../vip/vip.constants';
+import { isVipActive, vipEntryFee } from '../vip/vip.utils';
 import {
   BadRequestException,
   ForbiddenException,
@@ -88,7 +90,9 @@ export class TournamentPaymentsService {
     payment.paidAt = payment.paidAt ?? new Date();
     payment.markedByAdminId = adminPlayerId;
     if (note !== undefined) payment.note = note;
-    if (!payment.amountPaid) payment.amountPaid = tournament.entryFee ?? 0;
+    if (!payment.amountPaid) {
+      payment.amountPaid = payment.amountDue ?? tournament.entryFee ?? 0;
+    }
 
     const saved = await this.paymentRepo.save(payment);
     return {
@@ -190,6 +194,29 @@ export class TournamentPaymentsService {
         return this.toIntentDto(payment, entryFee);
       }
 
+      // VIP perk: the captain who pays gets the entry fee 10% cheaper.
+      const amountDue = vipEntryFee(entryFee, isVipActive(team.captain));
+
+      // The price changed since the open invoice was minted (the captain became
+      // VIP, or VIP lapsed): invalidate it and mint one at the right amount. If
+      // Monobank refuses, keep the old invoice rather than risk two payable ones.
+      if (
+        payment.invoiceId &&
+        payment.amountDue != null &&
+        payment.amountDue !== amountDue
+      ) {
+        try {
+          await this.acquiring.removeInvoice(payment.invoiceId);
+          payment.invoiceId = null;
+          payment.paymentPageUrl = null;
+        } catch (err) {
+          this.logger.warn(
+            `Payment ${payment.reference}: could not invalidate invoice ${payment.invoiceId} ` +
+              `to re-price it (${err instanceof Error ? err.message : String(err)}); keeping it`,
+          );
+        }
+      }
+
       // Reuse a live invoice so repeat clicks — or a second concurrent
       // request that just unblocked on the lock above — do not mint another.
       if (!payment.invoiceId || !payment.paymentPageUrl) {
@@ -202,7 +229,7 @@ export class TournamentPaymentsService {
           tournamentId,
         );
         const invoice = await this.acquiring.createInvoice({
-          amount: entryFee,
+          amount: amountDue,
           reference: payment.reference,
           destination: `Вступний внесок — ${tournament.name}`,
           redirectUrl,
@@ -214,6 +241,7 @@ export class TournamentPaymentsService {
         });
         payment.invoiceId = invoice.invoiceId;
         payment.paymentPageUrl = invoice.pageUrl;
+        payment.amountDue = amountDue;
         payment = await repo.save(payment);
       }
 
@@ -246,10 +274,14 @@ export class TournamentPaymentsService {
     payment: TournamentTeamPayment,
     entryFee: number,
   ): TournamentPaymentIntentDto {
+    const amount = payment.amountDue ?? entryFee;
     return {
       reference: payment.reference,
       status: payment.status,
-      amount: entryFee,
+      amount,
+      fullAmount: entryFee,
+      vipDiscountPercent:
+        amount < entryFee ? VIP_TOURNAMENT_DISCOUNT_PERCENT : 0,
       amountPaid: payment.amountPaid,
       pageUrl: payment.paymentPageUrl,
     };

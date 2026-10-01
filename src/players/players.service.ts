@@ -1,3 +1,4 @@
+import { toVipPublicFields } from '../vip/vip.utils';
 import {
   BadRequestException,
   ForbiddenException,
@@ -57,6 +58,7 @@ export class PlayersService {
       wantToPlay: player.wantToPlay ?? null,
       lanCities: player.lanCities ?? null,
       verifiedAt: player.verifiedAt ?? null,
+      ...toVipPublicFields(player),
       teamId: player.teamId ?? null,
       roles: (player.roles ?? []).map((r) => ({
         id: r.id,
@@ -148,6 +150,9 @@ export class PlayersService {
     const safePayload = { ...(payload as Record<string, unknown>) };
     delete safePayload['teamId'];
     delete safePayload['verifiedAt'];
+    // VIP is bought or granted by an admin; the frame colour goes through /vip/frame-color
+    delete safePayload['vipUntil'];
+    delete safePayload['vipFrameColor'];
     // Unique nullable columns must be null (not empty string) to satisfy the DB constraint
     if (safePayload['steamId'] === '') safePayload['steamId'] = null;
     if (safePayload['discordId'] === '') safePayload['discordId'] = null;

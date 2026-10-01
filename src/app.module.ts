@@ -18,6 +18,7 @@ import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { DuelsModule } from './duels/duels.module';
 import { FriendsModule } from './friends/friends.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { VipModule } from './vip/vip.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     DuelsModule,
     FriendsModule,
     NotificationsModule,
+    VipModule,
   ],
   controllers: [HealthController],
 })

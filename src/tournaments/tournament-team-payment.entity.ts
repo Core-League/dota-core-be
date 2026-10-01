@@ -51,6 +51,13 @@ export class TournamentTeamPayment {
   @Column({ type: 'int', default: 0 })
   amountPaid: number;
 
+  /**
+   * What the open invoice charges, kopecks: the entry fee, or the VIP price
+   * when the captain was VIP at invoice time. null for rows that predate it.
+   */
+  @Column({ type: 'int', nullable: true })
+  amountDue: number | null;
+
   /** Id of the matched bank transaction, once reconciled. */
   @Column({ type: 'varchar', nullable: true })
   transactionId: string | null;

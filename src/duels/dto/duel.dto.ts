@@ -387,6 +387,12 @@ export class DuelChallengesStateDto {
   @ApiProperty({ description: 'Friendly duels a player may accept per day' })
   dailyLimit: number;
 
+  @ApiProperty({
+    description:
+      'VIP: friendly duels are not limited per day (for duels with a VIP on either side)',
+  })
+  unlimited: boolean;
+
   @ApiProperty({ description: 'Points a friendly duel moves (10)' })
   ratingDelta: number;
 }

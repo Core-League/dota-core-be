@@ -11,6 +11,22 @@ export type TCreateInvoiceParams = {
   redirectUrl: string;
   webHookUrl: string;
   validitySec: number;
+  /**
+   * Tokenize the card into this merchant-side wallet (VIP auto-renewal).
+   * The token comes back as `walletData.cardToken` on the invoice status.
+   */
+  saveCardWalletId?: string;
+};
+
+/** Request body for `POST /api/merchant/wallet/payment` — a charge of a saved card token. */
+export type TWalletPaymentParams = {
+  cardToken: string;
+  /** Kopecks. */
+  amount: number;
+  reference: string;
+  destination: string;
+  webHookUrl: string;
+  redirectUrl?: string;
 };
 
 export type TCreatedInvoice = {
@@ -64,6 +80,18 @@ export const InvoiceCallbackSchema = z
     modifiedDate: z.string().optional(),
     failureReason: z.string().optional(),
     errCode: z.string().optional(),
+    walletData: z
+      .object({
+        cardToken: z.string().optional(),
+        walletId: z.string().optional(),
+        status: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    paymentInfo: z
+      .object({ maskedPan: z.string().optional() })
+      .passthrough()
+      .optional(),
   })
   .passthrough();
 
@@ -76,4 +104,23 @@ const CreateInvoiceResponseSchema = z.object({
 
 const PubkeyResponseSchema = z.object({ key: z.string().min(1) });
 
-export { CreateInvoiceResponseSchema, PubkeyResponseSchema };
+/**
+ * `POST /api/merchant/wallet/payment` answer. Permissive: only `invoiceId` is
+ * relied on — the settled status always arrives through the webhook too.
+ */
+const WalletPaymentResponseSchema = z
+  .object({
+    invoiceId: z.string().min(1),
+    status: z.string().optional(),
+    failureReason: z.string().optional(),
+    tdsUrl: z.string().optional(),
+  })
+  .passthrough();
+
+export type TWalletPaymentResult = z.infer<typeof WalletPaymentResponseSchema>;
+
+export {
+  CreateInvoiceResponseSchema,
+  PubkeyResponseSchema,
+  WalletPaymentResponseSchema,
+};

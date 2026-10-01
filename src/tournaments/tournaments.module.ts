@@ -27,6 +27,7 @@ import { TeamsModule } from '../teams/teams.module';
 import { DueloModule } from '../duelo/duelo.module';
 import { MatchParticipantsModule } from '../match-participants/match-participants.module';
 import { TournamentManualMatchesService } from './tournament-manual-matches.service';
+import { VipModule } from '../vip/vip.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { TournamentManualMatchesService } from './tournament-manual-matches.serv
     DueloModule,
     MatchParticipantsModule,
     MonobankAcquiringModule.register(),
+    VipModule,
   ],
   providers: [
     TournamentsService,

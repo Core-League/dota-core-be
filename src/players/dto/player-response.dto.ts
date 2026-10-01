@@ -1,3 +1,4 @@
+import { PlayerVipFieldsDto } from '../../vip/dto/vip.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TournamentFormat, type PlayerPosition } from '../player.entity';
 import { PlayerRankDto } from './player-rank.dto';
@@ -19,7 +20,7 @@ export class PlayerRolePublicDto {
   color: string;
 }
 
-export class PlayerResponseDto {
+export class PlayerResponseDto extends PlayerVipFieldsDto {
   @ApiProperty()
   id: string;
 

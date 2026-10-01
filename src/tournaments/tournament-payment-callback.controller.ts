@@ -17,6 +17,7 @@ import {
 } from '../connectors/monobank-acquiring/monobank-acquiring.types';
 import { TournamentPaymentsService } from './tournament-payments.service';
 import { TournamentDonationsService } from './tournament-donations.service';
+import { VipService } from '../vip/vip.service';
 
 /**
  * Receiver for Monobank acquiring invoice callbacks.
@@ -25,7 +26,8 @@ import { TournamentDonationsService } from './tournament-donations.service';
  * `tournament_donation`. Acquiring takes a `webHookUrl` per invoice, so unlike
  * the Personal API statement webhook there is no registration step and no
  * chance of pointing it at the wrong app. Entry fees and donations share this
- * one URL; the payload is attributed by invoiceId/reference, entry fees first.
+ * one URL with VIP payments; the payload is attributed by invoiceId/reference,
+ * entry fees first, then donations, then VIP.
  *
  * Answers 200 for anything it accepts — including a payload matching no known
  * payment — so Monobank stops its three retries. Only a failed signature is
@@ -42,6 +44,7 @@ export class TournamentPaymentCallbackController {
     private readonly acquiring: MonobankAcquiringService,
     private readonly payments: TournamentPaymentsService,
     private readonly donations: TournamentDonationsService,
+    private readonly vip: VipService,
   ) {}
 
   @Post('acquiring')
@@ -84,6 +87,7 @@ export class TournamentPaymentCallbackController {
   private async dispatch(payload: TInvoiceCallbackPayload): Promise<void> {
     if (await this.payments.applyInvoiceCallback(payload)) return;
     if (await this.donations.applyInvoiceCallback(payload)) return;
+    if (await this.vip.applyInvoiceCallback(payload)) return;
 
     // `error`, not `warn`: this callback settles with a 200 (Monobank will
     // not retry), so this line is the only trace that acquiring money we
@@ -91,7 +95,7 @@ export class TournamentPaymentCallbackController {
     this.logger.error(
       `Unattributable acquiring callback — status "${payload.status}" for ` +
         `reference ${payload.reference ?? '(none)'} / invoice ${payload.invoiceId} ` +
-        `matches no tournament_team_payment or tournament_donation row`,
+        `matches no tournament_team_payment, tournament_donation or vip_payment row`,
     );
   }
 }

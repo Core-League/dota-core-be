@@ -1,3 +1,4 @@
+import { toVipPublicFields } from '../vip/vip.utils';
 import {
   Injectable,
   NotFoundException,
@@ -713,6 +714,7 @@ export class TeamsService {
       wantToPlay: player.wantToPlay ?? null,
       lanCities: player.lanCities ?? null,
       verifiedAt: player.verifiedAt ?? null,
+      ...toVipPublicFields(player),
       teamId: player.teamId ?? null,
       roles: (player.roles ?? []).map((r) => ({
         id: r.id,

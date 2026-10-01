@@ -28,6 +28,7 @@ import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelsService } from './duels.service';
 import { HostBotsService } from './host-bots.service';
 import type { DuelStatusDto } from './dto/duel.dto';
+import { isVipActive } from '../vip/vip.utils';
 
 const CHALLENGE_TYPES = [NotificationType.DUEL_CHALLENGE];
 
@@ -78,6 +79,19 @@ export class DuelChallengesService {
             : 'Друг зараз у дуелі — спробуйте пізніше',
       });
     }
+  }
+
+  /**
+   * VIP perk: a friendly duel with a VIP on either side is outside the daily
+   * limit — for the VIP and for the friend they play with.
+   */
+  private async assertUnderDailyLimits(
+    me: Player,
+    friend: Player,
+  ): Promise<void> {
+    if (isVipActive(me) || isVipActive(friend)) return;
+    await this.assertUnderDailyLimit(me.id, 'you');
+    await this.assertUnderDailyLimit(friend.id, 'friend');
   }
 
   private async assertUnderDailyLimit(
@@ -141,8 +155,7 @@ export class DuelChallengesService {
     }
     await this.assertCanPlay(challenger, 'you');
     await this.assertCanPlay(target, 'friend');
-    await this.assertUnderDailyLimit(me, 'you');
-    await this.assertUnderDailyLimit(targetId, 'friend');
+    await this.assertUnderDailyLimits(challenger, target);
     await this.assertBotsOnline();
 
     const open = await this.challenges.findOne({
@@ -239,8 +252,7 @@ export class DuelChallengesService {
     this.assertPending(row);
     await this.assertCanPlay(row.challenged, 'you');
     await this.assertCanPlay(row.challenger, 'friend');
-    await this.assertUnderDailyLimit(me, 'you');
-    await this.assertUnderDailyLimit(row.challengerId, 'friend');
+    await this.assertUnderDailyLimits(row.challenged, row.challenger);
     await this.assertBotsOnline();
 
     const duelId = await this.dataSource.transaction(async (em) => {

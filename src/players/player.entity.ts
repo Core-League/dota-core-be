@@ -69,6 +69,14 @@ export class Player {
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;
 
+  /** VIP lasts while this lies in the future (paid through Monobank or granted by an admin). */
+  @Column({ type: 'timestamptz', nullable: true })
+  vipUntil: Date | null;
+
+  /** Card frame colour from `VIP_FRAME_COLORS`; shown only while VIP lasts. */
+  @Column({ type: 'varchar', length: 7, nullable: true })
+  vipFrameColor: string | null;
+
   /**
    * Team reference: internal team UUID and/or public Dotabuff/OpenDota team id string,
    * depending on deployment. Column is varchar so DB operators match string parameters.

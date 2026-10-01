@@ -16,8 +16,18 @@ export class TournamentPaymentIntentDto {
   @ApiProperty({ enum: PaymentStatus, enumName: 'PaymentStatus' })
   status: PaymentStatus;
 
-  @ApiProperty({ description: 'Entry fee owed, in kopecks.' })
+  @ApiProperty({
+    description: 'Entry fee owed, in kopecks (VIP discount already applied).',
+  })
   amount: number;
+
+  @ApiProperty({ description: 'Entry fee before any discount, in kopecks.' })
+  fullAmount: number;
+
+  @ApiProperty({
+    description: 'VIP discount applied to `amount`, percent (0 when none).',
+  })
+  vipDiscountPercent: number;
 
   @ApiProperty({ description: 'Amount paid so far, in kopecks.' })
   amountPaid: number;

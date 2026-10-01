@@ -22,6 +22,7 @@ import {
 } from 'typeorm';
 import { discordChannelUrl } from '../discord/discord-links';
 import { Player } from '../players/player.entity';
+import { isVipActive } from '../vip/vip.utils';
 import {
   DUEL_ACCEPT_WINDOW_SECONDS,
   DUEL_RESULT_RECOVERY_WINDOW_SECONDS,
@@ -295,9 +296,13 @@ export class DuelsService {
   private async challengesState(
     playerId: string,
   ): Promise<DuelChallengesStateDto> {
-    const [rows, acceptedToday] = await Promise.all([
+    const [rows, acceptedToday, me] = await Promise.all([
       this.listPendingChallenges(playerId),
       this.countAcceptedChallengesToday(playerId),
+      this.players.findOne({
+        where: { id: playerId },
+        select: { id: true, vipUntil: true },
+      }),
     ]);
     const ids = new Set<string>();
     for (const r of rows) {
@@ -317,6 +322,7 @@ export class DuelsService {
       outgoing: dtos.find((c) => c.challenger.id === playerId) ?? null,
       acceptedToday,
       dailyLimit: DUEL_CHALLENGE_DAILY_LIMIT,
+      unlimited: isVipActive(me),
       ratingDelta: DUEL_FRIEND_RATING_DELTA,
     };
   }

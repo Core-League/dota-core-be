@@ -8,6 +8,9 @@ import {
   PubkeyResponseSchema,
   type TCreatedInvoice,
   type TCreateInvoiceParams,
+  type TWalletPaymentParams,
+  type TWalletPaymentResult,
+  WalletPaymentResponseSchema,
 } from './monobank-acquiring.types';
 
 /** ISO 4217 for the hryvnia; every invoice is in UAH. */
@@ -69,10 +72,62 @@ export class MonobankAcquiringService {
           reference: params.reference,
           destination: params.destination,
         },
+        ...(params.saveCardWalletId
+          ? {
+              saveCardData: {
+                saveCard: true,
+                walletId: params.saveCardWalletId,
+              },
+            }
+          : {}),
       },
       this.authConfig(),
     );
     return CreateInvoiceResponseSchema.parse(raw);
+  }
+
+  /**
+   * Merchant-initiated charge of a tokenized card (no payer interaction), used
+   * for VIP renewals. Monobank settles it asynchronously through `webHookUrl`.
+   */
+  async walletPayment(
+    params: TWalletPaymentParams,
+  ): Promise<TWalletPaymentResult> {
+    const raw = await this.http.post<unknown>(
+      '/api/merchant/wallet/payment',
+      {
+        cardToken: params.cardToken,
+        amount: params.amount,
+        ccy: CCY_UAH,
+        initiationKind: 'merchant',
+        paymentType: 'debit',
+        webHookUrl: params.webHookUrl,
+        ...(params.redirectUrl ? { redirectUrl: params.redirectUrl } : {}),
+        merchantPaymInfo: {
+          reference: params.reference,
+          destination: params.destination,
+        },
+      },
+      this.authConfig(),
+    );
+    return WalletPaymentResponseSchema.parse(raw);
+  }
+
+  /** Invalidates an unpaid invoice so it can no longer be paid. */
+  async removeInvoice(invoiceId: string): Promise<void> {
+    await this.http.post<unknown>(
+      '/api/merchant/invoice/remove',
+      { invoiceId },
+      this.authConfig(),
+    );
+  }
+
+  /** Forgets a tokenized card (VIP auto-renewal switched off for good). */
+  async deleteCardToken(cardToken: string): Promise<void> {
+    await this.http.delete<unknown>(
+      `/api/merchant/wallet/card?cardToken=${encodeURIComponent(cardToken)}`,
+      this.authConfig(),
+    );
   }
 
   async getInvoiceStatus(invoiceId: string): Promise<unknown> {

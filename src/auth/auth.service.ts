@@ -1,3 +1,4 @@
+import { toVipPublicFields } from '../vip/vip.utils';
 import { HttpService } from '@nestjs/axios';
 import {
   ConflictException,
@@ -496,6 +497,7 @@ export class AuthService implements OnModuleInit {
       wantToPlay: player.wantToPlay ?? null,
       lanCities: player.lanCities ?? null,
       verifiedAt: player.verifiedAt ?? null,
+      ...toVipPublicFields(player),
       teamId: player.teamId ?? null,
       roles: (player.roles ?? []).map((r) => ({
         id: r.id,

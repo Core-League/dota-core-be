@@ -40,12 +40,16 @@ describe('TournamentPaymentCallbackController', () => {
     const donations = {
       applyInvoiceCallback: jest.fn().mockResolvedValue(false),
     };
+    const vip = {
+      applyInvoiceCallback: jest.fn().mockResolvedValue(false),
+    };
     const controller = new TournamentPaymentCallbackController(
       acquiring as never,
       payments as never,
       donations as never,
+      vip as never,
     );
-    return { controller, acquiring, payments, donations };
+    return { controller, acquiring, payments, donations, vip };
   };
 
   const reqWith = (
