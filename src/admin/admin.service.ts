@@ -30,7 +30,10 @@ import {
   AdminSetPlayerRolesDto,
 } from './dto/admin-set-player-roles.dto';
 
-/** Одна «базова» роль: Гість / Гравець / Медіа. Капітан — окремий рядок, не чіпаємо тут. */
+/**
+ * «Базові» ролі: Гість / Гравець / Медіа. Гравець і Медіа можуть бути разом;
+ * Гість — лише сам (означає «без базової ролі»). Капітан — окремий рядок, не чіпаємо тут.
+ */
 const PRIMARY_TIER_NAMES = new Set<RoleName>([
   Role.GUEST,
   Role.PLAYER,
@@ -182,9 +185,9 @@ export class AdminService {
 
     const nonAdmin = items.filter((r) => !r.isAdminRole);
     const tierRows = nonAdmin.filter((r) => isPrimaryTierName(r.name));
-    if (tierRows.length > 1) {
+    if (tierRows.length > 1 && tierRows.some((r) => r.name === Role.GUEST)) {
       throw new BadRequestException(
-        'Не більше одного рядка з базовою роллю (Гість / Гравець / Медіа)',
+        'Роль «Гість» не поєднується з «Гравець» / «Медіа»',
       );
     }
 
@@ -221,7 +224,7 @@ export class AdminService {
   }
 
   async unverifyPlayer(playerId: string): Promise<VerifyResult> {
-    const result = await this.setPrimaryRole(playerId, Role.GUEST);
+    const result = await this.revokePlayerTier(playerId);
     const captainTeam = await this.teamsRepo.findOne({
       where: { captain: { id: playerId }, isVerified: true },
       relations: ['captain'],
@@ -298,19 +301,25 @@ export class AdminService {
     const nonAdmin = player.roles.filter((r) => !r.isAdminRole);
     const tierRows = nonAdmin.filter((r) => isPrimaryTierName(r.name));
 
-    if (tierRows.length > 1) {
-      await this.rolesRepo.remove(tierRows.slice(1));
+    // Гість витісняє Гравця / Медіа; Гравець / Медіа витісняють лише Гостя
+    // і співіснують між собою. Дублікати тієї самої ролі теж прибираємо.
+    const keep = tierRows.find((r) => r.name === name);
+    const toRemove = tierRows.filter(
+      (r) =>
+        r !== keep &&
+        (name === Role.GUEST || r.name === Role.GUEST || r.name === name),
+    );
+    if (toRemove.length > 0) {
+      await this.rolesRepo.remove(toRemove);
     }
-
-    let tier = tierRows[0];
-    if (!tier) {
-      tier = this.rolesRepo.create({
+    if (!keep) {
+      const tier = this.rolesRepo.create({
+        name,
         isAdminRole: false,
       } as DeepPartial<UserRoles>);
       tier.player = player;
+      await this.rolesRepo.save(tier);
     }
-    tier.name = name;
-    await this.rolesRepo.save(tier);
 
     // «Гість» знімає верифікацію, але не з адміна / ІТ — вони верифіковані автоматично.
     const hasAdminRole = player.roles.some((r) => isAdminRoleName(r.name));
@@ -330,6 +339,44 @@ export class AdminService {
     return {
       playerId,
       name,
+      verifiedAt: refreshed.verifiedAt,
+    };
+  }
+
+  /**
+   * Знімає лише «Гравець»: «Медіа» лишається; якщо базових ролей не лишилось — «Гість».
+   * verifiedAt очищається (крім адміна / ІТ — вони верифіковані автоматично).
+   */
+  private async revokePlayerTier(playerId: string): Promise<PlayerRoleResult> {
+    const player = await this.findPlayerWithRoles(playerId);
+    const tierRows = player.roles.filter(
+      (r) => !r.isAdminRole && isPrimaryTierName(r.name),
+    );
+    const remaining = tierRows.filter((r) => r.name !== Role.PLAYER);
+    if (remaining.length === 0) {
+      return this.setPrimaryRole(playerId, Role.GUEST);
+    }
+
+    const playerRows = tierRows.filter((r) => r.name === Role.PLAYER);
+    if (playerRows.length > 0) {
+      await this.rolesRepo.remove(playerRows);
+    }
+    const hasAdminRole = player.roles.some((r) => isAdminRoleName(r.name));
+    if (!hasAdminRole) {
+      await this.dataSource
+        .createQueryBuilder()
+        .update(Player)
+        .set({ verifiedAt: null })
+        .where('id = :playerId', { playerId })
+        .execute();
+    }
+
+    const refreshed = await this.findPlayerWithRoles(playerId);
+    await this.authService.syncPlayerGuildRoles(refreshed);
+
+    return {
+      playerId,
+      name: remaining[0].name as RoleName,
       verifiedAt: refreshed.verifiedAt,
     };
   }

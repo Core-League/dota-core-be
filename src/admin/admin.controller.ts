@@ -215,7 +215,7 @@ export class AdminController {
   @ApiOperation({
     summary: 'Unverify a player',
     description:
-      "Reverts the player's primary role to «Гість» and clears verifiedAt. Requires admin role.",
+      'Removes «Гравець» (keeps «Медіа»; falls back to «Гість» when no primary role is left) and clears verifiedAt. Requires admin role.',
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   unverifyPlayer(
@@ -228,7 +228,7 @@ export class AdminController {
   @ApiOperation({
     summary: "Set player's primary role (Гість/Гравець/Медіа)",
     description:
-      'Replaces the primary (non-admin) tier row. Гравець stamps verifiedAt; Гість clears verifiedAt; Медіа leaves verifiedAt unchanged. Адмін — POST/DELETE …/admin. Капітан — команди.',
+      'Adds the primary (non-admin) tier role. Гравець and Медіа can coexist and replace Гість; Гість replaces both. Гравець stamps verifiedAt; Гість clears verifiedAt; Медіа leaves verifiedAt unchanged. Адмін — POST/DELETE …/admin. Капітан — команди.',
   })
   @ApiParam({ name: 'playerId', type: String, format: 'uuid' })
   setPlayerRole(
