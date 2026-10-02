@@ -88,10 +88,49 @@ export class DuelMatchmakerService {
     return Number(rows[0]?.count ?? 0);
   }
 
+  /** Pairs within each queue separately: the ladder and every tournament. */
   private async pairPlayers(): Promise<void> {
     const entries = await this.queue.find({ order: { joinedAt: 'ASC' } });
     if (entries.length < 2) return;
 
+    const groups = new Map<string | null, DuelQueueEntry[]>();
+    for (const e of entries) {
+      const key = e.tournamentId ?? null;
+      const group = groups.get(key);
+      if (group) group.push(e);
+      else groups.set(key, [e]);
+    }
+    for (const [tournamentId, group] of groups) {
+      if (group.length < 2) continue;
+      if (tournamentId) await this.pairTournamentQueue(group);
+      else await this.pairLadderQueue(group);
+    }
+  }
+
+  /**
+   * Tournament queue: small and organised, so no rating window and no
+   * same-opponent limit — the longest waiters meet first.
+   */
+  private async pairTournamentQueue(entries: DuelQueueEntry[]): Promise<void> {
+    const { lobbyName, region } = DuelsService.lobbySettingsFromEnv();
+    const waiting = [...entries];
+    while (waiting.length >= 2) {
+      const a = waiting.shift()!;
+      const b = waiting.shift()!;
+      const duel = await this.duelsService.createDuelFromQueue(
+        a,
+        b,
+        lobbyName,
+        region,
+      );
+      if (!duel) continue; // someone left the queue meanwhile — try the next two
+      this.logger.log(
+        `Paired ${a.playerId} vs ${b.playerId} in tournament ${a.tournamentId} → duel ${duel.id}`,
+      );
+    }
+  }
+
+  private async pairLadderQueue(entries: DuelQueueEntry[]): Promise<void> {
     const now = Date.now();
     const windowOf = (e: DuelQueueEntry) =>
       DuelsService.queueWindow(

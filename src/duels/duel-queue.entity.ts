@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   OneToOne,
   PrimaryColumn,
@@ -22,9 +23,20 @@ export class DuelQueueEntry {
   @JoinColumn({ name: 'playerId' })
   player: Player;
 
-  /** 1v1 rating when the player joined — the matchmaker pairs on this. */
+  /**
+   * Rating when the player joined — the matchmaker pairs on this. The ladder
+   * rating, or the tournament rating for a tournament queue entry.
+   */
   @Column({ type: 'integer', default: 0 })
   rating: number;
+
+  /**
+   * Which queue the player waits in: null — the global ladder, otherwise a
+   * tournament; the matchmaker pairs only entries of the same queue.
+   */
+  @Index('IDX_duel_queue_tournament')
+  @Column({ type: 'uuid', nullable: true })
+  tournamentId: string | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   joinedAt: Date;

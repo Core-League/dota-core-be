@@ -27,6 +27,7 @@ import {
   DuelLeaderboardDto,
   DuelPlayerProfileDto,
   DuelStatusDto,
+  JoinDuelQueueDto,
 } from './dto/duel.dto';
 import { DuelsService } from './duels.service';
 
@@ -118,11 +119,16 @@ export class DuelsController {
     summary: 'Join the 1v1 queue',
     description:
       'Requires a linked Steam account. 409 when already in a duel, 429 during the no-show cooldown. ' +
-      'Joining while already queued simply returns the current status.',
+      'Joining while already queued simply returns the current status. With `tournamentId` the player ' +
+      'queues in that tournament instead (must have joined it; 409 once it ended); waiting in the other ' +
+      'queue moves the player over.',
   })
   @ApiOkResponse({ type: DuelStatusDto })
-  joinQueue(@Req() req: AuthedRequest): Promise<DuelStatusDto> {
-    return this.duels.joinQueue(req.user.playerId);
+  joinQueue(
+    @Body() body: JoinDuelQueueDto,
+    @Req() req: AuthedRequest,
+  ): Promise<DuelStatusDto> {
+    return this.duels.joinQueue(req.user.playerId, body?.tournamentId ?? null);
   }
 
   @Delete('queue')

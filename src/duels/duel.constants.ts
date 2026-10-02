@@ -80,6 +80,8 @@ export enum DuelCancelReason {
    * No rating change.
    */
   GAME_ABORTED = 'game_aborted',
+  /** The duel's tournament was ended before the game started. No rating change. */
+  TOURNAMENT_ENDED = 'tournament_ended',
 }
 
 /** States in which a participant may still cancel the duel themselves. */
@@ -156,7 +158,24 @@ export enum DuelKind {
   RANKED = 'ranked',
   /** Created from an accepted friend challenge: ±DUEL_FRIEND_RATING_DELTA, never re-queues anyone. */
   FRIEND = 'friend',
+  /**
+   * Paired from a tournament queue: ±DUEL_RATING_DELTA on the tournament's
+   * own table (`duel_tournament_participant`), the global ladder is untouched.
+   */
+  TOURNAMENT = 'tournament',
 }
+
+/** A password-protected tournament run by media staff / admins. */
+export enum DuelTournamentStatus {
+  /** Players may join with the password and queue. */
+  ACTIVE = 'ACTIVE',
+  /** Frozen: no joins, no queue; the leaderboard stays public. */
+  ENDED = 'ENDED',
+}
+
+/** Wrong tournament passwords a player may try per tournament within the window. */
+export const DUEL_TOURNAMENT_JOIN_MAX_ATTEMPTS = 10;
+export const DUEL_TOURNAMENT_JOIN_WINDOW_SECONDS = 10 * 60;
 
 export enum DuelChallengeStatus {
   PENDING = 'PENDING',

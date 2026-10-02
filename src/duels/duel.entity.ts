@@ -19,6 +19,7 @@ import {
   type DuelLobbyPlayer,
   type DuelStats,
 } from './duel.constants';
+import { DuelTournament } from './duel-tournament.entity';
 
 /**
  * One 1v1 Solo Mid duel: created by the matchmaker as PENDING, claimed and
@@ -40,10 +41,22 @@ export class Duel {
   @Column({ type: 'varchar', length: 24, default: DuelState.PENDING })
   state: DuelState;
 
-  /** `ranked` from the queue (±25) or `friend` from an accepted challenge (±10). */
+  /**
+   * `ranked` from the queue (±25), `friend` from an accepted challenge (±10)
+   * or `tournament` from a tournament queue (±25 on the tournament's table).
+   */
   @Index('IDX_duel_kind')
   @Column({ type: 'varchar', length: 16, default: DuelKind.RANKED })
   kind: DuelKind;
+
+  /** Tournament the duel belongs to (kind `tournament`); null for the ladder. */
+  @Index('IDX_duel_tournament')
+  @Column({ type: 'uuid', nullable: true })
+  tournamentId: string | null;
+
+  @ManyToOne(() => DuelTournament, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'tournamentId' })
+  tournament: DuelTournament | null;
 
   @Index('IDX_duel_player1')
   @Column({ type: 'uuid', nullable: true })

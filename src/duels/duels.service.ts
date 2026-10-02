@@ -52,6 +52,7 @@ import {
   DuelFailReason,
   DuelKind,
   DuelState,
+  DuelTournamentStatus,
   MATCH_OUTCOME_DIRE,
   MATCH_OUTCOME_RADIANT,
   duelRatingDeltaFor,
@@ -64,6 +65,8 @@ import { DuelEventsPublisher } from './duel-events.publisher';
 import { heroById, pickRandomHeroes } from './dota-heroes';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
+import { DuelTournament } from './duel-tournament.entity';
+import { DuelTournamentParticipant } from './duel-tournament-participant.entity';
 import { HostBot } from './host-bot.entity';
 import { HostBotsService } from './host-bots.service';
 import { AdminDuelDto, AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
@@ -91,6 +94,18 @@ export interface DuelGcResult {
   heroesPlayed?: Array<{ playerId: string; heroId: number }>;
 }
 
+/** What `toDuelDto` needs besides the duel: ratings for the player cards and tournament names. */
+interface DuelDtoLookups {
+  /** Ladder lines by player id. */
+  ratings: Map<string, DuelRating>;
+  tournaments: Map<string, DuelTournament>;
+  /** Tournament ratings by `${tournamentId}:${playerId}`. */
+  tournamentRatings: Map<string, number>;
+}
+
+/** A player's numbers on the board a duel counts for: the ladder or a tournament. */
+type DuelRatingLine = DuelRating | DuelTournamentParticipant;
+
 /**
  * The 1v1 ladder's business rules: queue membership, status for the page,
  * applying results to ratings, history and the leaderboard. Used by api-v1
@@ -111,6 +126,10 @@ export class DuelsService {
     @InjectRepository(Player) private readonly players: Repository<Player>,
     @InjectRepository(DuelChallenge)
     private readonly challenges: Repository<DuelChallenge>,
+    @InjectRepository(DuelTournament)
+    private readonly tournaments: Repository<DuelTournament>,
+    @InjectRepository(DuelTournamentParticipant)
+    private readonly participants: Repository<DuelTournamentParticipant>,
     private readonly hostBots: HostBotsService,
     /** Every write below that changes what a player sees announces itself here (→ socket pushes). */
     private readonly events: DuelEventsPublisher,
@@ -134,10 +153,8 @@ export class DuelsService {
     };
   }
 
-  private toPlayerDto(
-    player: Player | null,
-    ratings: Map<string, DuelRating>,
-  ): DuelPlayerDto | null {
+  /** Player card; `rating` is the ladder rating, or the tournament one on a tournament duel / board. */
+  toPlayerDto(player: Player | null, rating: number): DuelPlayerDto | null {
     if (!player) return null;
     return {
       id: player.id,
@@ -145,8 +162,23 @@ export class DuelsService {
       discordUsername: player.discordUsername ?? null,
       avatarUrl: player.avatarUrl ?? null,
       steamId: player.steamId ?? null,
-      rating: ratings.get(player.id)?.rating ?? 0,
+      rating,
     };
+  }
+
+  /** Rating to print on a duel's player card: the tournament line for a tournament duel. */
+  private ratingIn(
+    duel: Duel,
+    playerId: string | null,
+    lookups: DuelDtoLookups,
+  ): number {
+    if (!playerId) return 0;
+    if (duel.tournamentId) {
+      return (
+        lookups.tournamentRatings.get(`${duel.tournamentId}:${playerId}`) ?? 0
+      );
+    }
+    return lookups.ratings.get(playerId)?.rating ?? 0;
   }
 
   private toHeroDto(pick: { playerId: string; heroId: number }): DuelHeroDto {
@@ -169,9 +201,12 @@ export class DuelsService {
 
   private toDuelDto(
     duel: Duel,
-    ratings: Map<string, DuelRating>,
+    lookups: DuelDtoLookups,
     viewerId: string | null,
   ): DuelDto {
+    const tournament = duel.tournamentId
+      ? lookups.tournaments.get(duel.tournamentId)
+      : undefined;
     const isParticipant =
       viewerId != null &&
       (duel.player1Id === viewerId || duel.player2Id === viewerId);
@@ -185,6 +220,9 @@ export class DuelsService {
       number: duel.number,
       state: duel.state,
       kind: duel.kind ?? DuelKind.RANKED,
+      tournament: tournament
+        ? { id: tournament.id, name: tournament.name }
+        : null,
       createdAt: duel.createdAt,
       lobbyReadyAt: duel.lobbyReadyAt,
       liveAt: duel.liveAt,
@@ -196,8 +234,14 @@ export class DuelsService {
         : null,
       acceptDeadlineAt: duel.acceptDeadlineAt,
       acceptedPlayerIds: duel.acceptedPlayerIds ?? [],
-      player1: this.toPlayerDto(duel.player1, ratings),
-      player2: this.toPlayerDto(duel.player2, ratings),
+      player1: this.toPlayerDto(
+        duel.player1,
+        this.ratingIn(duel, duel.player1Id, lookups),
+      ),
+      player2: this.toPlayerDto(
+        duel.player2,
+        this.ratingIn(duel, duel.player2Id, lookups),
+      ),
       player1Rating: duel.player1Rating,
       player2Rating: duel.player2Rating,
       lobbyName: duel.lobbyName,
@@ -223,22 +267,47 @@ export class DuelsService {
     };
   }
 
-  private async ratingsFor(duels: Duel[]): Promise<Map<string, DuelRating>> {
-    const ids = new Set<string>();
+  /** Ladder lines, tournament lines and tournament names the duel cards need. */
+  private async lookupsFor(duels: Duel[]): Promise<DuelDtoLookups> {
+    const ladderIds = new Set<string>();
+    const tournamentIds = new Set<string>();
     for (const d of duels) {
-      if (d.player1Id) ids.add(d.player1Id);
-      if (d.player2Id) ids.add(d.player2Id);
+      if (d.tournamentId) {
+        tournamentIds.add(d.tournamentId);
+        continue;
+      }
+      if (d.player1Id) ladderIds.add(d.player1Id);
+      if (d.player2Id) ladderIds.add(d.player2Id);
     }
-    if (!ids.size) return new Map();
-    const rows = await this.ratings.find({
-      where: { playerId: In([...ids]) },
-    });
-    return new Map(rows.map((r) => [r.playerId, r]));
+    const [ratingRows, tournamentRows, lineRows] = await Promise.all([
+      ladderIds.size
+        ? this.ratings.find({ where: { playerId: In([...ladderIds]) } })
+        : Promise.resolve([] as DuelRating[]),
+      tournamentIds.size
+        ? this.tournaments.find({
+            where: { id: In([...tournamentIds]) },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([] as DuelTournament[]),
+      tournamentIds.size
+        ? this.participants.find({
+            where: { tournamentId: In([...tournamentIds]) },
+            select: { tournamentId: true, playerId: true, rating: true },
+          })
+        : Promise.resolve([] as DuelTournamentParticipant[]),
+    ]);
+    return {
+      ratings: new Map(ratingRows.map((r) => [r.playerId, r])),
+      tournaments: new Map(tournamentRows.map((t) => [t.id, t])),
+      tournamentRatings: new Map(
+        lineRows.map((l) => [`${l.tournamentId}:${l.playerId}`, l.rating]),
+      ),
+    };
   }
 
   async toDtos(duels: Duel[], viewerId: string | null): Promise<DuelDto[]> {
-    const ratings = await this.ratingsFor(duels);
-    return duels.map((d) => this.toDuelDto(d, ratings, viewerId));
+    const lookups = await this.lookupsFor(duels);
+    return duels.map((d) => this.toDuelDto(d, lookups, viewerId));
   }
 
   private toChallengeDto(
@@ -248,8 +317,14 @@ export class DuelsService {
     return {
       id: row.id,
       status: row.status,
-      challenger: this.toPlayerDto(row.challenger, ratings)!,
-      challenged: this.toPlayerDto(row.challenged, ratings)!,
+      challenger: this.toPlayerDto(
+        row.challenger,
+        ratings.get(row.challengerId)?.rating ?? 0,
+      )!,
+      challenged: this.toPlayerDto(
+        row.challenged,
+        ratings.get(row.challengedId)?.rating ?? 0,
+      )!,
       createdAt: row.createdAt,
       expiresAt: row.expiresAt,
       respondedAt: row.respondedAt,
@@ -398,6 +473,46 @@ export class DuelsService {
     return row;
   }
 
+  /**
+   * The line a duel's result is written to: the tournament's own table for a
+   * tournament duel (row created if the player somehow has none), the ladder
+   * otherwise. Tournament duels never touch `duel_rating` numbers.
+   */
+  private async ratingLine(
+    em: EntityManager,
+    duel: Pick<Duel, 'tournamentId'>,
+    playerId: string,
+  ): Promise<DuelRatingLine> {
+    const tournamentId = duel.tournamentId;
+    if (!tournamentId) return this.ensureRating(playerId, em);
+    await em
+      .createQueryBuilder()
+      .insert()
+      .into(DuelTournamentParticipant)
+      .values({ tournamentId, playerId })
+      .orIgnore()
+      .execute();
+    const row = await em.findOne(DuelTournamentParticipant, {
+      where: { tournamentId, playerId },
+    });
+    if (!row) {
+      throw new Error(
+        `duel_tournament_participant row missing for ${tournamentId}/${playerId}`,
+      );
+    }
+    return row;
+  }
+
+  /** Queue cooldown after a no-show — always on the ladder row, it gates every queue. */
+  private async setQueueCooldown(
+    em: EntityManager,
+    playerId: string,
+    cooldownUntil: Date,
+  ): Promise<void> {
+    await this.ensureRating(playerId, em);
+    await em.update(DuelRating, { playerId }, { cooldownUntil });
+  }
+
   // ── queue ────────────────────────────────────────────────────────────────
 
   static queueWindow(waitSeconds: number): number {
@@ -426,11 +541,25 @@ export class DuelsService {
     return null;
   }
 
-  async joinQueue(playerId: string): Promise<DuelStatusDto> {
+  /**
+   * Joins the ladder queue, or a tournament's queue when `tournamentId` is
+   * given (ACTIVE tournament, player already entered its password). Waiting
+   * in the other queue moves the player over.
+   */
+  async joinQueue(
+    playerId: string,
+    tournamentId: string | null = null,
+  ): Promise<DuelStatusDto> {
     const player = await this.players.findOne({ where: { id: playerId } });
     if (!player) throw new NotFoundException('Player not found');
     const rating = await this.ensureRating(playerId);
-    const queued = (await this.queue.findOne({ where: { playerId } })) != null;
+    let queueRating = rating.rating;
+    if (tournamentId) {
+      queueRating = await this.tournamentQueueRating(tournamentId, playerId);
+    }
+    const existing = await this.queue.findOne({ where: { playerId } });
+    const queued =
+      existing != null && (existing.tournamentId ?? null) === tournamentId;
     const bots = await this.hostBots.publicStatus();
     const blocked = await this.queueBlockedReason(player, rating, queued, bots);
     if (blocked === DuelQueueBlockedReason.STEAM_NOT_LINKED) {
@@ -468,13 +597,16 @@ export class DuelsService {
       return this.getStatus(playerId);
     }
     const now = new Date();
+    // Waiting in the other queue (ladder ↔ tournament): move over.
+    if (existing) await this.queue.delete({ playerId });
     await this.queue
       .createQueryBuilder()
       .insert()
       .into(DuelQueueEntry)
       .values({
         playerId,
-        rating: rating.rating,
+        rating: queueRating,
+        tournamentId,
         joinedAt: now,
         lastSeenAt: now,
       })
@@ -482,6 +614,35 @@ export class DuelsService {
       .execute();
     this.events.queueChanged();
     return this.getStatus(playerId);
+  }
+
+  /** Tournament rating to queue with; throws unless the tournament is ACTIVE and the player joined it. */
+  private async tournamentQueueRating(
+    tournamentId: string,
+    playerId: string,
+  ): Promise<number> {
+    const tournament = await this.tournaments.findOne({
+      where: { id: tournamentId },
+      select: { id: true, status: true },
+    });
+    if (!tournament) throw new NotFoundException('Турнір не знайдено');
+    if (tournament.status !== DuelTournamentStatus.ACTIVE) {
+      throw new ConflictException({
+        error: 'tournament_ended',
+        message: 'Турнір уже завершено',
+      });
+    }
+    const line = await this.participants.findOne({
+      where: { tournamentId, playerId },
+      select: { tournamentId: true, playerId: true, rating: true },
+    });
+    if (!line) {
+      throw new ForbiddenException({
+        error: 'not_tournament_participant',
+        message: 'Спершу увійдіть у турнір за паролем',
+      });
+    }
+    return line.rating;
   }
 
   async leaveQueue(playerId: string): Promise<DuelStatusDto> {
@@ -527,7 +688,8 @@ export class DuelsService {
       challenges,
     ] = await Promise.all([
       this.queue.findOne({ where: { playerId } }),
-      this.queue.count(),
+      // Top-level count is the ladder queue; a tournament queue is counted below.
+      this.queue.count({ where: { tournamentId: IsNull() } }),
       this.ratings.findOne({ where: { playerId } }),
       this.findActiveDuelForPlayer(playerId),
       this.findLastFinishedDuelForPlayer(playerId),
@@ -552,6 +714,15 @@ export class DuelsService {
           Math.floor((now.getTime() - entry.joinedAt.getTime()) / 1000),
         )
       : 0;
+    const [entryTournament, entryQueueSize] = entry?.tournamentId
+      ? await Promise.all([
+          this.tournaments.findOne({
+            where: { id: entry.tournamentId },
+            select: { id: true, name: true },
+          }),
+          this.queue.count({ where: { tournamentId: entry.tournamentId } }),
+        ])
+      : [null, playersInQueue];
 
     return {
       rating: this.toRatingDto(rating, playerId),
@@ -560,7 +731,10 @@ export class DuelsService {
             joinedAt: entry.joinedAt,
             waitSeconds,
             window: DuelsService.queueWindow(waitSeconds),
-            playersInQueue,
+            playersInQueue: entryQueueSize,
+            tournament: entryTournament
+              ? { id: entryTournament.id, name: entryTournament.name }
+              : null,
           }
         : null,
       activeDuel: activeDto,
@@ -592,17 +766,21 @@ export class DuelsService {
     return opponentId ?? '';
   }
 
-  /** −points (floor 0) and an optional queue cooldown for a player who bailed on a found match. */
+  /**
+   * −points (floor 0) on the duel's board and an optional queue cooldown for
+   * a player who bailed on a found match.
+   */
   private async applyPenalty(
     em: EntityManager,
+    duel: Duel,
     playerId: string,
     points: number,
     cooldownUntil: Date | null,
   ): Promise<void> {
-    const row = await this.ensureRating(playerId, em);
-    row.rating = Math.max(DUEL_RATING_FLOOR, row.rating - points);
-    if (cooldownUntil) row.cooldownUntil = cooldownUntil;
-    await em.save(row);
+    const line = await this.ratingLine(em, duel, playerId);
+    line.rating = Math.max(DUEL_RATING_FLOOR, line.rating - points);
+    await em.save(line);
+    if (cooldownUntil) await this.setQueueCooldown(em, playerId, cooldownUntil);
   }
 
   /**
@@ -686,6 +864,7 @@ export class DuelsService {
           );
           await this.applyPenalty(
             em,
+            duel,
             absent[0],
             DUEL_CANCEL_PENALTY,
             cooldownUntil,
@@ -732,7 +911,7 @@ export class DuelsService {
         });
       }
       const now = new Date();
-      await this.applyPenalty(em, playerId, DUEL_CANCEL_PENALTY, null);
+      await this.applyPenalty(em, duel, playerId, DUEL_CANCEL_PENALTY, null);
       duel.state = DuelState.CANCELLED;
       duel.cancelReason = DuelCancelReason.PLAYER_CANCELLED;
       duel.cancelledById = playerId;
@@ -967,8 +1146,12 @@ export class DuelsService {
         if ((removed.affected ?? 0) !== 2) {
           throw new QueueRaceError();
         }
+        // The matchmaker pairs within one queue, so both entries share it.
+        const tournamentId = p1.tournamentId ?? null;
         const duel = em.create(Duel, {
           state: DuelState.ACCEPTING,
+          kind: tournamentId ? DuelKind.TOURNAMENT : DuelKind.RANKED,
+          tournamentId,
           acceptDeadlineAt: new Date(
             Date.now() + DUEL_ACCEPT_WINDOW_SECONDS * 1000,
           ),
@@ -1001,7 +1184,8 @@ export class DuelsService {
   /**
    * Puts the duel's players back into the queue (after `no_bots_available`,
    * a cancel by the other side, …). `only` limits it to a subset. Friendly
-   * duels never came from the queue, so nobody is put there.
+   * duels never came from the queue, so nobody is put there. Tournament
+   * duels go back to their tournament's queue — only while it is ACTIVE.
    */
   async requeuePlayers(
     duel: Duel,
@@ -1009,6 +1193,14 @@ export class DuelsService {
     only?: string[],
   ): Promise<void> {
     if (duel.kind === DuelKind.FRIEND) return;
+    const tournamentId = duel.tournamentId ?? null;
+    if (tournamentId) {
+      const tournament = await em.findOne(DuelTournament, {
+        where: { id: tournamentId },
+        select: { id: true, status: true },
+      });
+      if (tournament?.status !== DuelTournamentStatus.ACTIVE) return;
+    }
     const now = new Date();
     const values = [
       duel.player1Id && {
@@ -1027,7 +1219,14 @@ export class DuelsService {
       .createQueryBuilder()
       .insert()
       .into(DuelQueueEntry)
-      .values(values.map((v) => ({ ...v, joinedAt: now, lastSeenAt: now })))
+      .values(
+        values.map((v) => ({
+          ...v,
+          tournamentId,
+          joinedAt: now,
+          lastSeenAt: now,
+        })),
+      )
       .orIgnore()
       .execute();
   }
@@ -1349,8 +1548,8 @@ export class DuelsService {
   ): Promise<void> {
     const now = new Date();
     const delta = duelRatingDeltaFor(duel.kind);
-    const winner = await this.ensureRating(winnerId, em);
-    const loser = await this.ensureRating(loserId, em);
+    const winner = await this.ratingLine(em, duel, winnerId);
+    const loser = await this.ratingLine(em, duel, loserId);
 
     winner.rating += delta;
     winner.wins += 1;
@@ -1396,10 +1595,7 @@ export class DuelsService {
         now.getTime() + DUEL_NO_SHOW_COOLDOWN_SECONDS * 1000,
       );
       for (const playerId of absentPlayerIds) {
-        const row = await this.ensureRating(playerId, em);
-        row.rating = Math.max(DUEL_RATING_FLOOR, row.rating - delta);
-        row.cooldownUntil = cooldownUntil;
-        await em.save(row);
+        await this.applyPenalty(em, duel, playerId, delta, cooldownUntil);
       }
       duel.state = DuelState.CANCELLED;
       duel.cancelReason = DuelCancelReason.PLAYERS_NO_SHOW;
@@ -1529,14 +1725,48 @@ export class DuelsService {
       .addOrderBy('r.losses', 'ASC')
       .addOrderBy('r.lastPlayedAt', 'DESC', 'NULLS LAST')
       .getMany();
-    const ratings = new Map(rows.map((r) => [r.playerId, r]));
     return {
       generatedAt: new Date(),
       players: rows.map((r, index) => {
         const played = r.wins + r.losses;
         return {
           position: index + 1,
-          player: this.toPlayerDto(r.player, ratings)!,
+          player: this.toPlayerDto(r.player, r.rating)!,
+          rating: r.rating,
+          wins: r.wins,
+          losses: r.losses,
+          winrate: played > 0 ? Math.round((r.wins * 100) / played) : null,
+          streak: r.streak,
+          lastPlayedAt: r.lastPlayedAt,
+        };
+      }),
+    };
+  }
+
+  /**
+   * A tournament's own board: every participant (also those who have not
+   * played yet — the organiser sees who is in), best rating first.
+   */
+  async getTournamentLeaderboard(
+    tournamentId: string,
+  ): Promise<DuelLeaderboardDto> {
+    const rows = await this.participants
+      .createQueryBuilder('t')
+      .innerJoinAndSelect('t.player', 'p')
+      .where('t.tournamentId = :tournamentId', { tournamentId })
+      .orderBy('t.rating', 'DESC')
+      .addOrderBy('t.wins', 'DESC')
+      .addOrderBy('t.losses', 'ASC')
+      .addOrderBy('t.lastPlayedAt', 'DESC', 'NULLS LAST')
+      .addOrderBy('t.joinedAt', 'ASC')
+      .getMany();
+    return {
+      generatedAt: new Date(),
+      players: rows.map((r, index) => {
+        const played = r.wins + r.losses;
+        return {
+          position: index + 1,
+          player: this.toPlayerDto(r.player, r.rating)!,
           rating: r.rating,
           wins: r.wins,
           losses: r.losses,

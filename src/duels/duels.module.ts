@@ -9,6 +9,8 @@ import { DuelChallengesService } from './duel-challenges.service';
 import { DuelEventsListener } from './duel-events.listener';
 import { DuelMatchmakerScheduler } from './duel-matchmaker.scheduler';
 import { DuelMatchmakerService } from './duel-matchmaker.service';
+import { DuelTournamentsController } from './duel-tournaments.controller';
+import { DuelTournamentsService } from './duel-tournaments.service';
 import { DuelVoiceChannelsService } from './duel-voice-channels.service';
 import { DuelsAdminController } from './duels-admin.controller';
 import { DuelsController } from './duels.controller';
@@ -29,8 +31,13 @@ import { DuelsGateway } from './duels.gateway';
     FriendsModule,
     NotificationsModule,
   ],
-  controllers: [DuelsController, DuelsAdminController],
+  controllers: [
+    DuelsController,
+    DuelsAdminController,
+    DuelTournamentsController,
+  ],
   providers: [
+    DuelTournamentsService,
     DuelMatchmakerService,
     DuelMatchmakerScheduler,
     DuelChallengesService,

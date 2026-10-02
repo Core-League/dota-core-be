@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsUUID } from 'class-validator';
+import { IsOptional, IsUUID } from 'class-validator';
 import {
   DuelCancelReason,
   DuelChallengeStatus,
@@ -109,6 +109,15 @@ export class DuelStatsDto {
   players: DuelStatsPlayerDto[];
 }
 
+/** Name tag of a tournament, attached to its duels and queue entries. */
+export class DuelTournamentRefDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  name: string;
+}
+
 export class DuelDto {
   @ApiProperty()
   id: string;
@@ -122,9 +131,17 @@ export class DuelDto {
   @ApiProperty({
     enum: DuelKind,
     description:
-      '`ranked` — paired from the queue (±25); `friend` — created from an accepted friend challenge (±10)',
+      '`ranked` — paired from the queue (±25); `friend` — created from an accepted friend challenge (±10); ' +
+      '`tournament` — paired from a tournament queue (±25 on the tournament table)',
   })
   kind: DuelKind;
+
+  @ApiPropertyOptional({
+    type: DuelTournamentRefDto,
+    nullable: true,
+    description: 'Tournament of a `tournament` duel; null otherwise',
+  })
+  tournament: DuelTournamentRefDto | null;
 
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt: Date;
@@ -302,9 +319,28 @@ export class DuelQueueStateDto {
   window: number;
 
   @ApiProperty({
-    description: 'Everyone currently queued, including the caller',
+    description:
+      'Everyone currently waiting in the same queue (ladder or tournament), including the caller',
   })
   playersInQueue: number;
+
+  @ApiPropertyOptional({
+    type: DuelTournamentRefDto,
+    nullable: true,
+    description:
+      'Tournament whose queue the player waits in; null for the ladder queue (no rating window there)',
+  })
+  tournament: DuelTournamentRefDto | null;
+}
+
+export class JoinDuelQueueDto {
+  @ApiPropertyOptional({
+    description:
+      'Queue of this tournament instead of the ladder (the player must have joined it with the password)',
+  })
+  @IsOptional()
+  @IsUUID()
+  tournamentId?: string;
 }
 
 export enum DuelQueueBlockedReason {
