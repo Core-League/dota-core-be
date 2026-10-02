@@ -20,6 +20,7 @@ import { FriendsModule } from './friends/friends.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { VipModule } from './vip/vip.module';
 import { ChatModule } from './chat/chat.module';
+import { RecruitmentModule } from './recruitment/recruitment.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ChatModule } from './chat/chat.module';
     NotificationsModule,
     VipModule,
     ChatModule,
+    RecruitmentModule,
   ],
   controllers: [HealthController],
 })

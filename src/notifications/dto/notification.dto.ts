@@ -20,6 +20,18 @@ export class NotificationActorDto {
   avatarUrl: string | null;
 }
 
+/** Team card of a recruitment notification. */
+export class NotificationTeamDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  logoUrl: string | null;
+}
+
 export class NotificationDto {
   @ApiProperty()
   id: string;
@@ -38,12 +50,19 @@ export class NotificationDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'friendship.id (friend_request*) or duel_challenge.id (duel_challenge*)',
+      'friendship.id (friend_request*), duel_challenge.id (duel_challenge*) or team_join_request.id (team_application*, team_invite*)',
   })
   refId: string | null;
 
   @ApiPropertyOptional({ type: NotificationActorDto, nullable: true })
   actor: NotificationActorDto | null;
+
+  @ApiPropertyOptional({
+    type: NotificationTeamDto,
+    nullable: true,
+    description: 'Team of a team_application* / team_invite* entry',
+  })
+  team: NotificationTeamDto | null;
 
   @ApiPropertyOptional({
     nullable: true,
@@ -55,7 +74,7 @@ export class NotificationDto {
     nullable: true,
     type: String,
     format: 'date-time',
-    description: 'Until when a duel challenge can be answered',
+    description: 'Until when a duel challenge / team request can be answered',
   })
   expiresAt: Date | null;
 

@@ -61,6 +61,7 @@ export class NotificationsService {
       status: row.status,
       refId: row.refId,
       actor: payload.actor ?? null,
+      team: payload.team ?? null,
       duelId: payload.duelId ?? null,
       expiresAt: payload.expiresAt ? new Date(payload.expiresAt) : null,
       readAt: row.readAt,

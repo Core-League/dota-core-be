@@ -13,6 +13,14 @@ export enum NotificationType {
   DUEL_CHALLENGE_ACCEPTED = 'duel_challenge_accepted',
   DUEL_CHALLENGE_DECLINED = 'duel_challenge_declined',
   DUEL_CHALLENGE_EXPIRED = 'duel_challenge_expired',
+  /** A player applied to the team's recruitment post (actionable, to captain + coach). */
+  TEAM_APPLICATION = 'team_application',
+  TEAM_APPLICATION_ACCEPTED = 'team_application_accepted',
+  TEAM_APPLICATION_DECLINED = 'team_application_declined',
+  /** A team invited the player (actionable). */
+  TEAM_INVITE = 'team_invite',
+  TEAM_INVITE_ACCEPTED = 'team_invite_accepted',
+  TEAM_INVITE_DECLINED = 'team_invite_declined',
 }
 
 /** Outcome of the request / challenge an actionable notification is about. */
@@ -32,8 +40,17 @@ export interface NotificationActor {
   avatarUrl: string | null;
 }
 
+/** Compact card of the team a recruitment notification is about. */
+export interface NotificationTeam {
+  id: string;
+  name: string;
+  logoUrl: string | null;
+}
+
 export interface NotificationPayload {
   actor?: NotificationActor;
+  /** Team of a `team_application*` / `team_invite*` entry. */
+  team?: NotificationTeam;
   /** Friendly duel created from an accepted challenge. */
   duelId?: string;
   /** ISO date until which a challenge can be answered. */

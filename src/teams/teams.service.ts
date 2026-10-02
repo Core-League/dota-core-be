@@ -670,35 +670,51 @@ export class TeamsService {
       throw new GoneException('Запрошення вже недійсне');
     }
 
-    if (invite.slot === 'coach') {
-      const team = await this.teamsRepo.findOneWithRoster(invite.teamId);
-      if (!team) throw new NotFoundException('Команду не знайдено');
-
-      const player = await this.dataSource.getRepository(Player).findOne({
-        where: { id: playerId },
-      });
-      if (!player) throw new NotFoundException('Гравця не знайдено');
-
-      if (team.coach !== null) {
-        throw new ConflictException('У команді вже є тренер');
-      }
-      if (player.teamId !== null) {
-        throw new ConflictException('Гравець вже є учасником іншої команди');
-      }
-
-      team.coach = player;
-      await this.teamsRepo.save(team);
-      await this.syncPlayerTeamLinks(invite.teamId);
-
-      const teamRoleId: string | null = team.discordRoleId;
-      if (teamRoleId && player.discordId) {
-        await this.discord.addMemberRole(player.discordId, teamRoleId);
-      }
-    } else {
-      await this.addPlayerToTeam(invite.teamId, playerId, invite.slot);
-    }
+    await this.addMemberToTeam(invite.teamId, playerId, invite.slot);
 
     await this.inviteRepo.remove(invite);
+  }
+
+  /** Puts a team-less player into a roster slot (invite links, recruitment requests). */
+  async addMemberToTeam(
+    teamId: string,
+    playerId: string,
+    slot: 'main' | 'reserved' | 'coach',
+  ): Promise<void> {
+    if (slot === 'coach') {
+      await this.addCoachToTeam(teamId, playerId);
+      return;
+    }
+    await this.addPlayerToTeam(teamId, playerId, slot);
+  }
+
+  private async addCoachToTeam(
+    teamId: string,
+    playerId: string,
+  ): Promise<void> {
+    const team = await this.teamsRepo.findOneWithRoster(teamId);
+    if (!team) throw new NotFoundException('Команду не знайдено');
+
+    const player = await this.dataSource.getRepository(Player).findOne({
+      where: { id: playerId },
+    });
+    if (!player) throw new NotFoundException('Гравця не знайдено');
+
+    if (team.coach !== null) {
+      throw new ConflictException('У команді вже є тренер');
+    }
+    if (player.teamId !== null) {
+      throw new ConflictException('Гравець вже є учасником іншої команди');
+    }
+
+    team.coach = player;
+    await this.teamsRepo.save(team);
+    await this.syncPlayerTeamLinks(teamId);
+
+    const teamRoleId: string | null = team.discordRoleId;
+    if (teamRoleId && player.discordId) {
+      await this.discord.addMemberRole(player.discordId, teamRoleId);
+    }
   }
 
   private mapPlayerForTeamResponse(player: Player): PlayerResponseDto {
