@@ -8,7 +8,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Player } from '../players/player.entity';
-import { DuelTournamentStatus } from './duel.constants';
+import { DuelTournamentPrize, DuelTournamentStatus } from './duel.constants';
 
 /**
  * A password-protected 1v1 tournament: created by media staff or an admin,
@@ -50,4 +50,15 @@ export class DuelTournament {
 
   @Column({ type: 'uuid', nullable: true })
   endedById: string | null;
+
+  /** Prize places, sorted by place; see {@link DuelTournamentPrize}. */
+  @Column({ type: 'jsonb', default: () => `'[]'` })
+  prizes: DuelTournamentPrize[];
+
+  /**
+   * When the prizes were settled (winners fixed, VIP granted): after the end,
+   * once none of the tournament's games is still running. Null until then.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  prizesAwardedAt: Date | null;
 }

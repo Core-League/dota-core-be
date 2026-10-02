@@ -5,10 +5,13 @@ import { AuthModule } from '../auth/auth.module';
 import { DiscordBotModule } from '../discord/discord-bot.module';
 import { FriendsModule } from '../friends/friends.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { UploadsModule } from '../uploads/uploads.module';
+import { VipModule } from '../vip/vip.module';
 import { DuelChallengesService } from './duel-challenges.service';
 import { DuelEventsListener } from './duel-events.listener';
 import { DuelMatchmakerScheduler } from './duel-matchmaker.scheduler';
 import { DuelMatchmakerService } from './duel-matchmaker.service';
+import { DuelTournamentPrizesScheduler } from './duel-tournament-prizes.scheduler';
 import { DuelTournamentsController } from './duel-tournaments.controller';
 import { DuelTournamentsService } from './duel-tournaments.service';
 import { DuelVoiceChannelsService } from './duel-voice-channels.service';
@@ -30,6 +33,8 @@ import { DuelsGateway } from './duels.gateway';
     DiscordBotModule,
     FriendsModule,
     NotificationsModule,
+    UploadsModule,
+    VipModule,
   ],
   controllers: [
     DuelsController,
@@ -38,6 +43,7 @@ import { DuelsGateway } from './duels.gateway';
   ],
   providers: [
     DuelTournamentsService,
+    DuelTournamentPrizesScheduler,
     DuelMatchmakerService,
     DuelMatchmakerScheduler,
     DuelChallengesService,

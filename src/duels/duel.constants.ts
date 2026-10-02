@@ -82,6 +82,8 @@ export enum DuelCancelReason {
   GAME_ABORTED = 'game_aborted',
   /** The duel's tournament was ended before the game started. No rating change. */
   TOURNAMENT_ENDED = 'tournament_ended',
+  /** An admin deleted the duel's tournament before the game started. No rating change. */
+  TOURNAMENT_DELETED = 'tournament_deleted',
 }
 
 /** States in which a participant may still cancel the duel themselves. */
@@ -172,6 +174,38 @@ export enum DuelTournamentStatus {
   /** Frozen: no joins, no queue; the leaderboard stays public. */
   ENDED = 'ENDED',
 }
+
+/** What a prize place of a tournament gives. */
+export enum DuelTournamentPrizeKind {
+  /** `vipMonths` of VIP, granted automatically once the tournament is over. Admins only. */
+  VIP = 'vip',
+  /** Image + link set by the organiser; handed out by the organiser. */
+  CUSTOM = 'custom',
+}
+
+/**
+ * One prize place of a tournament (`duel_tournament.prizes`, jsonb).
+ * `awardedPlayerId` is filled when the prizes are settled: the player who held
+ * the place then (null — nobody with a played game held it).
+ */
+export interface DuelTournamentPrize {
+  place: number;
+  kind: DuelTournamentPrizeKind;
+  vipMonths: number | null;
+  title: string | null;
+  imageUrl: string | null;
+  linkUrl: string | null;
+  awardedPlayerId: string | null;
+}
+
+/** Prize places per tournament. */
+export const DUEL_TOURNAMENT_PRIZES_MAX = 10;
+/** Lowest place a prize may be put on. */
+export const DUEL_TOURNAMENT_PRIZE_PLACE_MAX = 100;
+/** VIP months one prize place may give. */
+export const DUEL_TOURNAMENT_PRIZE_VIP_MONTHS_MAX = 12;
+/** How often api-v1 retries settling the prizes of ended tournaments (their last games may still run). */
+export const DUEL_TOURNAMENT_PRIZES_SWEEP_MS = 60_000;
 
 /** Wrong tournament passwords a player may try per tournament within the window. */
 export const DUEL_TOURNAMENT_JOIN_MAX_ATTEMPTS = 10;

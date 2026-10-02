@@ -476,15 +476,20 @@ export class DuelsService {
   /**
    * The line a duel's result is written to: the tournament's own table for a
    * tournament duel (row created if the player somehow has none), the ladder
-   * otherwise. Tournament duels never touch `duel_rating` numbers.
+   * otherwise. Tournament duels never touch `duel_rating` numbers: a
+   * tournament duel whose tournament an admin deleted (`tournamentId` set to
+   * null by the FK) has no line at all — null, nothing is written.
    */
   private async ratingLine(
     em: EntityManager,
-    duel: Pick<Duel, 'tournamentId'>,
+    duel: Pick<Duel, 'tournamentId' | 'kind'>,
     playerId: string,
-  ): Promise<DuelRatingLine> {
+  ): Promise<DuelRatingLine | null> {
     const tournamentId = duel.tournamentId;
-    if (!tournamentId) return this.ensureRating(playerId, em);
+    if (!tournamentId) {
+      if (duel.kind === DuelKind.TOURNAMENT) return null;
+      return this.ensureRating(playerId, em);
+    }
     await em
       .createQueryBuilder()
       .insert()
@@ -778,8 +783,10 @@ export class DuelsService {
     cooldownUntil: Date | null,
   ): Promise<void> {
     const line = await this.ratingLine(em, duel, playerId);
-    line.rating = Math.max(DUEL_RATING_FLOOR, line.rating - points);
-    await em.save(line);
+    if (line) {
+      line.rating = Math.max(DUEL_RATING_FLOOR, line.rating - points);
+      await em.save(line);
+    }
     if (cooldownUntil) await this.setQueueCooldown(em, playerId, cooldownUntil);
   }
 
@@ -1194,6 +1201,8 @@ export class DuelsService {
   ): Promise<void> {
     if (duel.kind === DuelKind.FRIEND) return;
     const tournamentId = duel.tournamentId ?? null;
+    // Its tournament was deleted — never fall through into the ladder queue.
+    if (duel.kind === DuelKind.TOURNAMENT && !tournamentId) return;
     if (tournamentId) {
       const tournament = await em.findOne(DuelTournament, {
         where: { id: tournamentId },
@@ -1547,21 +1556,24 @@ export class DuelsService {
     adminId: string | null,
   ): Promise<void> {
     const now = new Date();
-    const delta = duelRatingDeltaFor(duel.kind);
     const winner = await this.ratingLine(em, duel, winnerId);
     const loser = await this.ratingLine(em, duel, loserId);
+    // No lines: the duel's tournament was deleted — the result stands, no table changes.
+    const delta = winner && loser ? duelRatingDeltaFor(duel.kind) : 0;
 
-    winner.rating += delta;
-    winner.wins += 1;
-    winner.streak = winner.streak > 0 ? winner.streak + 1 : 1;
-    winner.lastPlayedAt = now;
+    if (winner && loser) {
+      winner.rating += delta;
+      winner.wins += 1;
+      winner.streak = winner.streak > 0 ? winner.streak + 1 : 1;
+      winner.lastPlayedAt = now;
 
-    loser.rating = Math.max(DUEL_RATING_FLOOR, loser.rating - delta);
-    loser.losses += 1;
-    loser.streak = loser.streak < 0 ? loser.streak - 1 : -1;
-    loser.lastPlayedAt = now;
+      loser.rating = Math.max(DUEL_RATING_FLOOR, loser.rating - delta);
+      loser.losses += 1;
+      loser.streak = loser.streak < 0 ? loser.streak - 1 : -1;
+      loser.lastPlayedAt = now;
 
-    await em.save([winner, loser]);
+      await em.save([winner, loser]);
+    }
 
     duel.state = DuelState.RESOLVED;
     duel.winnerId = winnerId;

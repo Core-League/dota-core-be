@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   HttpException,
@@ -9,13 +10,18 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { timingSafeEqual } from 'node:crypto';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
+import { VipService } from '../vip/vip.service';
 import {
+  DUEL_ACTIVE_STATES,
   DUEL_PLAYER_CANCELLABLE_STATES,
   DUEL_TOURNAMENT_JOIN_MAX_ATTEMPTS,
   DUEL_TOURNAMENT_JOIN_WINDOW_SECONDS,
   DuelCancelReason,
+  DuelState,
+  DuelTournamentPrize,
+  DuelTournamentPrizeKind,
   DuelTournamentStatus,
 } from './duel.constants';
 import { Duel } from './duel.entity';
@@ -29,14 +35,26 @@ import type { DuelLeaderboardDto } from './dto/duel.dto';
 import type {
   CreateDuelTournamentDto,
   DuelTournamentDto,
+  DuelTournamentPrizeInputDto,
   UpdateDuelTournamentDto,
 } from './dto/duel-tournament.dto';
 
+/** Duel states in which a tournament game may still change the tournament's table. */
+const DUEL_RUNNING_STATES: readonly DuelState[] = [
+  ...DUEL_ACTIVE_STATES,
+  DuelState.PROCESSING,
+];
+
 /**
- * Password-protected 1v1 tournaments: media staff or admins create one, hand
- * out the password, players enter it once and then queue in the tournament
- * (pairing and rating live in `DuelMatchmakerService` / `DuelsService`).
- * The organiser and any admin may rename it, change the password or end it.
+ * Password-protected 1v1 stream tournaments: streamers (media staff) or admins
+ * create one, hand out the password, players enter it once and then queue in
+ * the tournament (pairing and rating live in `DuelMatchmakerService` /
+ * `DuelsService`). The organiser and any admin may rename it, change the
+ * password or the prizes, or end it; only admins may delete it.
+ *
+ * Prize places are settled once the tournament is over — ended and none of
+ * its games still running: the holders of the places are fixed in
+ * `prizes[].awardedPlayerId` and VIP places get their VIP months.
  */
 @Injectable()
 export class DuelTournamentsService {
@@ -56,6 +74,7 @@ export class DuelTournamentsService {
     private readonly ratings: Repository<DuelRating>,
     private readonly duelsService: DuelsService,
     private readonly events: DuelEventsPublisher,
+    private readonly vip: VipService,
   ) {}
 
   // ── reads ────────────────────────────────────────────────────────────────
@@ -95,16 +114,22 @@ export class DuelTournamentsService {
     actorId: string,
     body: CreateDuelTournamentDto,
   ): Promise<DuelTournamentDto> {
+    const prizes = this.normalizePrizes(
+      body.prizes ?? [],
+      [],
+      await this.isAdmin(actorId),
+    );
     const saved = await this.tournaments.save(
       this.tournaments.create({
         name: body.name.trim(),
         password: body.password.trim(),
         status: DuelTournamentStatus.ACTIVE,
         createdById: actorId,
+        prizes,
       }),
     );
     this.logger.log(
-      `Tournament "${saved.name}" (${saved.id}) created by ${actorId}`,
+      `Tournament "${saved.name}" (${saved.id}) created by ${actorId}; ${prizes.length} prize place(s)`,
     );
     return this.get(saved.id, actorId);
   }
@@ -119,6 +144,13 @@ export class DuelTournamentsService {
     this.assertActive(row);
     if (body.name != null) row.name = body.name.trim();
     if (body.password != null) row.password = body.password.trim();
+    if (body.prizes != null) {
+      row.prizes = this.normalizePrizes(
+        body.prizes,
+        row.prizes ?? [],
+        await this.isAdmin(actorId),
+      );
+    }
     await this.tournaments.save(row);
     const playerIds = await this.participantIds(id);
     // Duel cards and queue banners show the name.
@@ -129,47 +161,183 @@ export class DuelTournamentsService {
   /**
    * Freeze the tournament: no joins and no queue from now on, its queue rows
    * go away and duels that have not started yet are cancelled without any
-   * rating change. Games already launched finish and still count.
+   * rating change. Games already launched finish and still count; the prizes
+   * are settled right away when none is running, otherwise by the sweep.
    */
   async end(id: string, actorId: string): Promise<DuelTournamentDto> {
     const row = await this.findOrThrow(id);
     await this.assertManager(row, actorId);
     this.assertActive(row);
 
-    await this.dataSource.transaction(async (em) => {
-      await em.update(
-        DuelTournament,
-        { id, status: DuelTournamentStatus.ACTIVE },
-        {
-          status: DuelTournamentStatus.ENDED,
-          endedAt: new Date(),
-          endedById: actorId,
-        },
-      );
-      await em.delete(DuelQueueEntry, { tournamentId: id });
-    });
-
-    const unstarted = await this.duels.find({
-      where: {
-        tournamentId: id,
-        state: In([...DUEL_PLAYER_CANCELLABLE_STATES]),
-      },
-      select: { id: true },
-    });
-    for (const duel of unstarted) {
-      await this.duelsService.cancelDuel(
-        duel.id,
-        DuelCancelReason.TOURNAMENT_ENDED,
-        { error: 'tournament ended', cancelledById: actorId },
-      );
-    }
-
+    const cancelled = await this.closeTournament(
+      id,
+      actorId,
+      DuelCancelReason.TOURNAMENT_ENDED,
+      'tournament ended',
+    );
     this.events.queueChanged();
     this.events.playersChanged(await this.participantIds(id));
     this.logger.log(
-      `Tournament "${row.name}" (${id}) ended by ${actorId}; ${unstarted.length} unstarted duel(s) cancelled`,
+      `Tournament "${row.name}" (${id}) ended by ${actorId}; ${cancelled} unstarted duel(s) cancelled`,
     );
+    await this.settlePrizes(id);
     return this.get(id, actorId);
+  }
+
+  /**
+   * Admin only. Closes the queue, cancels the duels that have not started and
+   * deletes the tournament with its table. Games already running finish
+   * without touching any rating (their `tournamentId` turns null — see
+   * `DuelsService.ratingLine`); past duels stay in the history.
+   */
+  async remove(id: string, adminId: string): Promise<void> {
+    const row = await this.findOrThrow(id);
+    const playerIds = await this.participantIds(id);
+    const cancelled = await this.closeTournament(
+      id,
+      adminId,
+      DuelCancelReason.TOURNAMENT_DELETED,
+      'tournament deleted',
+    );
+    await this.tournaments.delete({ id });
+    this.events.queueChanged();
+    this.events.playersChanged(playerIds);
+    this.logger.warn(
+      `Tournament "${row.name}" (${id}, ${row.status}) deleted by admin ${adminId}; ` +
+        `${cancelled} unstarted duel(s) cancelled, ${playerIds.length} participant(s)`,
+    );
+  }
+
+  // ── prizes ───────────────────────────────────────────────────────────────
+
+  /** Ended tournaments whose prizes are not settled yet — retried by the sweep. */
+  async settleDuePrizes(): Promise<void> {
+    const due = await this.tournaments.find({
+      where: { status: DuelTournamentStatus.ENDED, prizesAwardedAt: IsNull() },
+      select: { id: true },
+      take: 20,
+    });
+    for (const t of due) await this.settlePrizes(t.id);
+  }
+
+  /**
+   * Fixes the winners of the prize places and grants VIP places, once the
+   * tournament is ended and none of its games may still change the table.
+   * A place goes to whoever holds it on the final table with at least one
+   * played game. Claimed with a conditional update, so it runs exactly once.
+   */
+  async settlePrizes(id: string): Promise<void> {
+    const running = await this.duels.count({
+      where: { tournamentId: id, state: In([...DUEL_RUNNING_STATES]) },
+    });
+    if (running > 0) return;
+
+    const row = await this.tournaments.findOne({ where: { id } });
+    if (row?.status !== DuelTournamentStatus.ENDED || row.prizesAwardedAt) {
+      return;
+    }
+    // Read the final table before the claim: a failed read leaves the claim for the next sweep.
+    const board = row.prizes?.length
+      ? await this.duelsService.getTournamentLeaderboard(id)
+      : null;
+
+    const claim = await this.tournaments.update(
+      { id, status: DuelTournamentStatus.ENDED, prizesAwardedAt: IsNull() },
+      { prizesAwardedAt: new Date() },
+    );
+    if (!claim.affected || !board) return;
+
+    const holderOf = new Map(
+      board.players
+        .filter((p) => p.wins + p.losses > 0)
+        .map((p) => [p.position, p.player.id]),
+    );
+
+    const prizes: DuelTournamentPrize[] = [];
+    for (const prize of row.prizes) {
+      const winnerId = holderOf.get(prize.place) ?? null;
+      prizes.push({ ...prize, awardedPlayerId: winnerId });
+      if (!winnerId || prize.kind !== DuelTournamentPrizeKind.VIP) continue;
+      try {
+        await this.vip.adminGrant(
+          winnerId,
+          { months: prize.vipMonths ?? 0 },
+          `duel-tournament:${id}`,
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `Tournament ${id}: VIP for place ${prize.place} (${winnerId}) not granted: ${message}`,
+        );
+      }
+    }
+    await this.tournaments.update({ id }, { prizes });
+    this.logger.log(
+      `Tournament "${row.name}" (${id}) prizes settled: ` +
+        prizes
+          .map((p) => `#${p.place} ${p.kind} → ${p.awardedPlayerId ?? '—'}`)
+          .join(', '),
+    );
+  }
+
+  /**
+   * Validates prize places and brings them to the stored shape: unique places,
+   * sorted, fields of the other kind dropped. VIP places are paid value, so a
+   * non-admin may neither add nor change them — only keep the ones an admin set.
+   */
+  private normalizePrizes(
+    input: DuelTournamentPrizeInputDto[],
+    current: DuelTournamentPrize[],
+    isAdmin: boolean,
+  ): DuelTournamentPrize[] {
+    const places = new Set<number>();
+    const prizes = input.map((p): DuelTournamentPrize => {
+      if (places.has(p.place)) {
+        throw new BadRequestException({
+          error: 'tournament_prize_place_duplicate',
+          message: `Приз за ${p.place} місце вказано двічі`,
+        });
+      }
+      places.add(p.place);
+      const title = p.title?.trim() || null;
+      if (p.kind === DuelTournamentPrizeKind.VIP) {
+        return {
+          place: p.place,
+          kind: p.kind,
+          vipMonths: p.vipMonths ?? null,
+          title,
+          imageUrl: null,
+          linkUrl: null,
+          awardedPlayerId: null,
+        };
+      }
+      return {
+        place: p.place,
+        kind: p.kind,
+        vipMonths: null,
+        title,
+        imageUrl: p.imageUrl?.trim() || null,
+        linkUrl: p.linkUrl?.trim() || null,
+        awardedPlayerId: null,
+      };
+    });
+    prizes.sort((a, b) => a.place - b.place);
+
+    if (!isAdmin) {
+      const vipKey = (list: DuelTournamentPrize[]) =>
+        list
+          .filter((p) => p.kind === DuelTournamentPrizeKind.VIP)
+          .map((p) => `${p.place}:${p.vipMonths}`)
+          .sort()
+          .join(',');
+      if (vipKey(prizes) !== vipKey(current)) {
+        throw new ForbiddenException({
+          error: 'tournament_prize_vip_admin_only',
+          message: 'VIP як приз може призначати лише адмін',
+        });
+      }
+    }
+    return prizes;
   }
 
   // ── players ──────────────────────────────────────────────────────────────
@@ -231,6 +399,47 @@ export class DuelTournamentsService {
     });
     if (!row) throw new NotFoundException('Турнір не знайдено');
     return row;
+  }
+
+  /**
+   * ACTIVE → ENDED (a no-op for an ended one), queue rows dropped, duels that
+   * have not started cancelled without rating change. Returns how many were
+   * cancelled. The status flip comes first so the matchmaker and the requeue
+   * path stop feeding the tournament before its duels are cancelled.
+   */
+  private async closeTournament(
+    id: string,
+    actorId: string,
+    reason: DuelCancelReason,
+    error: string,
+  ): Promise<number> {
+    await this.dataSource.transaction(async (em) => {
+      await em.update(
+        DuelTournament,
+        { id, status: DuelTournamentStatus.ACTIVE },
+        {
+          status: DuelTournamentStatus.ENDED,
+          endedAt: new Date(),
+          endedById: actorId,
+        },
+      );
+      await em.delete(DuelQueueEntry, { tournamentId: id });
+    });
+
+    const unstarted = await this.duels.find({
+      where: {
+        tournamentId: id,
+        state: In([...DUEL_PLAYER_CANCELLABLE_STATES]),
+      },
+      select: { id: true },
+    });
+    for (const duel of unstarted) {
+      await this.duelsService.cancelDuel(duel.id, reason, {
+        error,
+        cancelledById: actorId,
+      });
+    }
+    return unstarted.length;
   }
 
   private assertActive(row: DuelTournament): void {
@@ -340,6 +549,16 @@ export class DuelTournamentsService {
         joined: joined.has(row.id),
         canManage,
         password: withPassword && canManage ? row.password : null,
+        prizes: (row.prizes ?? []).map((p) => ({
+          place: p.place,
+          kind: p.kind,
+          vipMonths: p.vipMonths ?? null,
+          title: p.title ?? null,
+          imageUrl: p.imageUrl ?? null,
+          linkUrl: p.linkUrl ?? null,
+          awardedPlayerId: p.awardedPlayerId ?? null,
+        })),
+        prizesAwardedAt: row.prizesAwardedAt,
       };
     });
   }
