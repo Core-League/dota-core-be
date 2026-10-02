@@ -89,7 +89,11 @@ export class CreateTeamPostDto {
   @ArrayMinSize(1)
   @ArrayMaxSize(5)
   @ArrayUnique()
-  @IsIn(POSITIONS, { each: true })
+  // IsInt + Min/Max instead of IsIn: the swagger plugin turns IsIn into a
+  // top-level `enum`, which openapi-typescript then reads as a scalar.
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(5, { each: true })
   positions: PlayerPosition[];
 
   @ApiProperty({ minimum: 1, maximum: RECRUITMENT_PLAYERS_NEEDED_MAX })
@@ -232,8 +236,12 @@ class RecruitmentPageQueryDto {
   })
   @IsOptional()
   @Transform(toNumberList)
-  @IsIn(POSITIONS, { each: true })
-  positions?: PlayerPosition[];
+  // `number[]` + IsInt/Min/Max (not `PlayerPosition[]` + IsIn): either would make the
+  // swagger plugin emit a scalar enum and hide that the query value is a comma list.
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(5, { each: true })
+  positions?: number[];
 
   @ApiPropertyOptional({
     type: String,
