@@ -61,4 +61,8 @@ export class DuelTournament {
    */
   @Column({ type: 'timestamptz', nullable: true })
   prizesAwardedAt: Date | null;
+
+  /** Stream link (http/https) the organiser shows on the tournament page. */
+  @Column({ type: 'varchar', length: 512, nullable: true, default: null })
+  streamUrl: string | null;
 }

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -27,6 +27,14 @@ import { DuelPlayerDto } from './duel.dto';
 
 const PRIZE_TITLE_MAX = 80;
 const PRIZE_URL_MAX = 512;
+const STREAM_URL_MAX = 512;
+
+/** Trims a string; an empty one becomes null (clears the field). */
+const toNullableText = ({ value }: { value: unknown }): unknown => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
 
 /** One prize place as the tournament page and its leaderboard show it. */
 export class DuelTournamentPrizeDto {
@@ -197,6 +205,13 @@ export class DuelTournamentDto {
       'Winners fixed and VIP granted (after the end, once no game of it is running)',
   })
   prizesAwardedAt: Date | null;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    description: 'Stream link (http/https)',
+  })
+  streamUrl: string | null;
 }
 
 export class CreateDuelTournamentDto {
@@ -224,6 +239,18 @@ export class CreateDuelTournamentDto {
   @ValidateNested({ each: true })
   @Type(() => DuelTournamentPrizeInputDto)
   prizes?: DuelTournamentPrizeInputDto[];
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    maxLength: STREAM_URL_MAX,
+    description: 'Stream link (http/https)',
+  })
+  @IsOptional()
+  @Transform(toNullableText)
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @MaxLength(STREAM_URL_MAX)
+  streamUrl?: string | null;
 }
 
 export class UpdateDuelTournamentDto {
@@ -254,6 +281,18 @@ export class UpdateDuelTournamentDto {
   @ValidateNested({ each: true })
   @Type(() => DuelTournamentPrizeInputDto)
   prizes?: DuelTournamentPrizeInputDto[];
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    maxLength: STREAM_URL_MAX,
+    description: 'Stream link (http/https); null or empty string clears it',
+  })
+  @IsOptional()
+  @Transform(toNullableText)
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  @MaxLength(STREAM_URL_MAX)
+  streamUrl?: string | null;
 }
 
 export class JoinDuelTournamentDto {

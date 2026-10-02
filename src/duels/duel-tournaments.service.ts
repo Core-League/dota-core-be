@@ -126,6 +126,7 @@ export class DuelTournamentsService {
         status: DuelTournamentStatus.ACTIVE,
         createdById: actorId,
         prizes,
+        streamUrl: body.streamUrl ?? null,
       }),
     );
     this.logger.log(
@@ -144,6 +145,8 @@ export class DuelTournamentsService {
     this.assertActive(row);
     if (body.name != null) row.name = body.name.trim();
     if (body.password != null) row.password = body.password.trim();
+    // null / '' (→ null in the DTO) clears the link; absent keeps it.
+    if (body.streamUrl !== undefined) row.streamUrl = body.streamUrl;
     if (body.prizes != null) {
       row.prizes = this.normalizePrizes(
         body.prizes,
@@ -559,6 +562,7 @@ export class DuelTournamentsService {
           awardedPlayerId: p.awardedPlayerId ?? null,
         })),
         prizesAwardedAt: row.prizesAwardedAt,
+        streamUrl: row.streamUrl ?? null,
       };
     });
   }
