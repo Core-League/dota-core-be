@@ -54,6 +54,13 @@ export class ChatMessageDto {
   })
   mentions: ChatPlayerDto[];
 
+  @ApiProperty({
+    type: [String],
+    description:
+      'Ids of players tagged by `@online` (everyone connected to the public channel at send time)',
+  })
+  onlineMentionIds: string[];
+
   @ApiPropertyOptional({
     type: ChatPlayerDto,
     nullable: true,

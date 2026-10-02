@@ -18,6 +18,7 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { ChatAccessService, type ChatViewer } from './chat-access.service';
+import { ChatGateway } from './chat.gateway';
 import { ChatError, ChatService } from './chat.service';
 import {
   ChatAdminThreadDto,
@@ -54,6 +55,7 @@ export class ChatController {
   constructor(
     private readonly chat: ChatService,
     private readonly access: ChatAccessService,
+    private readonly gateway: ChatGateway,
   ) {}
 
   @Get('messages')
@@ -109,8 +111,10 @@ export class ChatController {
   @ApiOperation({
     summary: 'Find players to message or mention',
     description:
-      'Up to 10 players matching `q` (Discord name / username), excluding the caller. With ' +
-      '`channel`, only players who can read that channel.',
+      "Without `q`: up to 20 of the caller's friends and players online now (friends first). " +
+      'With `q`: up to 10 players matching it (Discord name / username) — name-prefix matches, ' +
+      'then friends, then online players first. Never the caller. With `channel`, only players ' +
+      'who can read that channel.',
   })
   @ApiOkResponse({ type: [ChatPlayerDto] })
   async searchPlayers(
@@ -120,7 +124,12 @@ export class ChatController {
     const viewer = await this.viewerOf(req.user.playerId);
     if (!viewer) return [];
     try {
-      return await this.chat.searchPlayers(viewer, query.q, query.channel);
+      return await this.chat.searchPlayers(
+        viewer,
+        query.q,
+        query.channel,
+        this.gateway.onlinePlayerIds(),
+      );
     } catch (err) {
       throw toHttpError(err);
     }

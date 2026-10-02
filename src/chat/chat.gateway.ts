@@ -24,6 +24,7 @@ import {
   CHAT_ACCESS_CACHE_MS,
   CHAT_COMMANDS,
   CHAT_EVENTS,
+  CHAT_ONLINE_MENTION_COOLDOWN_MS,
   CHAT_PRESENCE_GRACE_MS,
   CHAT_PRESENCE_WATCH_MAX,
   CHAT_PUBLIC_KINDS,
@@ -33,8 +34,10 @@ import {
   CHAT_SOCKET_NAMESPACE,
   CHAT_TYPING_THROTTLE_MS,
   ChatChannelKind,
+  hasOnlineMention,
   isPublicKind,
   isUuid,
+  parseChannelKey,
 } from './chat.constants';
 import { ChatError, ChatService, type ChatAudience } from './chat.service';
 import type { ChatMessageDto } from './dto/chat.dto';
@@ -96,6 +99,8 @@ export class ChatGateway
   private readonly watchedBy = new Map<string, Set<string>>();
   private readonly buckets = new Map<string, { tokens: number; at: number }>();
   private readonly lastTyping = new Map<string, number>();
+  /** Last `@online` of a player: one per `CHAT_ONLINE_MENTION_COOLDOWN_MS` (admins are exempt). */
+  private readonly lastOnlineMention = new Map<string, number>();
   private accessSubscription: Subscription | null = null;
 
   constructor(
@@ -198,11 +203,20 @@ export class ChatGateway
       const p = asRecord(payload);
       let message: ChatMessageDto;
       try {
+        const onlinePlayerIds = this.onlineMentionTargets(
+          viewer,
+          p.channelKey,
+          p.body,
+        );
         message = await this.chat.send(viewer, {
           channelKey: p.channelKey,
           body: p.body,
           mentions: p.mentions,
+          onlinePlayerIds,
         });
+        if (viewer && onlinePlayerIds) {
+          this.lastOnlineMention.set(viewer.playerId, Date.now());
+        }
       } catch (err) {
         // Only delivered messages count toward the limit; a rejected one (too long, no access) is refunded.
         if (viewer) this.refundToken(viewer.playerId);
@@ -322,6 +336,16 @@ export class ChatGateway
   }
 
   // ── pushes used by other providers ───────────────────────────────────────
+
+  /** Logged-in players with the site open (incl. the short reconnect grace). */
+  onlinePlayerIds(): string[] {
+    return [
+      ...new Set([
+        ...this.socketsByPlayer.keys(),
+        ...this.offlineTimers.keys(),
+      ]),
+    ];
+  }
 
   /** After the retention purge: clients drop loaded public messages older than `before`. */
   broadcastPurge(before: Date): void {
@@ -493,6 +517,44 @@ export class ChatGateway
     this.watchedBy.delete(socketId);
   }
 
+  // ── @online ──────────────────────────────────────────────────────────────
+
+  /**
+   * Players `@online` tags: every logged-in socket in the public channel's room
+   * (the room already holds exactly who may read it). `undefined` when the
+   * message does not use the command; throws while the author's cooldown runs.
+   */
+  private onlineMentionTargets(
+    viewer: ChatViewer | null,
+    rawChannel: unknown,
+    body: unknown,
+  ): string[] | undefined {
+    const channel = parseChannelKey(rawChannel);
+    if (!viewer || !channel || !isPublicKind(channel.kind)) return undefined;
+    if (typeof body !== 'string' || !hasOnlineMention(body)) return undefined;
+
+    const last = this.lastOnlineMention.get(viewer.playerId) ?? 0;
+    const waitMs = last + CHAT_ONLINE_MENTION_COOLDOWN_MS - Date.now();
+    if (!viewer.isAdmin && waitMs > 0) {
+      throw new ChatError(
+        'rate_limited',
+        `@online можна використати раз на ${CHAT_ONLINE_MENTION_COOLDOWN_MS / 60_000} хв — ще ${Math.ceil(waitMs / 60_000)} хв`,
+      );
+    }
+
+    const ids = new Set<string>();
+    for (const socketId of this.server.adapter.rooms.get(
+      CHAT_PUBLIC_ROOM[channel.kind],
+    ) ?? []) {
+      const socket = this.server.sockets.get(socketId) as
+        | ChatSocket
+        | undefined;
+      const playerId = socket?.data.playerId;
+      if (playerId && playerId !== viewer.playerId) ids.add(playerId);
+    }
+    return [...ids];
+  }
+
   // ── helpers ──────────────────────────────────────────────────────────────
 
   /** Token bucket: `burst` messages at once, refilled at `refillPerSecond`. */
@@ -522,6 +584,11 @@ export class ChatGateway
     for (const [playerId, bucket] of this.buckets) {
       if (!this.socketsByPlayer.has(playerId) && now - bucket.at >= refillMs) {
         this.buckets.delete(playerId);
+      }
+    }
+    for (const [playerId, at] of this.lastOnlineMention) {
+      if (now - at >= CHAT_ONLINE_MENTION_COOLDOWN_MS) {
+        this.lastOnlineMention.delete(playerId);
       }
     }
   }

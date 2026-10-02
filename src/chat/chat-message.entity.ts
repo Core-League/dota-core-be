@@ -47,6 +47,10 @@ export class ChatMessage {
   @Column({ type: 'uuid', array: true, default: () => "'{}'" })
   mentionedPlayerIds: string[];
 
+  /** Players tagged by `@online`: everyone connected to the public channel when it was sent. */
+  @Column({ type: 'uuid', array: true, default: () => "'{}'" })
+  onlineMentionIds: string[];
+
   /** Millisecond precision: clients send it back as the read marker / history cursor. */
   @CreateDateColumn({ type: 'timestamptz', precision: 3 })
   createdAt: Date;

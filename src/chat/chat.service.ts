@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, type Repository } from 'typeorm';
+import { FriendshipStatus } from '../friends/friends.constants';
 import { Player } from '../players/player.entity';
 import { ChatAccessService, type ChatViewer } from './chat-access.service';
 import { ChatMessage } from './chat-message.entity';
@@ -10,9 +11,11 @@ import {
   CHAT_MENTIONS_MAX,
   CHAT_MESSAGE_MAX_LENGTH,
   CHAT_PLAYER_SEARCH_LIMIT,
+  CHAT_PLAYER_SUGGEST_LIMIT,
   CHAT_PUBLIC_KINDS,
   CHAT_RETENTION_DAYS,
   ChatChannelKind,
+  hasOnlineMention,
   isPublicKind,
   isUuid,
   parseChannelKey,
@@ -50,6 +53,11 @@ export interface ChatSendInput {
   channelKey: unknown;
   body: unknown;
   mentions?: unknown;
+  /**
+   * Trusted, from the gateway: players connected to the channel right now.
+   * Tagged only when the body really uses `@online` in a public channel.
+   */
+  onlinePlayerIds?: string[];
 }
 
 /** What the gateway needs to fan a change out: the channel and its private owners. */
@@ -141,6 +149,12 @@ export class ChatService {
     const mentionedPlayerIds = isPublicKind(channel.kind)
       ? await this.resolveMentions(viewer, channel, body, input.mentions)
       : [];
+    const onlineMentionIds =
+      isPublicKind(channel.kind) && hasOnlineMention(body)
+        ? [...new Set(input.onlinePlayerIds ?? [])].filter(
+            (id) => id !== viewer.playerId,
+          )
+        : [];
 
     const saved = await this.messages.save(
       this.messages.create({
@@ -150,6 +164,7 @@ export class ChatService {
         body,
         participantIds: [...channel.participantIds],
         mentionedPlayerIds,
+        onlineMentionIds,
       }),
     );
     const [dto] = await this.toDtos([saved]);
@@ -261,7 +276,9 @@ export class ChatService {
     }[] = await this.dataSource.query(
       `SELECT m."channelKey", m."channelKind",
               COUNT(*)::int AS "unread",
-              COUNT(*) FILTER (WHERE $1::uuid = ANY(m."mentionedPlayerIds"))::int AS "mentions"
+              COUNT(*) FILTER (
+                WHERE $1::uuid = ANY(m."mentionedPlayerIds") OR $1::uuid = ANY(m."onlineMentionIds")
+              )::int AS "mentions"
          FROM "chat_message" m
          LEFT JOIN "chat_read_marker" r
            ON r."playerId" = $1 AND r."channelKey" = m."channelKey"
@@ -367,42 +384,81 @@ export class ChatService {
 
   // ── players ──────────────────────────────────────────────────────────────
 
-  /** New-PM search and mention autocomplete; `channel` narrows to players who can read it. */
+  /**
+   * New-PM search and mention autocomplete; `channel` narrows to players who can read it.
+   * Empty `q`: the caller's friends and players online right now (`onlineIds`, from the
+   * gateway) — never the whole player table. With `q`: every player whose Discord name /
+   * username contains it; name-prefix matches first, then friends, then online players.
+   */
   async searchPlayers(
     viewer: ChatViewer,
     q?: string,
     rawChannel?: string,
+    onlineIds: string[] = [],
   ): Promise<ChatPlayerDto[]> {
-    const qb = this.players
-      .createQueryBuilder('p')
-      .where('p.id <> :self', { self: viewer.playerId })
-      .orderBy('p.discordName', 'ASC', 'NULLS LAST')
-      .limit(CHAT_PLAYER_SEARCH_LIMIT);
+    const params: unknown[] = [
+      viewer.playerId,
+      FriendshipStatus.ACCEPTED,
+      onlineIds.filter(isUuid),
+    ];
+    const param = (value: unknown): string => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    const isFriend = `EXISTS (
+      SELECT 1 FROM "friendship" f
+       WHERE f."status" = $2
+         AND ((f."requesterId" = $1 AND f."addresseeId" = p."id")
+           OR (f."addresseeId" = $1 AND f."requesterId" = p."id")))`;
+    const isOnline = `p."id" = ANY($3::uuid[])`;
+
+    const where = [`p."id" <> $1`];
+    const order: string[] = [];
     const term = q?.trim();
     if (term) {
-      qb.andWhere(
-        `(p."discordName" ILIKE :term ESCAPE '\\' OR p."discordUsername" ILIKE :term ESCAPE '\\')`,
-        { term: `%${escapeLike(term)}%` },
+      const contains = param(`%${escapeLike(term)}%`);
+      const prefix = param(`${escapeLike(term)}%`);
+      where.push(
+        `(p."discordName" ILIKE ${contains} ESCAPE '\\' OR p."discordUsername" ILIKE ${contains} ESCAPE '\\')`,
+      );
+      order.push(
+        `(p."discordName" ILIKE ${prefix} ESCAPE '\\' OR p."discordUsername" ILIKE ${prefix} ESCAPE '\\') DESC`,
       );
     } else {
-      qb.andWhere('p."discordName" IS NOT NULL');
+      where.push(`(${isFriend} OR ${isOnline})`);
     }
+    order.push(
+      `${isFriend} DESC`,
+      `${isOnline} DESC`,
+      `p."discordName" ASC NULLS LAST`,
+    );
+
     if (rawChannel) {
       const channel = this.parseChannel(rawChannel);
       if (channel.kind === ChatChannelKind.CAPTAINS) {
-        qb.andWhere(
-          `(EXISTS (SELECT 1 FROM "team" t WHERE t."captainId" = p.id AND t."disbandedAt" IS NULL)
-            OR EXISTS (SELECT 1 FROM "user_roles" ur WHERE ur."playerId" = p.id AND ur."isAdminRole"))`,
+        where.push(
+          `(EXISTS (SELECT 1 FROM "team" t WHERE t."captainId" = p."id" AND t."disbandedAt" IS NULL)
+            OR EXISTS (SELECT 1 FROM "user_roles" ur WHERE ur."playerId" = p."id" AND ur."isAdminRole"))`,
         );
       } else if (channel.kind === ChatChannelKind.DM) {
-        qb.andWhere('p.id IN (:...ids)', { ids: channel.participantIds });
+        where.push(`p."id" = ANY(${param(channel.participantIds)}::uuid[])`);
       } else if (channel.kind === ChatChannelKind.ADMIN) {
-        qb.andWhere('p.id = :owner', { owner: channel.participantIds[0] });
+        where.push(`p."id" = ${param(channel.participantIds[0])}`);
       }
     }
-    const found = await qb.getMany();
-    const players = await this.loadPlayers(found.map((p) => p.id));
-    return found.flatMap((p) => players.get(p.id) ?? []);
+
+    const limit = param(
+      term ? CHAT_PLAYER_SEARCH_LIMIT : CHAT_PLAYER_SUGGEST_LIMIT,
+    );
+    const rows: { id: string }[] = await this.dataSource.query(
+      `SELECT p."id" FROM "player" p
+        WHERE ${where.join(' AND ')}
+        ORDER BY ${order.join(', ')}
+        LIMIT ${limit}`,
+      params,
+    );
+    const players = await this.loadPlayers(rows.map((r) => r.id));
+    return rows.flatMap((r) => players.get(r.id) ?? []);
   }
 
   // ── retention ────────────────────────────────────────────────────────────
@@ -529,6 +585,7 @@ export class ChatService {
       author: card(m.authorId),
       body: m.body,
       mentions: m.mentionedPlayerIds.flatMap((id) => players.get(id) ?? []),
+      onlineMentionIds: m.onlineMentionIds ?? [],
       threadOwner:
         m.channelKind === ChatChannelKind.ADMIN && m.participantIds[0]
           ? card(m.participantIds[0])

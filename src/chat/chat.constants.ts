@@ -25,6 +25,18 @@ export const CHAT_HISTORY_DEFAULT_LIMIT = 50;
 export const CHAT_HISTORY_MAX_LIMIT = 100;
 export const CHAT_MENTIONS_MAX = 10;
 export const CHAT_PLAYER_SEARCH_LIMIT = 10;
+/** Suggestions before anything is typed: friends + online players. */
+export const CHAT_PLAYER_SUGGEST_LIMIT = 20;
+/** Non-admins may tag everyone online with `@online` once per this window. */
+export const CHAT_ONLINE_MENTION_COOLDOWN_MS = 5 * 60_000;
+
+/** `@online` as a separate word (start / whitespace before, end / whitespace / punctuation after). */
+const ONLINE_MENTION_RE = /(^|\s)@online(?=$|[\s.,!?;:)\]}»"'])/iu;
+
+/** Whether the body uses the `@online` command (public channels only — checked by the caller). */
+export function hasOnlineMention(body: string): boolean {
+  return ONLINE_MENTION_RE.test(body);
+}
 /** Presence watch list of one socket (PM tabs + admin thread list). */
 export const CHAT_PRESENCE_WATCH_MAX = 200;
 
