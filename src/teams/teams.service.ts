@@ -26,6 +26,7 @@ import { computeTeamAvgRating } from './team-rating.util';
 import { DiscordBotService } from '../discord/discord-bot.service';
 import { AuthService } from '../auth/auth.service';
 import { Dota2Service } from '../dota2/dota2.service';
+import { ChatAccessEvents } from '../chat/chat-access.events';
 import {
   TeamResponseDto,
   TeamTournamentEmbeddedDto,
@@ -50,6 +51,7 @@ export class TeamsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authService: AuthService,
     private readonly dota2: Dota2Service,
+    private readonly chatAccess: ChatAccessEvents,
   ) {}
 
   /** Для інших модулів (напр. турніри) — той самий DTO, що й у REST. */
@@ -543,6 +545,8 @@ export class TeamsService {
         }),
       );
     }
+    // Became an active-team captain: the chat opens the Captains channel live.
+    this.chatAccess.changed([playerId]);
   }
 
   /**
@@ -563,6 +567,7 @@ export class TeamsService {
     if (captainRole) {
       await rolesRepo.remove(captainRole);
     }
+    this.chatAccess.changed([playerId]);
   }
 
   private async syncPlayerTeamLinks(teamId: string): Promise<void> {

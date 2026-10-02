@@ -3,6 +3,7 @@ import { Role } from '../user-roles/role.constants';
 import type { TeamsRepository } from './teams.repository';
 import type { DataSource } from 'typeorm';
 import type { Team } from './team.entity';
+import { ChatAccessEvents } from '../chat/chat-access.events';
 
 /**
  * Focused unit tests for the application-level Captain (Капітан) user-role
@@ -34,6 +35,7 @@ describe('TeamsService captain user-role sync', () => {
       dataSource,
       null as never,
       null as never,
+      new ChatAccessEvents(),
     );
     return service as unknown as CaptainRoleSurface;
   }

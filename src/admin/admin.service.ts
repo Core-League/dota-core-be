@@ -25,6 +25,7 @@ import { DiscordBotService } from '../discord/discord-bot.service';
 import { OverrideMatchResultDto } from './dto/override-match-result.dto';
 import { AuthService } from '../auth/auth.service';
 import { Dota2Service } from '../dota2/dota2.service';
+import { ChatAccessEvents } from '../chat/chat-access.events';
 import {
   AdminPlayerRoleItemDto,
   AdminSetPlayerRolesDto,
@@ -91,6 +92,7 @@ export class AdminService {
     private readonly discord: DiscordBotService,
     private readonly authService: AuthService,
     private readonly dota2: Dota2Service,
+    private readonly chatAccess: ChatAccessEvents,
   ) {
     this.playersRepo = dataSource.getRepository(Player);
     this.rolesRepo = dataSource.getRepository(UserRoles);
@@ -150,6 +152,8 @@ export class AdminService {
     });
 
     const updated = await this.findPlayerWithRoles(playerId);
+    // Admin rights changed: the chat re-joins the player's sockets to the admin rooms.
+    this.chatAccess.changed([playerId]);
     await this.authService.syncPlayerGuildRoles(updated);
     return this.toAdminRolesResult(updated);
   }
@@ -266,6 +270,7 @@ export class AdminService {
         .execute();
     }
 
+    this.chatAccess.changed([playerId]);
     const refreshed = await this.findPlayerWithRoles(playerId);
     await this.authService.syncPlayerGuildRoles(refreshed);
 
@@ -286,6 +291,8 @@ export class AdminService {
       await this.rolesRepo.remove(adminRoles);
     }
 
+    // Lost admin rights: the chat drops the player's sockets from the admin rooms right away.
+    this.chatAccess.changed([playerId]);
     const refreshed = await this.findPlayerWithRoles(playerId);
     await this.authService.syncPlayerGuildRoles(refreshed);
 

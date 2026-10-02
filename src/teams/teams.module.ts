@@ -14,6 +14,7 @@ import { Tournament } from '../tournaments/tournaments.entity';
 import { PlayerTournamentPoints } from '../tournaments/player-tournament-points.entity';
 import { TeamsRepository } from './teams.repository';
 import { TeamInviteRepository } from './team-invite.repository';
+import { ChatEventsModule } from '../chat/chat-access.events';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { TeamInviteRepository } from './team-invite.repository';
     UploadsModule,
     DiscordBotModule,
     Dota2Module,
+    ChatEventsModule,
   ],
   providers: [TeamsService, TeamsRepository, TeamInviteRepository],
   controllers: [TeamsController, InvitesController],
