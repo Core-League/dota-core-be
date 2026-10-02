@@ -16,6 +16,7 @@ function viewer(patch: Partial<ChatViewer> = {}): ChatViewer {
     playerId: A,
     isAdmin: false,
     isCaptain: false,
+    isVip: false,
     readOnly: false,
     ...patch,
   };
@@ -31,6 +32,8 @@ describe('parseChannelKey', () => {
   it('accepts public channels and rejects suffixes', () => {
     expect(parseChannelKey('general')?.kind).toBe(ChatChannelKind.GENERAL);
     expect(parseChannelKey('duel')?.kind).toBe(ChatChannelKind.DUEL);
+    expect(parseChannelKey('vip')?.kind).toBe(ChatChannelKind.VIP);
+    expect(parseChannelKey('vip:x')).toBeNull();
     expect(parseChannelKey('general:x')).toBeNull();
     expect(parseChannelKey('random')).toBeNull();
     expect(parseChannelKey(42)).toBeNull();
@@ -57,6 +60,7 @@ describe('ChatAccessService', () => {
     expect(access.canRead(null, channel('general'))).toBe(true);
     expect(access.canRead(null, channel('duel'))).toBe(false);
     expect(access.canRead(null, channel('captains'))).toBe(false);
+    expect(access.canRead(null, channel('vip'))).toBe(false);
     expect(access.canWrite(null, channel('general'))).toBe(false);
   });
 
@@ -68,6 +72,21 @@ describe('ChatAccessService', () => {
     expect(access.canRead(viewer({ isAdmin: true }), channel('captains'))).toBe(
       true,
     );
+  });
+
+  it('opens VIP to active VIP players and admins only', () => {
+    expect(access.canRead(viewer(), channel('vip'))).toBe(false);
+    expect(access.canRead(viewer({ isCaptain: true }), channel('vip'))).toBe(
+      false,
+    );
+    expect(access.canRead(viewer({ isVip: true }), channel('vip'))).toBe(true);
+    expect(access.canWrite(viewer({ isVip: true }), channel('vip'))).toBe(true);
+    expect(access.canRead(viewer({ isAdmin: true }), channel('vip'))).toBe(
+      true,
+    );
+    expect(
+      access.canWrite(viewer({ isVip: true, readOnly: true }), channel('vip')),
+    ).toBe(false);
   });
 
   it('keeps DMs between their two players', () => {
@@ -105,8 +124,12 @@ describe('ChatAccessService', () => {
       isAdmin: false,
       canCaptains: false,
       canDuel: false,
+      canVip: false,
       readOnly: true,
     });
     expect(access.snapshot(viewer({ isCaptain: true })).canCaptains).toBe(true);
+    expect(access.snapshot(viewer({ isVip: true })).canVip).toBe(true);
+    expect(access.snapshot(viewer({ isAdmin: true })).canVip).toBe(true);
+    expect(access.snapshot(viewer()).canVip).toBe(false);
   });
 });

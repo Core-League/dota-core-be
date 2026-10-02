@@ -9,6 +9,8 @@ export enum ChatChannelKind {
   GENERAL = 'general',
   CAPTAINS = 'captains',
   DUEL = 'duel',
+  /** Active VIP players + admins. */
+  VIP = 'vip',
   ADMIN = 'admin',
   DM = 'dm',
 }
@@ -18,6 +20,7 @@ export const CHAT_PUBLIC_KINDS: readonly ChatChannelKind[] = [
   ChatChannelKind.GENERAL,
   ChatChannelKind.CAPTAINS,
   ChatChannelKind.DUEL,
+  ChatChannelKind.VIP,
 ];
 
 export const CHAT_MESSAGE_MAX_LENGTH = 1000;
@@ -46,7 +49,7 @@ export const CHAT_RATE_LIMIT = { burst: 5, refillPerSecond: 1 } as const;
 export const CHAT_TYPING_THROTTLE_MS = 1_500;
 /** A player whose last socket closed stays "online" this long (page reloads, flaky mobile networks). */
 export const CHAT_PRESENCE_GRACE_MS = 5_000;
-/** Access (admin / captain) cached on the socket; team and role changes refresh it immediately. */
+/** Access (admin / captain / VIP) cached on the socket; team and role changes refresh it immediately. */
 export const CHAT_ACCESS_CACHE_MS = 60_000;
 
 /** Public-channel messages older than this are removed by `ChatRetentionScheduler`. */
@@ -65,11 +68,18 @@ export const CHAT_READ_ONLY_ROLE_NAMES: readonly string[] = [
   'Заблокований',
 ];
 
+/**
+ * VIP has no event when it simply runs out (`vipUntil` passes), so sockets in
+ * the VIP room are re-checked this often and dropped once it has expired.
+ */
+export const CHAT_VIP_EXPIRY_SWEEP_MS = 5 * 60_000;
+
 /** Socket.io rooms of the chat namespace (the per-player `player:<id>` room comes from socket-auth). */
 export const CHAT_ROOMS = {
   general: 'chat:general',
   captains: 'chat:captains',
   duel: 'chat:duel',
+  vip: 'chat:vip',
   /** Every connected admin: receives all admin threads. */
   admins: 'chat:admins',
 } as const;
@@ -78,6 +88,7 @@ export const CHAT_PUBLIC_ROOM: Record<string, string> = {
   [ChatChannelKind.GENERAL]: CHAT_ROOMS.general,
   [ChatChannelKind.CAPTAINS]: CHAT_ROOMS.captains,
   [ChatChannelKind.DUEL]: CHAT_ROOMS.duel,
+  [ChatChannelKind.VIP]: CHAT_ROOMS.vip,
 };
 
 /** Server → client events. Mirrored by `IChatSocketServerEvents` on the frontend. */
@@ -125,7 +136,8 @@ export type ChatChannelRef =
       kind:
         | ChatChannelKind.GENERAL
         | ChatChannelKind.CAPTAINS
-        | ChatChannelKind.DUEL;
+        | ChatChannelKind.DUEL
+        | ChatChannelKind.VIP;
       participantIds: [];
     }
   | { key: string; kind: ChatChannelKind.ADMIN; participantIds: [string] }
@@ -139,6 +151,7 @@ const KIND_BY_PREFIX: Record<string, ChatChannelKind | undefined> = {
   general: ChatChannelKind.GENERAL,
   captains: ChatChannelKind.CAPTAINS,
   duel: ChatChannelKind.DUEL,
+  vip: ChatChannelKind.VIP,
   admin: ChatChannelKind.ADMIN,
   dm: ChatChannelKind.DM,
 };
@@ -152,6 +165,7 @@ export function parseChannelKey(raw: unknown): ChatChannelRef | null {
     case ChatChannelKind.GENERAL:
     case ChatChannelKind.CAPTAINS:
     case ChatChannelKind.DUEL:
+    case ChatChannelKind.VIP:
       return parts.length === 1
         ? { key: kind, kind, participantIds: [] }
         : null;

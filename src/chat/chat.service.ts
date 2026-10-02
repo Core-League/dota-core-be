@@ -3,6 +3,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, In, type Repository } from 'typeorm';
 import { FriendshipStatus } from '../friends/friends.constants';
 import { Player } from '../players/player.entity';
+import { isVipActive } from '../vip/vip.utils';
 import { ChatAccessService, type ChatViewer } from './chat-access.service';
 import { ChatMessage } from './chat-message.entity';
 import {
@@ -266,7 +267,9 @@ export class ChatService {
   async unreadSummary(viewer: ChatViewer): Promise<ChatUnreadSummary> {
     const snapshot = this.access.snapshot(viewer);
     const publicKinds = CHAT_PUBLIC_KINDS.filter(
-      (kind) => kind !== ChatChannelKind.CAPTAINS || snapshot.canCaptains,
+      (kind) =>
+        (kind !== ChatChannelKind.CAPTAINS || snapshot.canCaptains) &&
+        (kind !== ChatChannelKind.VIP || snapshot.canVip),
     );
     const rows: {
       channelKey: string;
@@ -440,6 +443,11 @@ export class ChatService {
           `(EXISTS (SELECT 1 FROM "team" t WHERE t."captainId" = p."id" AND t."disbandedAt" IS NULL)
             OR EXISTS (SELECT 1 FROM "user_roles" ur WHERE ur."playerId" = p."id" AND ur."isAdminRole"))`,
         );
+      } else if (channel.kind === ChatChannelKind.VIP) {
+        where.push(
+          `(p."vipUntil" > now()
+            OR EXISTS (SELECT 1 FROM "user_roles" ur WHERE ur."playerId" = p."id" AND ur."isAdminRole"))`,
+        );
       } else if (channel.kind === ChatChannelKind.DM) {
         where.push(`p."id" = ANY(${param(channel.participantIds)}::uuid[])`);
       } else if (channel.kind === ChatChannelKind.ADMIN) {
@@ -496,7 +504,8 @@ export class ChatService {
 
   /**
    * Keeps only mentions that really appear as `@<name>` in the body and
-   * whose player can read the channel (captains channel: captains + admins).
+   * whose player can read the channel (captains channel: captains + admins,
+   * VIP channel: active VIP + admins).
    */
   private async resolveMentions(
     viewer: ChatViewer,
@@ -533,6 +542,10 @@ export class ChatService {
         if (channel.kind === ChatChannelKind.CAPTAINS) {
           const isAdmin = (p.roles ?? []).some((r) => r.isAdminRole);
           if (!isAdmin && !captainIds.has(p.id)) return false;
+        }
+        if (channel.kind === ChatChannelKind.VIP) {
+          const isAdmin = (p.roles ?? []).some((r) => r.isAdminRole);
+          if (!isAdmin && !isVipActive(p)) return false;
         }
         return displayNames(p).some((name) => lowerBody.includes(`@${name}`));
       })

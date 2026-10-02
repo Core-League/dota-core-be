@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
+import { ChatEventsModule } from '../chat/chat-access.events';
 import { MonobankAcquiringModule } from '../connectors/monobank-acquiring/monobank-acquiring.module';
 import { Player } from '../players/player.entity';
 import { VipAdminController, VipController } from './vip.controller';
@@ -18,6 +19,7 @@ import { VipService } from './vip.service';
   imports: [
     TypeOrmModule.forFeature([Player, VipSubscription, VipPayment]),
     AuthModule,
+    ChatEventsModule,
     MonobankAcquiringModule.register(),
   ],
   controllers: [VipController, VipAdminController],

@@ -16,6 +16,7 @@ import {
   LessThanOrEqual,
   MoreThan,
 } from 'typeorm';
+import { ChatAccessEvents } from '../chat/chat-access.events';
 import { ConfigConnectorService } from '../connectors/config/config-connector.service';
 import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monobank-acquiring.service';
 import {
@@ -84,6 +85,7 @@ export class VipService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly acquiring: MonobankAcquiringService,
     private readonly config: ConfigConnectorService,
+    private readonly chatAccess: ChatAccessEvents,
   ) {}
 
   // ── reads ────────────────────────────────────────────────────────────────
@@ -322,6 +324,7 @@ export class VipService {
       `VIP granted by admin ${adminId} to ${playerId}: ` +
         `${grant.lifetime ? 'lifetime' : `+${months} mo`}, until ${player.vipUntil?.toISOString()}`,
     );
+    this.chatAccess.changed([playerId]);
     return this.toAdminResult(player);
   }
 
@@ -340,6 +343,7 @@ export class VipService {
       return row;
     });
     this.logger.log(`VIP revoked by admin ${adminId} from ${playerId}`);
+    this.chatAccess.changed([playerId]);
     return this.toAdminResult(player);
   }
 
@@ -392,12 +396,12 @@ export class VipService {
         ? payload
         : await this.fetchInvoice(payload.invoiceId);
 
-    await this.dataSource.transaction(async (em) => {
+    const paidPlayerId = await this.dataSource.transaction(async (em) => {
       const payment = await em.findOne(VipPayment, {
         where: { id: paymentId },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!payment || payment.status === VipPaymentStatus.PAID) return;
+      if (!payment || payment.status === VipPaymentStatus.PAID) return null;
 
       const now = new Date();
       payment.status = VipPaymentStatus.PAID;
@@ -444,7 +448,10 @@ export class VipService {
         `VIP ${payment.reference} (${payment.kind}) paid: player ${player.id} VIP until ` +
           `${player.vipUntil.toISOString()}, auto-renew ${subscription.autoRenew ? 'on' : 'off'}`,
       );
+      return player.id;
     });
+    // VIP chat channel: join the room / show the tab without a reload.
+    if (paidPlayerId) this.chatAccess.changed([paidPlayerId]);
   }
 
   private async settleFailure(

@@ -33,6 +33,7 @@ import {
   CHAT_ROOMS,
   CHAT_SOCKET_NAMESPACE,
   CHAT_TYPING_THROTTLE_MS,
+  CHAT_VIP_EXPIRY_SWEEP_MS,
   ChatChannelKind,
   hasOnlineMention,
   isPublicKind,
@@ -102,6 +103,7 @@ export class ChatGateway
   /** Last `@online` of a player: one per `CHAT_ONLINE_MENTION_COOLDOWN_MS` (admins are exempt). */
   private readonly lastOnlineMention = new Map<string, number>();
   private accessSubscription: Subscription | null = null;
+  private vipSweepTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly chat: ChatService,
@@ -114,10 +116,15 @@ export class ChatGateway
     this.accessSubscription = this.accessEvents.changes.subscribe((ids) => {
       void this.refreshAccess(ids);
     });
+    this.vipSweepTimer = setInterval(
+      () => void this.sweepExpiredVip(),
+      CHAT_VIP_EXPIRY_SWEEP_MS,
+    );
   }
 
   onModuleDestroy(): void {
     this.accessSubscription?.unsubscribe();
+    if (this.vipSweepTimer) clearInterval(this.vipSweepTimer);
     for (const timer of this.offlineTimers.values()) clearTimeout(timer);
     this.offlineTimers.clear();
   }
@@ -386,6 +393,7 @@ export class ChatGateway
       [CHAT_ROOMS.general]: true,
       [CHAT_ROOMS.duel]: snapshot.canDuel,
       [CHAT_ROOMS.captains]: snapshot.canCaptains,
+      [CHAT_ROOMS.vip]: snapshot.canVip,
       [CHAT_ROOMS.admins]: snapshot.isAdmin,
     };
     if (viewer) wanted[playerRoom(viewer.playerId)] = true;
@@ -416,6 +424,30 @@ export class ChatGateway
     }
   }
 
+  /**
+   * Grants, revokes and payments report through `ChatAccessEvents`; a VIP that
+   * simply runs out does not, so non-admin members of the VIP room are
+   * re-checked here and refreshed (dropped from the room) once expired.
+   */
+  private async sweepExpiredVip(): Promise<void> {
+    const ids = new Set<string>();
+    for (const socketId of this.server.adapter.rooms.get(CHAT_ROOMS.vip) ??
+      []) {
+      const socket = this.server.sockets.get(socketId) as
+        | ChatSocket
+        | undefined;
+      const viewer = socket?.data.viewer;
+      if (viewer && !viewer.isAdmin) ids.add(viewer.playerId);
+    }
+    if (!ids.size) return;
+    try {
+      await this.refreshAccess(await this.access.expiredVipIds([...ids]));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`VIP expiry sweep failed: ${message}`);
+    }
+  }
+
   // ── fan-out ──────────────────────────────────────────────────────────────
 
   private audienceOf(message: {
@@ -438,6 +470,7 @@ export class ChatGateway
       case ChatChannelKind.GENERAL:
       case ChatChannelKind.CAPTAINS:
       case ChatChannelKind.DUEL:
+      case ChatChannelKind.VIP:
         return [CHAT_PUBLIC_ROOM[audience.channelKind]];
       case ChatChannelKind.ADMIN:
         return [...audience.participantIds.map(playerRoom), CHAT_ROOMS.admins];

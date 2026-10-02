@@ -35,7 +35,7 @@ export class ChatMessageDto {
 
   @ApiProperty({
     description:
-      '`general` | `captains` | `duel` | `admin:<ownerId>` | `dm:<minPlayerId>:<maxPlayerId>`',
+      '`general` | `captains` | `duel` | `vip` | `admin:<ownerId>` | `dm:<minPlayerId>:<maxPlayerId>`',
   })
   channelKey: string;
 

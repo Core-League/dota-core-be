@@ -12,7 +12,7 @@ import { ChatGateway } from './chat.gateway';
 import { ChatService } from './chat.service';
 
 /**
- * Site chat: General / Captains / Duel channels, per-player admin threads and
+ * Site chat: General / Captains / Duel / VIP channels, per-player admin threads and
  * DMs. History over `GET /chat/*`, everything live over the `/chat` socket
  * namespace, weekly purge of public channels. api-v1 only.
  */

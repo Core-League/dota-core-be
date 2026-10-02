@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { Player } from '../players/player.entity';
+import { isVipActive } from '../vip/vip.utils';
 import {
   CHAT_READ_ONLY_ROLE_NAMES,
   ChatChannelKind,
@@ -14,6 +15,8 @@ export interface ChatViewer {
   isAdmin: boolean;
   /** Captain of an active (non-disbanded) team. */
   isCaptain: boolean;
+  /** `vipUntil` in the future at resolve time (expiry is swept by the gateway). */
+  isVip: boolean;
   /** Can read but not write public channels and DMs. */
   readOnly: boolean;
 }
@@ -24,6 +27,7 @@ export interface ChatAccessSnapshot {
   isAdmin: boolean;
   canCaptains: boolean;
   canDuel: boolean;
+  canVip: boolean;
   readOnly: boolean;
 }
 
@@ -51,8 +55,20 @@ export class ChatAccessService {
       playerId,
       isAdmin: roles.some((r) => r.isAdminRole),
       isCaptain: captainRows.length > 0,
+      isVip: isVipActive(player),
       readOnly: roles.some((r) => CHAT_READ_ONLY_ROLE_NAMES.includes(r.name)),
     };
+  }
+
+  /** Of `playerIds`, those whose VIP has run out (or was never there). */
+  async expiredVipIds(playerIds: string[]): Promise<string[]> {
+    if (!playerIds.length) return [];
+    const rows: { id: string }[] = await this.dataSource.query(
+      `SELECT "id" FROM "player"
+        WHERE "id" = ANY($1::uuid[]) AND ("vipUntil" IS NULL OR "vipUntil" <= now())`,
+      [playerIds],
+    );
+    return rows.map((r) => r.id);
   }
 
   snapshot(viewer: ChatViewer | null): ChatAccessSnapshot {
@@ -61,6 +77,7 @@ export class ChatAccessService {
       isAdmin: viewer?.isAdmin ?? false,
       canCaptains: !!viewer && (viewer.isAdmin || viewer.isCaptain),
       canDuel: !!viewer,
+      canVip: !!viewer && (viewer.isAdmin || viewer.isVip),
       readOnly: !viewer || viewer.readOnly,
     };
   }
@@ -73,6 +90,8 @@ export class ChatAccessService {
         return !!viewer;
       case ChatChannelKind.CAPTAINS:
         return !!viewer && (viewer.isAdmin || viewer.isCaptain);
+      case ChatChannelKind.VIP:
+        return !!viewer && (viewer.isAdmin || viewer.isVip);
       case ChatChannelKind.ADMIN:
         return (
           !!viewer &&

@@ -3,8 +3,8 @@ import { Subject, type Observable } from 'rxjs';
 
 /**
  * In-process signal "these players' chat access may have changed" (became or
- * stopped being an active-team captain, got or lost an admin role). Writers
- * — `TeamsService`, `AdminService` — only depend on this dependency-free
+ * stopped being an active-team captain, got or lost an admin role or VIP).
+ * Writers — `TeamsService`, `AdminService`, `VipService` — only depend on this dependency-free
  * module; `ChatGateway` subscribes and re-joins the players' sockets to the
  * right rooms. Lives in api-v1 together with the sockets, so no event bus.
  */

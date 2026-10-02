@@ -9,7 +9,7 @@ import { ChatGateway } from './chat.gateway';
 import { ChatService } from './chat.service';
 
 /**
- * Weekly cleanup of the public chat channels (General, Captains, Duel):
+ * Weekly cleanup of the public chat channels (General, Captains, Duel, VIP):
  * every Sunday at 23:59 Kyiv time, messages older than 7 days are deleted.
  * Admin threads and DMs are kept. Runs in api-v1 only (`ScheduleModule`
  * lives in `AppModule`); connected clients drop the purged messages too.
