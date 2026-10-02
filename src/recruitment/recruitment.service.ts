@@ -33,7 +33,7 @@ import { RANK_TO_STAR_MINS } from '../players/rank-system/tier-thresholds.build'
 import { Team } from '../teams/team.entity';
 import { TeamsService } from '../teams/teams.service';
 import { computeTeamAvgRating } from '../teams/team-rating.util';
-import { getRoleColorByName } from '../user-roles/role.constants';
+import { Role, getRoleColorByName } from '../user-roles/role.constants';
 import { isVipActive, toVipPublicFields } from '../vip/vip.utils';
 import {
   APPLICATION_TTL_MS,
@@ -97,6 +97,17 @@ const JOIN_BLOCKS = [
   RecruitmentBlockReason.HAS_TEAM,
 ];
 
+/**
+ * Roles that count as verified without `verifiedAt` — the same rule as the
+ * frontend's `isPlayerVerified` (staff and streamers need no player verification).
+ */
+const VERIFIED_ROLE_NAMES: readonly string[] = [
+  Role.PLAYER,
+  Role.MEDIA,
+  Role.ADMIN,
+  Role.IT,
+];
+
 interface IActor {
   player: Player;
   isAdmin: boolean;
@@ -151,10 +162,20 @@ export class RecruitmentService {
 
   // ── rules ────────────────────────────────────────────────────────────────
 
+  /** `verifiedAt`, or a role that implies it (needs `player.roles` loaded). */
+  static isVerified(player: Player): boolean {
+    if (player.verifiedAt) return true;
+    return (player.roles ?? []).some((r) =>
+      VERIFIED_ROLE_NAMES.includes(r.name),
+    );
+  }
+
   /** Profile requirements shared by applying and publishing a listing. */
   static playerBlocks(player: Player): RecruitmentBlockReason[] {
     const out: RecruitmentBlockReason[] = [];
-    if (!player.verifiedAt) out.push(RecruitmentBlockReason.NOT_VERIFIED);
+    if (!RecruitmentService.isVerified(player)) {
+      out.push(RecruitmentBlockReason.NOT_VERIFIED);
+    }
     if (!player.steamId) out.push(RecruitmentBlockReason.NO_STEAM);
     if (player.teamId) out.push(RecruitmentBlockReason.HAS_TEAM);
     if (!player.positions?.length) {
@@ -1161,6 +1182,7 @@ export class RecruitmentService {
       slot = dto.slot ?? RecruitmentService.autoSlot(team);
       const applicant = await this.players.findOne({
         where: { id: row.playerId },
+        relations: ['roles'],
       });
       if (!applicant) {
         throw new NotFoundException({
