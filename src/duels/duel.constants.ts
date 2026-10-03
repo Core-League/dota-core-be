@@ -276,7 +276,7 @@ export const DUEL_CHALLENGE_TTL_SECONDS = 5 * 60;
 export const DUEL_RATING_FLOOR = 0;
 export const DUEL_QUEUE_WINDOW_BASE = 50;
 export const DUEL_QUEUE_WINDOW_STEP = 50;
-export const DUEL_QUEUE_WINDOW_STEP_SECONDS = 30;
+export const DUEL_QUEUE_WINDOW_STEP_SECONDS = 15;
 /** Queue rows not refreshed by `GET /duels/me` for this long are dropped. */
 export const DUEL_QUEUE_HEARTBEAT_TTL_SECONDS = 20;
 /** A PENDING duel nobody claimed for this long is cancelled and both players re-queued. */

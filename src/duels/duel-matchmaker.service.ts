@@ -16,7 +16,7 @@ import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelsService } from './duels.service';
 
 /**
- * Pairs queued players (decision 7: ±50 at join, +50 every 30 s, both windows
+ * Pairs queued players (decision 7: ±50 at join, +50 every 15 s, both windows
  * must accept), prunes queue rows whose client stopped polling and gives up
  * on PENDING duels no bot claimed in 5 minutes (decisions 8, 12, 19).
  */
