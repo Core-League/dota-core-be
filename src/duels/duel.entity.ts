@@ -19,6 +19,7 @@ import {
   type DuelLobbyPlayer,
   type DuelStats,
 } from './duel.constants';
+import { DuelSeason } from './duel-season.entity';
 import { DuelTournament } from './duel-tournament.entity';
 
 /**
@@ -57,6 +58,18 @@ export class Duel {
   @ManyToOne(() => DuelTournament, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'tournamentId' })
   tournament: DuelTournament | null;
+
+  /**
+   * Ladder season the duel counts for (kinds `ranked` / `friend`), stamped at
+   * creation; null for tournament duels.
+   */
+  @Index('IDX_duel_season')
+  @Column({ type: 'uuid', nullable: true })
+  seasonId: string | null;
+
+  @ManyToOne(() => DuelSeason, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'seasonId' })
+  season: DuelSeason | null;
 
   @Index('IDX_duel_player1')
   @Column({ type: 'uuid', nullable: true })

@@ -349,6 +349,8 @@ export enum DuelQueueBlockedReason {
   ACTIVE_DUEL = 'active_duel',
   ALREADY_QUEUED = 'already_queued',
   NO_BOTS_ONLINE = 'no_bots_online',
+  /** The ladder season is over and its results are being settled (tournament queues stay open). */
+  SEASON_CLOSING = 'season_closing',
 }
 
 /** Public host-bot pool summary shown next to the queue. */

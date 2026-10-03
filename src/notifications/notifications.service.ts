@@ -64,6 +64,7 @@ export class NotificationsService {
       team: payload.team ?? null,
       duelId: payload.duelId ?? null,
       expiresAt: payload.expiresAt ? new Date(payload.expiresAt) : null,
+      seasonPrize: payload.seasonPrize ?? null,
       readAt: row.readAt,
       createdAt: row.createdAt,
     };

@@ -21,6 +21,8 @@ export enum NotificationType {
   TEAM_INVITE = 'team_invite',
   TEAM_INVITE_ACCEPTED = 'team_invite_accepted',
   TEAM_INVITE_DECLINED = 'team_invite_declined',
+  /** The player won a prize place of a finished duel season. */
+  DUEL_SEASON_PRIZE = 'duel_season_prize',
 }
 
 /** Outcome of the request / challenge an actionable notification is about. */
@@ -55,6 +57,16 @@ export interface NotificationPayload {
   duelId?: string;
   /** ISO date until which a challenge can be answered. */
   expiresAt?: string;
+  /** Prize place won in a duel season (`duel_season_prize`). */
+  seasonPrize?: NotificationSeasonPrize;
+}
+
+/** What a `duel_season_prize` entry says: the season, the place and the prize in words. */
+export interface NotificationSeasonPrize {
+  seasonNumber: number;
+  place: number;
+  /** «VIP на 3 міс.» or the custom prize title. */
+  prize: string;
 }
 
 /** socket.io namespace of the header bell (`<api origin>/notifications`). */

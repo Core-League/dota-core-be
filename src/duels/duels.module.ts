@@ -11,6 +11,9 @@ import { DuelChallengesService } from './duel-challenges.service';
 import { DuelEventsListener } from './duel-events.listener';
 import { DuelMatchmakerScheduler } from './duel-matchmaker.scheduler';
 import { DuelMatchmakerService } from './duel-matchmaker.service';
+import { DuelSeasonsController } from './duel-seasons.controller';
+import { DuelSeasonsScheduler } from './duel-seasons.scheduler';
+import { DuelSeasonsService } from './duel-seasons.service';
 import { DuelTournamentPrizesScheduler } from './duel-tournament-prizes.scheduler';
 import { DuelTournamentsController } from './duel-tournaments.controller';
 import { DuelTournamentsService } from './duel-tournaments.service';
@@ -40,10 +43,13 @@ import { DuelsGateway } from './duels.gateway';
     DuelsController,
     DuelsAdminController,
     DuelTournamentsController,
+    DuelSeasonsController,
   ],
   providers: [
     DuelTournamentsService,
     DuelTournamentPrizesScheduler,
+    DuelSeasonsService,
+    DuelSeasonsScheduler,
     DuelMatchmakerService,
     DuelMatchmakerScheduler,
     DuelChallengesService,

@@ -6,6 +6,8 @@ import { DuelChallenge } from './duel-challenge.entity';
 import { DuelEventsPublisher } from './duel-events.publisher';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
+import { DuelSeason } from './duel-season.entity';
+import { DuelSeasonStanding } from './duel-season-standing.entity';
 import { DuelTournament } from './duel-tournament.entity';
 import { DuelTournamentParticipant } from './duel-tournament-participant.entity';
 import { DuelsService } from './duels.service';
@@ -26,6 +28,8 @@ import { HostBotsService } from './host-bots.service';
       DuelChallenge,
       DuelTournament,
       DuelTournamentParticipant,
+      DuelSeason,
+      DuelSeasonStanding,
       HostBot,
       Player,
     ]),

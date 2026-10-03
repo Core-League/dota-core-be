@@ -38,6 +38,12 @@ export const DUEL_ACTIVE_STATES: readonly DuelState[] = [
   DuelState.LIVE,
 ];
 
+/** States in which a duel may still change a board (its result is not applied yet). */
+export const DUEL_RUNNING_STATES: readonly DuelState[] = [
+  ...DUEL_ACTIVE_STATES,
+  DuelState.PROCESSING,
+];
+
 /** States a host bot owns — what a restarted worker must reconcile. */
 export const DUEL_HOSTED_STATES: readonly DuelState[] = [
   DuelState.LOBBY_CREATING,
@@ -84,6 +90,8 @@ export enum DuelCancelReason {
   TOURNAMENT_ENDED = 'tournament_ended',
   /** An admin deleted the duel's tournament before the game started. No rating change. */
   TOURNAMENT_DELETED = 'tournament_deleted',
+  /** The ladder season ended before the game started. No rating change. */
+  SEASON_ENDED = 'season_ended',
 }
 
 /** States in which a participant may still cancel the duel themselves. */
@@ -206,6 +214,36 @@ export const DUEL_TOURNAMENT_PRIZE_PLACE_MAX = 100;
 export const DUEL_TOURNAMENT_PRIZE_VIP_MONTHS_MAX = 12;
 /** How often api-v1 retries settling the prizes of ended tournaments (their last games may still run). */
 export const DUEL_TOURNAMENT_PRIZES_SWEEP_MS = 60_000;
+
+/** A monthly season of the ladder (`duel_season`). */
+export enum DuelSeasonStatus {
+  /** The live season: ranked and friendly duels count for it. */
+  ACTIVE = 'ACTIVE',
+  /** Over: its final table is frozen in `duel_season_standing`. */
+  ENDED = 'ENDED',
+}
+
+/**
+ * One prize place of a season (`duel_season.prizes`, jsonb): a tournament
+ * prize plus who handed it out. VIP places get `issuedAt` when the VIP was
+ * granted automatically; custom places when an admin marks them as issued.
+ */
+export interface DuelSeasonPrize extends DuelTournamentPrize {
+  issuedAt: string | null;
+  /** Admin who marked a custom prize issued; null for automatic VIP grants. */
+  issuedById: string | null;
+}
+
+/** Seasons are Kyiv calendar months. */
+export const DUEL_SEASON_TIME_ZONE = 'Europe/Kyiv';
+/** How often api-v1 checks whether the season is over (and retries settling prizes). */
+export const DUEL_SEASON_SWEEP_MS = 60_000;
+/**
+ * How long the rollover waits for the season's games that were already
+ * running at its end. Past that it closes anyway; a later result of such a
+ * game changes no rating (see `DuelsService.ratingLine`).
+ */
+export const DUEL_SEASON_FINISH_GRACE_MS = 2 * 60 * 60 * 1000;
 
 /** Wrong tournament passwords a player may try per tournament within the window. */
 export const DUEL_TOURNAMENT_JOIN_MAX_ATTEMPTS = 10;

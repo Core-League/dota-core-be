@@ -13,10 +13,12 @@ import { randomBytes } from 'node:crypto';
 import {
   DataSource,
   EntityManager,
+  FindOptionsWhere,
   In,
   IsNull,
   LessThan,
   MoreThan,
+  MoreThanOrEqual,
   Not,
   Repository,
 } from 'typeorm';
@@ -51,6 +53,7 @@ import {
   DuelChallengeStatus,
   DuelFailReason,
   DuelKind,
+  DuelSeasonStatus,
   DuelState,
   DuelTournamentStatus,
   MATCH_OUTCOME_DIRE,
@@ -65,6 +68,7 @@ import { DuelEventsPublisher } from './duel-events.publisher';
 import { heroById, pickRandomHeroes } from './dota-heroes';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
+import { DuelSeason } from './duel-season.entity';
 import { DuelTournament } from './duel-tournament.entity';
 import { DuelTournamentParticipant } from './duel-tournament-participant.entity';
 import { HostBot } from './host-bot.entity';
@@ -130,6 +134,8 @@ export class DuelsService {
     private readonly tournaments: Repository<DuelTournament>,
     @InjectRepository(DuelTournamentParticipant)
     private readonly participants: Repository<DuelTournamentParticipant>,
+    @InjectRepository(DuelSeason)
+    private readonly seasons: Repository<DuelSeason>,
     private readonly hostBots: HostBotsService,
     /** Every write below that changes what a player sees announces itself here (→ socket pushes). */
     private readonly events: DuelEventsPublisher,
@@ -478,17 +484,24 @@ export class DuelsService {
    * tournament duel (row created if the player somehow has none), the ladder
    * otherwise. Tournament duels never touch `duel_rating` numbers: a
    * tournament duel whose tournament an admin deleted (`tournamentId` set to
-   * null by the FK) has no line at all — null, nothing is written.
+   * null by the FK) has no line at all — null, nothing is written. Same for a
+   * ladder duel of a season that is already over: the ladder was frozen and
+   * reset at the rollover, so its late result counts for nobody.
    */
   private async ratingLine(
     em: EntityManager,
-    duel: Pick<Duel, 'tournamentId' | 'kind'>,
+    duel: Pick<Duel, 'tournamentId' | 'kind' | 'seasonId'>,
     playerId: string,
   ): Promise<DuelRatingLine | null> {
     const tournamentId = duel.tournamentId;
     if (!tournamentId) {
       if (duel.kind === DuelKind.TOURNAMENT) return null;
-      return this.ensureRating(playerId, em);
+      // Row first: the rollover locks `duel_rating`, so the season check below sees its outcome.
+      const line = await this.ensureRating(playerId, em);
+      if (duel.seasonId && !(await this.isSeasonActive(em, duel.seasonId))) {
+        return null;
+      }
+      return line;
     }
     await em
       .createQueryBuilder()
@@ -516,6 +529,41 @@ export class DuelsService {
   ): Promise<void> {
     await this.ensureRating(playerId, em);
     await em.update(DuelRating, { playerId }, { cooldownUntil });
+  }
+
+  // ── seasons ──────────────────────────────────────────────────────────────
+
+  /** The live ladder season (null only before the first one is created). */
+  activeSeason(
+    em: EntityManager = this.dataSource.manager,
+  ): Promise<DuelSeason | null> {
+    return em.findOne(DuelSeason, {
+      where: { status: DuelSeasonStatus.ACTIVE },
+    });
+  }
+
+  /**
+   * The season's time is up but the rollover has not finished yet: the
+   * ladder takes no new games (tournament queues stay open).
+   */
+  static isSeasonClosing(season: DuelSeason | null): boolean {
+    return season != null && season.endsAt.getTime() <= Date.now();
+  }
+
+  private async isSeasonActive(
+    em: EntityManager,
+    seasonId: string,
+  ): Promise<boolean> {
+    return em.exists(DuelSeason, {
+      where: { id: seasonId, status: DuelSeasonStatus.ACTIVE },
+    });
+  }
+
+  private static seasonClosingError(): ConflictException {
+    return new ConflictException({
+      error: DuelQueueBlockedReason.SEASON_CLOSING,
+      message: 'Сезон завершується — підбиваємо підсумки, спробуйте за хвилину',
+    });
   }
 
   // ── queue ────────────────────────────────────────────────────────────────
@@ -600,6 +648,12 @@ export class DuelsService {
     }
     if (blocked === DuelQueueBlockedReason.ALREADY_QUEUED) {
       return this.getStatus(playerId);
+    }
+    if (
+      !tournamentId &&
+      DuelsService.isSeasonClosing(await this.activeSeason())
+    ) {
+      throw DuelsService.seasonClosingError();
     }
     const now = new Date();
     // Waiting in the other queue (ladder ↔ tournament): move over.
@@ -707,12 +761,11 @@ export class DuelsService {
     const activeDto = active ? (dtos.shift() ?? null) : null;
     const lastFinishedDto = lastFinished ? (dtos.shift() ?? null) : null;
 
-    const blocked = await this.queueBlockedReason(
-      player,
-      rating,
-      entry != null,
-      bots,
-    );
+    const blocked =
+      (await this.queueBlockedReason(player, rating, entry != null, bots)) ??
+      (DuelsService.isSeasonClosing(await this.activeSeason())
+        ? DuelQueueBlockedReason.SEASON_CLOSING
+        : null);
     const waitSeconds = entry
       ? Math.max(
           0,
@@ -1110,6 +1163,10 @@ export class DuelsService {
     challengerId: string,
     challengedId: string,
   ): Promise<Duel> {
+    const season = await this.activeSeason(em);
+    if (DuelsService.isSeasonClosing(season)) {
+      throw DuelsService.seasonClosingError();
+    }
     const [r1, r2] = await Promise.all([
       this.ensureRating(challengerId, em),
       this.ensureRating(challengedId, em),
@@ -1118,6 +1175,7 @@ export class DuelsService {
     const duel = em.create(Duel, {
       state: DuelState.PENDING,
       kind: DuelKind.FRIEND,
+      seasonId: season?.id ?? null,
       acceptDeadlineAt: null,
       acceptedPlayerIds: [challengerId, challengedId],
       heroes: pickRandomHeroes(2).map((hero, ix) => ({
@@ -1155,10 +1213,16 @@ export class DuelsService {
         }
         // The matchmaker pairs within one queue, so both entries share it.
         const tournamentId = p1.tournamentId ?? null;
+        const season = tournamentId ? null : await this.activeSeason(em);
+        // Ladder pairs wait (rolled back) while the season closes — its rollover drops the queue.
+        if (!tournamentId && DuelsService.isSeasonClosing(season)) {
+          throw new QueueRaceError();
+        }
         const duel = em.create(Duel, {
           state: DuelState.ACCEPTING,
           kind: tournamentId ? DuelKind.TOURNAMENT : DuelKind.RANKED,
           tournamentId,
+          seasonId: season?.id ?? null,
           acceptDeadlineAt: new Date(
             Date.now() + DUEL_ACCEPT_WINDOW_SECONDS * 1000,
           ),
@@ -1203,6 +1267,13 @@ export class DuelsService {
     const tournamentId = duel.tournamentId ?? null;
     // Its tournament was deleted — never fall through into the ladder queue.
     if (duel.kind === DuelKind.TOURNAMENT && !tournamentId) return;
+    // The ladder takes nobody back while its season closes.
+    if (
+      !tournamentId &&
+      DuelsService.isSeasonClosing(await this.activeSeason(em))
+    ) {
+      return;
+    }
     if (tournamentId) {
       const tournament = await em.findOne(DuelTournament, {
         where: { id: tournamentId },
@@ -1794,10 +1865,24 @@ export class DuelsService {
     playerId: string,
     viewerId: string | null,
   ): Promise<DuelPlayerProfileDto> {
+    const season = await this.activeSeason();
+    // The history restarts with each season: its ladder duels plus the tournament games played since it began.
+    const ofSeason: FindOptionsWhere<Duel>[] = season
+      ? [
+          { seasonId: season.id },
+          {
+            kind: DuelKind.TOURNAMENT,
+            createdAt: MoreThanOrEqual(season.startsAt),
+          },
+        ]
+      : [{}];
     const [rating, recent] = await Promise.all([
       this.ratings.findOne({ where: { playerId } }),
       this.duels.find({
-        where: [{ player1Id: playerId }, { player2Id: playerId }],
+        where: ofSeason.flatMap((scope) => [
+          { ...scope, player1Id: playerId },
+          { ...scope, player2Id: playerId },
+        ]),
         relations: ['player1', 'player2'],
         order: { createdAt: 'DESC' },
         take: RECENT_DUELS_LIMIT,

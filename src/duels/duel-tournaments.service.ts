@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   HttpException,
@@ -14,18 +13,18 @@ import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { Player } from '../players/player.entity';
 import { VipService } from '../vip/vip.service';
 import {
-  DUEL_ACTIVE_STATES,
+  DUEL_RUNNING_STATES,
   DUEL_PLAYER_CANCELLABLE_STATES,
   DUEL_TOURNAMENT_JOIN_MAX_ATTEMPTS,
   DUEL_TOURNAMENT_JOIN_WINDOW_SECONDS,
   DuelCancelReason,
-  DuelState,
   DuelTournamentPrize,
   DuelTournamentPrizeKind,
   DuelTournamentStatus,
 } from './duel.constants';
 import { Duel } from './duel.entity';
 import { DuelEventsPublisher } from './duel-events.publisher';
+import { normalizeDuelPrizes } from './duel-prizes.utils';
 import { DuelQueueEntry } from './duel-queue.entity';
 import { DuelRating } from './duel-rating.entity';
 import { DuelTournament } from './duel-tournament.entity';
@@ -35,15 +34,8 @@ import type { DuelLeaderboardDto } from './dto/duel.dto';
 import type {
   CreateDuelTournamentDto,
   DuelTournamentDto,
-  DuelTournamentPrizeInputDto,
   UpdateDuelTournamentDto,
 } from './dto/duel-tournament.dto';
-
-/** Duel states in which a tournament game may still change the tournament's table. */
-const DUEL_RUNNING_STATES: readonly DuelState[] = [
-  ...DUEL_ACTIVE_STATES,
-  DuelState.PROCESSING,
-];
 
 /**
  * Password-protected 1v1 stream tournaments: streamers (media staff) or admins
@@ -114,7 +106,7 @@ export class DuelTournamentsService {
     actorId: string,
     body: CreateDuelTournamentDto,
   ): Promise<DuelTournamentDto> {
-    const prizes = this.normalizePrizes(
+    const prizes = normalizeDuelPrizes(
       body.prizes ?? [],
       [],
       await this.isAdmin(actorId),
@@ -148,7 +140,7 @@ export class DuelTournamentsService {
     // null / '' (→ null in the DTO) clears the link; absent keeps it.
     if (body.streamUrl !== undefined) row.streamUrl = body.streamUrl;
     if (body.prizes != null) {
-      row.prizes = this.normalizePrizes(
+      row.prizes = normalizeDuelPrizes(
         body.prizes,
         row.prizes ?? [],
         await this.isAdmin(actorId),
@@ -281,66 +273,6 @@ export class DuelTournamentsService {
           .map((p) => `#${p.place} ${p.kind} → ${p.awardedPlayerId ?? '—'}`)
           .join(', '),
     );
-  }
-
-  /**
-   * Validates prize places and brings them to the stored shape: unique places,
-   * sorted, fields of the other kind dropped. VIP places are paid value, so a
-   * non-admin may neither add nor change them — only keep the ones an admin set.
-   */
-  private normalizePrizes(
-    input: DuelTournamentPrizeInputDto[],
-    current: DuelTournamentPrize[],
-    isAdmin: boolean,
-  ): DuelTournamentPrize[] {
-    const places = new Set<number>();
-    const prizes = input.map((p): DuelTournamentPrize => {
-      if (places.has(p.place)) {
-        throw new BadRequestException({
-          error: 'tournament_prize_place_duplicate',
-          message: `Приз за ${p.place} місце вказано двічі`,
-        });
-      }
-      places.add(p.place);
-      const title = p.title?.trim() || null;
-      if (p.kind === DuelTournamentPrizeKind.VIP) {
-        return {
-          place: p.place,
-          kind: p.kind,
-          vipMonths: p.vipMonths ?? null,
-          title,
-          imageUrl: null,
-          linkUrl: null,
-          awardedPlayerId: null,
-        };
-      }
-      return {
-        place: p.place,
-        kind: p.kind,
-        vipMonths: null,
-        title,
-        imageUrl: p.imageUrl?.trim() || null,
-        linkUrl: p.linkUrl?.trim() || null,
-        awardedPlayerId: null,
-      };
-    });
-    prizes.sort((a, b) => a.place - b.place);
-
-    if (!isAdmin) {
-      const vipKey = (list: DuelTournamentPrize[]) =>
-        list
-          .filter((p) => p.kind === DuelTournamentPrizeKind.VIP)
-          .map((p) => `${p.place}:${p.vipMonths}`)
-          .sort()
-          .join(',');
-      if (vipKey(prizes) !== vipKey(current)) {
-        throw new ForbiddenException({
-          error: 'tournament_prize_vip_admin_only',
-          message: 'VIP як приз може призначати лише адмін',
-        });
-      }
-    }
-    return prizes;
   }
 
   // ── players ──────────────────────────────────────────────────────────────

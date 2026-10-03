@@ -32,6 +32,19 @@ export class NotificationTeamDto {
   logoUrl: string | null;
 }
 
+export class NotificationSeasonPrizeDto {
+  @ApiProperty()
+  seasonNumber: number;
+
+  @ApiProperty()
+  place: number;
+
+  @ApiProperty({
+    description: 'The prize in words («VIP на 3 міс.» or a title)',
+  })
+  prize: string;
+}
+
 export class NotificationDto {
   @ApiProperty()
   id: string;
@@ -77,6 +90,13 @@ export class NotificationDto {
     description: 'Until when a duel challenge / team request can be answered',
   })
   expiresAt: Date | null;
+
+  @ApiPropertyOptional({
+    type: NotificationSeasonPrizeDto,
+    nullable: true,
+    description: 'Prize place won in a duel season (duel_season_prize)',
+  })
+  seasonPrize: NotificationSeasonPrizeDto | null;
 
   @ApiPropertyOptional({ nullable: true, type: String, format: 'date-time' })
   readAt: Date | null;
