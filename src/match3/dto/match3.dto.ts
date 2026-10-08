@@ -19,8 +19,9 @@ export class FinishMatch3RunDto {
     type: 'array',
     items: { type: 'object', additionalProperties: true },
     description:
-      'Action log in play order: `{ type: "swap" | "blink", from: [r, c], to: [r, c] }`, ' +
-      '`{ type: "laguna", row }`, `{ type: "refresher" }`.',
+      'Action log in play order, each with `t` = ms since the round start: ' +
+      '`{ type: "swap" | "blink", from: [r, c], to: [r, c], t }`, `{ type: "laguna", row, t }`, ' +
+      '`{ type: "refresher", t }`. Times must not run ahead of the server clock.',
   })
   @IsArray()
   @ArrayMaxSize(MATCH3_MAX_ACTIONS)

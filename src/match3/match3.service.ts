@@ -18,6 +18,17 @@ const LEADERBOARD_SIZE = 10;
 /** An ACTIVE run older than this can no longer be finished. */
 const RUN_TTL_MS = 6 * 60 * 60 * 1000;
 const SEED_MAX = 2 ** 31 - 1;
+/**
+ * Action times (`t`, ms since the client got the seed) can never be ahead of the
+ * server clock, which started earlier — beyond this slack the log was forged.
+ */
+const CLOCK_SLACK_MS = 3000;
+/**
+ * The client submits as soon as the round ends; a submit this long after the
+ * deadline means the run was played on a stretched clock. Generous because a
+ * background tab throttles timers to about once a minute.
+ */
+const LATE_SUBMIT_MS = 90_000;
 
 interface ILeaderboardRow {
   playerId: string;
@@ -72,6 +83,19 @@ export class Match3Service {
       throw new BadRequestException({
         error: 'invalid_run',
         message: 'Журнал ходів не відповідає правилам гри',
+      });
+    }
+
+    // The engine checks that `t` only grows and stays within the round; here it
+    // is checked against real time, so the round cannot be played on a slow clock
+    const elapsed = Date.now() - run.startedAt.getTime();
+    if (
+      state.lastT > elapsed + CLOCK_SLACK_MS ||
+      elapsed > state.deadlineMs + LATE_SUBMIT_MS
+    ) {
+      throw new BadRequestException({
+        error: 'invalid_run_time',
+        message: 'Час ходів не збігається з реальним — результат не записано',
       });
     }
 
