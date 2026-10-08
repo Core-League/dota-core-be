@@ -21,6 +21,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { VipModule } from './vip/vip.module';
 import { ChatModule } from './chat/chat.module';
 import { RecruitmentModule } from './recruitment/recruitment.module';
+import { Match3Module } from './match3/match3.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { RecruitmentModule } from './recruitment/recruitment.module';
     VipModule,
     ChatModule,
     RecruitmentModule,
+    Match3Module,
   ],
   controllers: [HealthController],
 })
