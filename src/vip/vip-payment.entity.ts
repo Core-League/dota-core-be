@@ -10,10 +10,11 @@ import {
 import { VipPaymentKind, VipPaymentStatus } from './vip.constants';
 
 /**
- * One Monobank invoice for VIP — the first payment or a renewal. Callbacks are
- * attributed by `invoiceId`, then by `reference` (`VIP-…`), and settle a row
- * once: `PAID` is terminal, so a replayed or reordered callback can never
- * extend VIP twice.
+ * One VIP payment (WayForPay or Monobank) — the first payment or a renewal.
+ * Callbacks are attributed by `invoiceId`, then by `reference` (`VIP-…`), and
+ * settle a row once: a replayed or reordered callback can never extend VIP
+ * twice. The only move after `PAID` is a refund to `REFUNDED`, which is
+ * terminal, so a month is never taken back twice either.
  */
 @Entity('vip_payment')
 @Index('IDX_vip_payment_player', ['playerId'])

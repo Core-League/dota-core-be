@@ -12,8 +12,10 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import {
+  Between,
   DataSource,
   EntityManager,
+  In,
   IsNull,
   LessThan,
   LessThanOrEqual,
@@ -562,6 +564,12 @@ export class VipService implements OnApplicationBootstrap {
 
     if (payload.status === 'success') {
       await this.settleSuccess(payment.id, payload);
+    } else if (payload.status === 'reversed') {
+      await this.settleRefund(
+        payment.id,
+        payload.invoiceId,
+        'Monobank: reversed',
+      );
     } else if (FAILED_INVOICE_STATUSES.has(payload.status)) {
       await this.settleFailure(payment.id, payload);
     }
@@ -650,7 +658,7 @@ export class VipService implements OnApplicationBootstrap {
       });
       if (!payment) return;
       if (payment.status === VipPaymentStatus.PAID) {
-        // A refund of settled money: VIP is not taken back automatically.
+        // A paid invoice reported dead (not a refund, see settleRefund): leave it.
         this.logger.warn(
           `VIP ${payment.reference}: paid invoice ${payload.invoiceId} is now "${payload.status}" — review manually`,
         );
@@ -700,8 +708,10 @@ export class VipService implements OnApplicationBootstrap {
           failureReason: 'WayForPay: Expired',
         });
       } else if (status === 'Refunded' || status === 'Voided') {
-        this.logger.warn(
-          `VIP ${payment.reference}: WayForPay order ${tx.orderReference} is now "${status}" — review manually`,
+        await this.settleRefund(
+          payment.id,
+          tx.orderReference,
+          `WayForPay: ${status}`,
         );
       }
       return true;
@@ -715,8 +725,163 @@ export class VipService implements OnApplicationBootstrap {
     );
     if (tx.transactionStatus === 'Approved') {
       await this.syncRegular(subscription, false);
+    } else if (
+      tx.transactionStatus === 'Refunded' ||
+      tx.transactionStatus === 'Voided'
+    ) {
+      await this.refundRegularCharge(subscription, tx);
     }
     return true;
+  }
+
+  // ── refunds ──────────────────────────────────────────────────────────────
+
+  /**
+   * A paid VIP payment was refunded or voided at the provider: the month it
+   * bought is taken back and auto-renewal stops, so a refunded payer is never
+   * charged again.
+   * - `vipUntil` moves back by {@link VIP_PERIOD_MONTHS}, but never below now
+   *   (VIP then simply ends) and never on a lapsed or lifetime VIP.
+   * - The subscription this payment feeds (the WayForPay regular payment it
+   *   started, or any renewal's) is switched off here and SUSPENDed at
+   *   WayForPay — the same command as a player's cancel.
+   * - Idempotent: the row goes PAID → REFUNDED under its lock, so a repeated
+   *   or parallel callback finds REFUNDED and changes nothing. A payment that
+   *   never settled is just closed as failed.
+   */
+  private async settleRefund(
+    paymentId: string,
+    invoiceId: string,
+    reason: string,
+  ): Promise<void> {
+    const outcome = await this.dataSource.transaction(async (em) => {
+      const payment = await em.findOne(VipPayment, {
+        where: { id: paymentId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!payment || payment.status === VipPaymentStatus.REFUNDED) {
+        return null;
+      }
+      if (payment.status !== VipPaymentStatus.PAID) return 'unpaid' as const;
+
+      payment.status = VipPaymentStatus.REFUNDED;
+      payment.failureReason = reason;
+      await em.save(payment);
+
+      const now = new Date();
+      const player = await em.findOne(Player, {
+        where: { id: payment.playerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      const before = player?.vipUntil ?? null;
+      if (
+        player?.vipUntil &&
+        isVipActive(player, now) &&
+        !isVipLifetime(player)
+      ) {
+        const rolledBack = addMonths(player.vipUntil, -VIP_PERIOD_MONTHS);
+        player.vipUntil = rolledBack > now ? rolledBack : now;
+        await em.save(player);
+      }
+
+      const subscriptions = em.getRepository(VipSubscription);
+      const subscription = await subscriptions.findOne({
+        where: { playerId: payment.playerId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      // An old page whose regular payment was already replaced feeds nothing.
+      const feeds =
+        !!subscription &&
+        (payment.kind === VipPaymentKind.RENEWAL ||
+          subscription.provider !== VipProvider.WAYFORPAY ||
+          subscription.regularRef === payment.invoiceId);
+      let suspend: string | null = null;
+      if (subscription && feeds) {
+        if (
+          subscription.provider === VipProvider.WAYFORPAY &&
+          subscription.regularRef &&
+          subscription.autoRenew
+        ) {
+          suspend = subscription.regularRef;
+        }
+        subscription.autoRenew = false;
+        subscription.nextChargeAt = null;
+        subscription.renewalClaimedAt = null;
+        await subscriptions.save(subscription);
+      }
+
+      this.logger.warn(
+        `VIP ${payment.reference} (${payment.kind}) refunded (${reason}, ${invoiceId}): player ${payment.playerId} ` +
+          `VIP until ${before?.toISOString() ?? 'none'} → ${player?.vipUntil?.toISOString() ?? 'none'}` +
+          `${player ? '' : ' (account deleted)'}, auto-renew ${feeds ? 'off' : 'untouched'}`,
+      );
+      return { playerId: payment.playerId, suspend, found: !!player };
+    });
+    if (outcome === 'unpaid') {
+      await this.settleFailure(paymentId, {
+        invoiceId,
+        status: 'reversed',
+        failureReason: reason,
+      });
+      return;
+    }
+    if (!outcome) return;
+    if (outcome.suspend) {
+      await this.stopRegular(outcome.playerId, outcome.suspend, 'SUSPEND');
+    }
+    if (outcome.found) this.chatAccess.changed([outcome.playerId]);
+  }
+
+  /**
+   * WayForPay refunded one of its own monthly charges. The credited month is
+   * the RENEWAL row of that charge: same subscription, paid within a day of
+   * the refunded order's creation. Found → {@link settleRefund}. Not found
+   * (never credited, or the order carries no date) → auto-renewal still stops,
+   * and admins are told to check the VIP time by hand.
+   */
+  private async refundRegularCharge(
+    subscription: VipSubscription,
+    tx: TWfpTransaction,
+  ): Promise<void> {
+    const reason = `WayForPay: ${tx.transactionStatus ?? 'Refunded'}`;
+    const chargedAt = wfpTime(tx.createdDate) ?? wfpTime(tx.processingDate);
+    const regularRef = subscription.regularRef;
+    if (chargedAt && regularRef) {
+      const rows = await this.dataSource.getRepository(VipPayment).find({
+        where: {
+          playerId: subscription.playerId,
+          kind: VipPaymentKind.RENEWAL,
+          status: In([VipPaymentStatus.PAID, VipPaymentStatus.REFUNDED]),
+          paidAt: Between(
+            new Date(chargedAt.getTime() - WFP_SAME_CHARGE_MS),
+            new Date(chargedAt.getTime() + WFP_SAME_CHARGE_MS),
+          ),
+        },
+      });
+      const distance = (r: VipPayment) =>
+        Math.abs((r.paidAt?.getTime() ?? 0) - chargedAt.getTime());
+      const charge = rows
+        .filter((r) => r.invoiceId?.startsWith(`${regularRef}@`))
+        .sort((a, b) => distance(a) - distance(b))[0];
+      if (charge) {
+        await this.settleRefund(charge.id, tx.orderReference, reason);
+        return;
+      }
+    }
+    const wasOn = subscription.autoRenew;
+    await this.dataSource
+      .getRepository(VipSubscription)
+      .update(
+        { id: subscription.id },
+        { autoRenew: false, nextChargeAt: null, renewalClaimedAt: null },
+      );
+    if (wasOn && regularRef) {
+      await this.stopRegular(subscription.playerId, regularRef, 'SUSPEND');
+    }
+    this.logger.error(
+      `VIP: WayForPay charge ${tx.orderReference} of ${subscription.playerId} was refunded (${reason}) but matches ` +
+        'no credited month — auto-renewal stopped; check the VIP time manually',
+    );
   }
 
   private async settleWayForPaySuccess(
@@ -1017,21 +1182,28 @@ export class VipService implements OnApplicationBootstrap {
   }
 
   /** Stops a WayForPay regular payment for good; failures are logged, never thrown. */
-  private async removeRegular(
+  private removeRegular(playerId: string, regularRef: string): Promise<void> {
+    return this.stopRegular(playerId, regularRef, 'REMOVE');
+  }
+
+  /** REMOVE (for good) or SUSPEND a WayForPay regular payment; failures are logged, never thrown. */
+  private async stopRegular(
     playerId: string,
     regularRef: string,
+    command: 'REMOVE' | 'SUSPEND',
   ): Promise<void> {
     const wfp = this.wfp();
     if (!wfp) return;
     try {
-      const r = await wfp.regular('REMOVE', regularRef);
+      const r = await wfp.regular(command, regularRef);
       const code = Number(r.reasonCode);
       if (code !== WFP_REGULAR_OK && !WFP_REGULAR_GONE.includes(code)) {
         throw new Error(`${code} ${String(r.reason ?? '')}`);
       }
     } catch (err) {
       this.logger.error(
-        `VIP: could not remove WayForPay regular payment ${regularRef} of ${playerId} — remove it in the WayForPay cabinet: ` +
+        `VIP: regularApi ${command} of WayForPay regular payment ${regularRef} of ${playerId} failed — ` +
+          `${command === 'REMOVE' ? 'remove' : 'suspend'} it in the WayForPay cabinet: ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }

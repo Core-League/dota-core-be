@@ -89,7 +89,7 @@ describe('TournamentDonationsService.applyInvoiceCallback', () => {
     },
   );
 
-  it('a callback after PAID is a no-op (terminal), but still attributed', async () => {
+  it('a success or failure after PAID is a no-op, but still attributed', async () => {
     const { service, donationRepo } = build({
       ...pending(),
       status: PaymentStatus.PAID,
@@ -98,7 +98,7 @@ describe('TournamentDonationsService.applyInvoiceCallback', () => {
       paymentPageUrl: null,
     });
 
-    for (const status of ['success', 'failure', 'reversed'] as const) {
+    for (const status of ['success', 'failure', 'expired'] as const) {
       await expect(
         service.applyInvoiceCallback(callback({ status })),
       ).resolves.toBe(true);

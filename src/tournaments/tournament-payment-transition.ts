@@ -43,18 +43,35 @@ const DEAD_STATUSES: ReadonlySet<string> = new Set([
  * changes.
  *
  * Monobank retries a callback up to three times and does not guarantee
- * ordering, so this must be idempotent and order-independent. PAID is terminal:
- * once money has landed, no later push — including a duplicate success or a
- * stale failure — moves the row. Refunds are out of scope by design, so
- * `reversed` only releases the invoice; reconciling the money back is a manual
- * cabinet operation.
+ * ordering, so this must be idempotent and order-independent. Once money has
+ * landed, the only move left is a refund: `reversed` (WayForPay Refunded /
+ * Voided, Monobank reversed) naming the very invoice that paid turns PAID into
+ * REFUNDED. Any other later push — a duplicate success, a stale failure, a
+ * refund of some other invoice — leaves a PAID row alone, and REFUNDED is
+ * terminal, so a repeated refund callback never revokes twice. Before payment,
+ * `reversed` only releases the invoice like any dead status.
  */
 export function nextPaymentState(
   current: TPaymentSnapshot,
   callback: TInvoiceCallback,
   now: Date,
 ): TPaymentStateChange | null {
-  if (current.status === PaymentStatus.PAID) return null;
+  if (current.status === PaymentStatus.REFUNDED) return null;
+  if (current.status === PaymentStatus.PAID) {
+    if (
+      callback.status !== 'reversed' ||
+      callback.invoiceId !== current.invoiceId
+    ) {
+      return null;
+    }
+    return {
+      status: PaymentStatus.REFUNDED,
+      amountPaid: current.amountPaid,
+      paidAt: current.paidAt,
+      invoiceId: current.invoiceId,
+      paymentPageUrl: null,
+    };
+  }
 
   if (callback.status === 'success') {
     const paid = callback.finalAmount ?? callback.amount ?? current.amountPaid;

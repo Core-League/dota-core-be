@@ -37,6 +37,18 @@ export class TournamentTeamPaymentRepository {
     return count > 0;
   }
 
+  /**
+   * PAID → REFUNDED as one conditional update, so two refund callbacks racing
+   * each other revoke once: only the one that flips the row gets true.
+   */
+  async markRefunded(id: string): Promise<boolean> {
+    const result = await this.repo.update(
+      { id, status: PaymentStatus.PAID },
+      { status: PaymentStatus.REFUNDED, paymentPageUrl: null },
+    );
+    return (result.affected ?? 0) > 0;
+  }
+
   /** Generates a reference not already used, retrying on the (rare) collision. */
   async generateUniqueReference(): Promise<string> {
     for (let attempt = 0; attempt < MAX_REFERENCE_ATTEMPTS; attempt += 1) {

@@ -80,21 +80,40 @@ describe('nextPaymentState', () => {
     },
   );
 
-  it('never downgrades a payment that is already PAID', () => {
-    const paid: TPaymentSnapshot = {
-      status: PaymentStatus.PAID,
-      amountPaid: 50000,
-      paidAt: new Date('2026-09-18T00:00:00Z'),
-      invoiceId: 'inv_1',
-      paymentPageUrl: null,
-    };
-    for (const status of [
-      'failure',
-      'expired',
-      'reversed',
-      'success',
-    ] as const) {
+  const paid: TPaymentSnapshot = {
+    status: PaymentStatus.PAID,
+    amountPaid: 50000,
+    paidAt: new Date('2026-09-18T00:00:00Z'),
+    invoiceId: 'inv_1',
+    paymentPageUrl: null,
+  };
+
+  it('never downgrades a PAID payment on a duplicate success or a stale failure', () => {
+    for (const status of ['failure', 'expired', 'success'] as const) {
       expect(nextPaymentState(paid, callback({ status }), now)).toBeNull();
+    }
+  });
+
+  it('turns PAID into REFUNDED when the paid invoice itself is reversed (refunded / voided)', () => {
+    expect(
+      nextPaymentState(paid, callback({ status: 'reversed' }), now),
+    ).toEqual({ ...paid, status: PaymentStatus.REFUNDED });
+  });
+
+  it('ignores a refund of some other invoice of a PAID row', () => {
+    expect(
+      nextPaymentState(
+        paid,
+        callback({ invoiceId: 'inv_old', status: 'reversed' }),
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it('REFUNDED is terminal: a repeated refund or a late success changes nothing', () => {
+    const refunded = { ...paid, status: PaymentStatus.REFUNDED };
+    for (const status of ['reversed', 'success', 'failure'] as const) {
+      expect(nextPaymentState(refunded, callback({ status }), now)).toBeNull();
     }
   });
 

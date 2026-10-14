@@ -491,6 +491,34 @@ export class QualificationService {
       throw new BadRequestException('Команда не бере участі у цьому турнірі');
     }
 
+    await this.removeTeamFromTournament(tournamentId, team);
+  }
+
+  /**
+   * Withdraws a team whose entry fee was refunded (called from the payment
+   * callback, no actor). Same removal as a captain leaving. Returns false when
+   * the team is not registered for the tournament (already left, or a
+   * repeated refund callback).
+   */
+  async withdrawTeam(tournamentId: string, teamId: string): Promise<boolean> {
+    const team = await this.dataSource.getRepository(Team).findOne({
+      where: { id: teamId },
+      relations: ['captain', 'mainPlayers', 'tournaments'],
+    });
+    if (!team?.tournaments?.some((t) => t.id === tournamentId)) return false;
+    await this.removeTeamFromTournament(tournamentId, team);
+    return true;
+  }
+
+  /**
+   * Takes a registered team out of a tournament: its unplayed qualification
+   * matches (and their Dota league nodes), its players' points and the
+   * registration itself. `team` must carry `mainPlayers` and `tournaments`.
+   */
+  private async removeTeamFromTournament(
+    tournamentId: string,
+    team: Team,
+  ): Promise<void> {
     /**
      * Турнір без кваліфікації рядка `Qualification` не має — знімати
      * матчі нічого, лише прибираємо реєстрацію.

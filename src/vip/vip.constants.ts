@@ -100,4 +100,6 @@ export enum VipPaymentStatus {
   PENDING = 'PENDING',
   PAID = 'PAID',
   FAILED = 'FAILED',
+  /** Paid, then refunded or voided at the provider: its month was taken back once. */
+  REFUNDED = 'REFUNDED',
 }

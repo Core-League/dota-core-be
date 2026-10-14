@@ -45,8 +45,9 @@ import {
 import {
   getRegistrationBlockReason,
   registrationBlockMessage,
+  tournamentPlayStartsAt,
 } from './tournament-registration.util';
-import { isJoinableStatus } from './tournaments.model';
+import { TournamentStatus, isJoinableStatus } from './tournaments.model';
 
 @Injectable()
 export class TournamentPaymentsService {
@@ -219,6 +220,19 @@ export class TournamentPaymentsService {
 
       if (payment.status === PaymentStatus.PAID) {
         return this.toIntentDto(payment, entryFee);
+      }
+      if (payment.status === PaymentStatus.REFUNDED) {
+        // Paying again after a refund starts the row over; the refunded
+        // invoice stays in the logs and in payment_consent.
+        this.logger.log(
+          `Payment ${payment.reference}: refunded invoice ${payment.invoiceId ?? '?'} — paying again`,
+        );
+        payment.status = PaymentStatus.PENDING;
+        payment.amountPaid = 0;
+        payment.paidAt = null;
+        payment.invoiceId = null;
+        payment.paymentPageUrl = null;
+        payment.amountDue = null;
       }
 
       // VIP perk: the captain who pays gets the entry fee 10% cheaper.
@@ -465,6 +479,17 @@ export class TournamentPaymentsService {
     const change = nextPaymentState(payment, payload, new Date());
     if (!change) return true;
 
+    if (change.status === PaymentStatus.REFUNDED) {
+      // A parallel copy of this callback may have flipped it already.
+      if (await this.paymentRepo.markRefunded(payment.id)) {
+        this.logger.warn(
+          `Payment ${payment.reference}: paid invoice ${payload.invoiceId} was refunded (${payload.status})`,
+        );
+        await this.withdrawRefundedTeam(payment);
+      }
+      return true;
+    }
+
     payment.status = change.status;
     payment.amountPaid = change.amountPaid;
     payment.paidAt = change.paidAt;
@@ -476,8 +501,9 @@ export class TournamentPaymentsService {
       `Payment ${payment.reference}: invoice ${payload.invoiceId} -> ${payload.status} (${change.status})`,
     );
 
-    // `nextPaymentState` treats PAID as terminal, so a PAID change is always
-    // the first time this payment settles — the join runs exactly once.
+    // `nextPaymentState` only ever leaves PAID for REFUNDED (handled above), so
+    // a PAID change is always the first time this payment settles — the join
+    // runs exactly once.
     if (change.status === PaymentStatus.PAID) {
       await this.joinPaidTeam(payment);
     }
@@ -507,6 +533,50 @@ export class TournamentPaymentsService {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(
         `Payment ${payment.reference}: team ${payment.teamId} paid but could not be registered for tournament ${payment.tournamentId} — ${message}. The captain can still join manually.`,
+      );
+    }
+  }
+
+  /**
+   * The entry fee was refunded: the team gives up its place, as long as the
+   * tournament has not started (status still REGISTRATION and play not begun).
+   * Once it has started the team stays — withdrawing would delete played
+   * results — and admins are warned to decide. Never throws: the callback must
+   * still be acknowledged.
+   */
+  private async withdrawRefundedTeam(
+    payment: TournamentTeamPayment,
+  ): Promise<void> {
+    try {
+      const tournament = await this.dataSource
+        .getRepository(Tournament)
+        .findOne({ where: { id: payment.tournamentId } });
+      if (!tournament) return;
+      const startsAt = tournamentPlayStartsAt(tournament);
+      const started =
+        tournament.tournamentStatus !== TournamentStatus.REGISTRATION ||
+        (!!startsAt && startsAt.getTime() <= Date.now());
+      if (started) {
+        this.logger.warn(
+          `Payment ${payment.reference}: refunded after tournament ${payment.tournamentId} started — ` +
+            `team ${payment.teamId} stays registered; an admin must decide`,
+        );
+        return;
+      }
+      const withdrawn = await this.qualification.withdrawTeam(
+        payment.tournamentId,
+        payment.teamId,
+      );
+      this.logger.warn(
+        withdrawn
+          ? `Payment ${payment.reference}: team ${payment.teamId} withdrawn from tournament ${payment.tournamentId} after the refund`
+          : `Payment ${payment.reference}: team ${payment.teamId} was not registered for tournament ${payment.tournamentId}; nothing to withdraw`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Payment ${payment.reference}: refunded, but team ${payment.teamId} could not be withdrawn from tournament ` +
+          `${payment.tournamentId} — ${message}. Remove it manually.`,
       );
     }
   }
