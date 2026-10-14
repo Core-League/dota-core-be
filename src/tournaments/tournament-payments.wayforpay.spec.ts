@@ -2,6 +2,10 @@ import { wfpOrderReference } from '../connectors/wayforpay/wayforpay.types';
 import { PaymentStatus } from './tournament-team-payment.model';
 import { TournamentDonationsService } from './tournament-donations.service';
 import { TournamentPaymentsService } from './tournament-payments.service';
+import { LEGAL_VERSION } from '../legal/legal.constants';
+
+/** Checkout consent every payment intent must carry. */
+const CONSENT = { consent: true, legalVersion: LEGAL_VERSION };
 
 const headers = {
   host: 'api.example',
@@ -46,6 +50,7 @@ describe('createIntentForCaptain with WayForPay', () => {
       findOne: jest.fn().mockResolvedValue(payment),
       create: jest.fn((data: unknown) => data),
       save: jest.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
+      insert: jest.fn(),
     };
     const dataSource = {
       getRepository: jest.fn().mockReturnValue({
@@ -92,7 +97,12 @@ describe('createIntentForCaptain with WayForPay', () => {
 
   it('mints a WayForPay page under a fresh order reference', async () => {
     const { service, wayforpay, acquiring } = build(pending());
-    const intent = await service.createIntentForCaptain('t1', 'p1', headers);
+    const intent = await service.createIntentForCaptain(
+      't1',
+      'p1',
+      headers,
+      CONSENT,
+    );
     expect(acquiring.createInvoice).not.toHaveBeenCalled();
     const [params] = wayforpay.purchase.mock.calls[0] as [
       Record<string, unknown>,
@@ -112,7 +122,12 @@ describe('createIntentForCaptain with WayForPay', () => {
     const { service, wayforpay } = build(
       pending({ invoiceId: live, paymentPageUrl: 'https://wfp/live' }),
     );
-    const intent = await service.createIntentForCaptain('t1', 'p1', headers);
+    const intent = await service.createIntentForCaptain(
+      't1',
+      'p1',
+      headers,
+      CONSENT,
+    );
     expect(intent.pageUrl).toBe('https://wfp/live');
     expect(wayforpay.checkStatus).not.toHaveBeenCalled();
     expect(wayforpay.purchase).not.toHaveBeenCalled();
@@ -131,7 +146,12 @@ describe('createIntentForCaptain with WayForPay', () => {
       transactionStatus: 'Declined',
       reasonCode: 1127,
     });
-    const intent = await service.createIntentForCaptain('t1', 'p1', headers);
+    const intent = await service.createIntentForCaptain(
+      't1',
+      'p1',
+      headers,
+      CONSENT,
+    );
     expect(wayforpay.purchase).toHaveBeenCalledTimes(1);
     expect(intent.pageUrl).toBe('https://secure.wayforpay.com/page?vkh=new');
   });
@@ -150,7 +170,12 @@ describe('createIntentForCaptain with WayForPay', () => {
       amount: 500,
       currency: 'UAH',
     });
-    const intent = await service.createIntentForCaptain('t1', 'p1', headers);
+    const intent = await service.createIntentForCaptain(
+      't1',
+      'p1',
+      headers,
+      CONSENT,
+    );
     expect(intent.status).toBe(PaymentStatus.PAID);
     expect(intent.amountPaid).toBe(50000);
     expect(wayforpay.purchase).not.toHaveBeenCalled();
@@ -167,7 +192,12 @@ describe('createIntentForCaptain with WayForPay', () => {
         paymentPageUrl: 'https://pay.mbnk.biz/x',
       }),
     );
-    const intent = await service.createIntentForCaptain('t1', 'p1', headers);
+    const intent = await service.createIntentForCaptain(
+      't1',
+      'p1',
+      headers,
+      CONSENT,
+    );
     expect(acquiring.removeInvoice).toHaveBeenCalledWith('p2_monoInv');
     expect(wayforpay.purchase).toHaveBeenCalledTimes(1);
     expect(intent.pageUrl).toBe('https://secure.wayforpay.com/page?vkh=new');
@@ -193,6 +223,10 @@ describe('TournamentDonationsService.createIntent with WayForPay', () => {
         getRepository: () => ({
           findOne: jest.fn().mockResolvedValue({ id: 't1', name: 'Core Cup' }),
         }),
+        transaction: (run: (m: unknown) => unknown) =>
+          run({
+            getRepository: () => ({ ...donationRepo, insert: jest.fn() }),
+          }),
       } as never,
       acquiring as never,
       {
@@ -203,7 +237,7 @@ describe('TournamentDonationsService.createIntent with WayForPay', () => {
       } as never,
       wayforpay as never,
     );
-    const intent = await service.createIntent('t1', 10000, headers);
+    const intent = await service.createIntent('t1', 10000, headers, CONSENT);
     expect(acquiring.createInvoice).not.toHaveBeenCalled();
     const [params] = wayforpay.purchase.mock.calls[0] as [
       Record<string, unknown>,

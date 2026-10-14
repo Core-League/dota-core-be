@@ -1,6 +1,10 @@
 import { InternalServerErrorException } from '@nestjs/common';
 import { PaymentStatus } from './tournament-team-payment.model';
 import { TournamentPaymentsService } from './tournament-payments.service';
+import { LEGAL_VERSION } from '../legal/legal.constants';
+
+/** Checkout consent every payment intent must carry. */
+const CONSENT = { consent: true, legalVersion: LEGAL_VERSION };
 
 /**
  * Exercises only the invoice branch: the guards above it are covered by the
@@ -51,6 +55,7 @@ describe('createIntentForCaptain invoice reuse', () => {
       findOne: jest.fn().mockResolvedValue(payment),
       create: jest.fn((data: unknown) => data),
       save: jest.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
+      insert: jest.fn(),
     };
     const manager = {
       getRepository: jest.fn().mockReturnValue(managerRepo),
@@ -92,7 +97,12 @@ describe('createIntentForCaptain invoice reuse', () => {
       paymentPageUrl: 'https://pay.mbnk.biz/inv_live',
     });
 
-    const intent = await service.createIntentForCaptain('t1', 'p1', headers);
+    const intent = await service.createIntentForCaptain(
+      't1',
+      'p1',
+      headers,
+      CONSENT,
+    );
 
     expect(dataSource.transaction).toHaveBeenCalledTimes(1);
     expect(managerRepo.findOne).toHaveBeenCalledWith({
@@ -112,7 +122,12 @@ describe('createIntentForCaptain invoice reuse', () => {
       paymentPageUrl: null,
     });
 
-    const intent = await service.createIntentForCaptain('t1', 'p1', headers);
+    const intent = await service.createIntentForCaptain(
+      't1',
+      'p1',
+      headers,
+      CONSENT,
+    );
 
     expect(acquiring.createInvoice).toHaveBeenCalledTimes(1);
     expect(intent.pageUrl).toBe('https://pay.mbnk.biz/inv_new');
@@ -137,7 +152,7 @@ describe('createIntentForCaptain invoice reuse', () => {
       paymentPageUrl: null,
     });
 
-    await service.createIntentForCaptain('t1', 'p1', headers);
+    await service.createIntentForCaptain('t1', 'p1', headers, CONSENT);
 
     expect(acquiring.createInvoice).not.toHaveBeenCalled();
   });
@@ -155,9 +170,14 @@ describe('createIntentForCaptain invoice reuse', () => {
     // otherwise return a bare "http://", which would ship a hostless
     // webHookUrl on a real invoice.
     await expect(
-      service.createIntentForCaptain('t1', 'p1', {
-        origin: 'https://spa.example',
-      }),
+      service.createIntentForCaptain(
+        't1',
+        'p1',
+        {
+          origin: 'https://spa.example',
+        },
+        CONSENT,
+      ),
     ).rejects.toThrow(InternalServerErrorException);
 
     expect(acquiring.createInvoice).not.toHaveBeenCalled();
@@ -179,7 +199,12 @@ describe('createIntentForCaptain invoice reuse', () => {
     // has no usable entries: spaOriginFrom returns null, and redirecting the
     // captain to the api origin instead would 404 right after they paid.
     await expect(
-      service.createIntentForCaptain('t1', 'p1', { host: 'api.example' }),
+      service.createIntentForCaptain(
+        't1',
+        'p1',
+        { host: 'api.example' },
+        CONSENT,
+      ),
     ).rejects.toThrow(InternalServerErrorException);
 
     expect(acquiring.createInvoice).not.toHaveBeenCalled();

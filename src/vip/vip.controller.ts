@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiOkResponse,
   ApiOperation,
@@ -20,6 +21,7 @@ import {
 import type { Request } from 'express';
 import { AdminGuard } from '../admin/guards/admin.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PaymentConsentDto } from '../legal/dto/payment-consent.dto';
 import {
   AdminGrantVipDto,
   AdminVipResultDto,
@@ -52,11 +54,19 @@ export class VipController {
       'Create the first VIP payment page (200 ₴, less a loyalty discount)',
     description:
       'Returns the payment page (WayForPay, or Monobank before the switch). The same amount is then ' +
-      'charged monthly until auto-renewal is cancelled. 409 while auto-renewal is already on.',
+      'charged monthly until auto-renewal is cancelled. 409 while auto-renewal is already on. ' +
+      'Requires `consent: true` and the current `legalVersion`.',
   })
   @ApiOkResponse({ type: VipCheckoutDto })
-  checkout(@Req() req: AuthedRequest): Promise<VipCheckoutDto> {
-    return this.vip.checkout(req.user.playerId, req.headers);
+  @ApiBadRequestResponse({
+    description:
+      'consent_required (consent is not true) or legal_version_outdated (legalVersion is not the current one)',
+  })
+  checkout(
+    @Req() req: AuthedRequest,
+    @Body() body: PaymentConsentDto,
+  ): Promise<VipCheckoutDto> {
+    return this.vip.checkout(req.user.playerId, req.headers, body);
   }
 
   @Post('cancel')

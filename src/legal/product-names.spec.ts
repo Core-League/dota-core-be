@@ -7,10 +7,14 @@ import { VipSubscription } from '../vip/vip-subscription.entity';
 import { VipService } from '../vip/vip.service';
 import {
   ENTRY_FEE_PRODUCT_NAME,
+  LEGAL_VERSION,
   PAYMENT_PRODUCT_NAMES,
   SUPPORT_PRODUCT_NAME,
   VIP_PRODUCT_NAME,
 } from './legal.constants';
+
+/** Checkout consent every payment intent must carry. */
+const CONSENT = { consent: true, legalVersion: LEGAL_VERSION };
 
 /**
  * Words an acquirer reads as gambling, betting or "donations" (WayForPay
@@ -132,15 +136,16 @@ describe('payment product names', () => {
         save: jest.fn().mockImplementation((p: unknown) => Promise.resolve(p)),
         insert: jest.fn(),
       };
+      const lookups = {
+        findOne: jest
+          .fn()
+          .mockResolvedValueOnce(tournament)
+          .mockResolvedValue({ id: 'team1' }),
+      };
       const service = new TournamentPaymentsService(
         {} as never,
         {
-          getRepository: () => ({
-            findOne: jest
-              .fn()
-              .mockResolvedValueOnce(tournament)
-              .mockResolvedValue({ id: 'team1' }),
-          }),
+          getRepository: () => lookups,
           transaction: (run: (m: unknown) => unknown) =>
             run({ getRepository: () => managerRepo }),
         } as never,
@@ -150,7 +155,7 @@ describe('payment product names', () => {
         wayforpay as never,
       );
 
-      await service.createIntentForCaptain('t1', 'p1', headers);
+      await service.createIntentForCaptain('t1', 'p1', headers, CONSENT);
 
       const names = sentNames(wayforpay, monobank);
       expect(names).toEqual([ENTRY_FEE_PRODUCT_NAME]);
@@ -182,7 +187,7 @@ describe('payment product names', () => {
         wayforpay as never,
       );
 
-      await service.createIntent('t1', 10000, headers);
+      await service.createIntent('t1', 10000, headers, CONSENT);
 
       const names = sentNames(wayforpay, monobank);
       expect(names).toEqual([SUPPORT_PRODUCT_NAME]);
@@ -215,7 +220,8 @@ describe('payment product names', () => {
         ],
         [VipPayment, payments],
       ]);
-      const getRepository = (entity: unknown) => repos.get(entity);
+      const getRepository = (entity: unknown) =>
+        repos.get(entity) ?? { insert: jest.fn() };
       const service = new VipService(
         {
           getRepository,
@@ -227,7 +233,7 @@ describe('payment product names', () => {
         wayforpay as never,
       );
 
-      await service.checkout('p1', headers);
+      await service.checkout('p1', headers, CONSENT);
 
       const names = sentNames(wayforpay, monobank);
       expect(names).toEqual([VIP_PRODUCT_NAME]);

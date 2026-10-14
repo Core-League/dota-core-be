@@ -39,6 +39,7 @@ import { TournamentDonationsService } from './tournament-donations.service';
 import { playerIdFromOptionalBearer } from './optional-bearer.util';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { CreateTournamentDonationDto } from './dto/create-tournament-donation.dto';
+import { PaymentConsentDto } from '../legal/dto/payment-consent.dto';
 import { TournamentDonationIntentDto } from './dto/tournament-donation-intent.dto';
 import { JoinTournamentDto } from './dto/join-tournament.dto';
 import { MarkPaymentPaidDto } from './dto/mark-payment-paid.dto';
@@ -251,16 +252,25 @@ export class TournamentsController {
   @ApiBearerAuth()
   @ApiOperation({
     summary: "Create/return the caller team's entry-fee payment intent",
+    description:
+      'Requires `consent: true` and the current `legalVersion`. A live payment page is returned ' +
+      'again; only a newly minted one is logged as a new consent.',
   })
   @ApiOkResponse({ type: TournamentPaymentIntentDto })
+  @ApiBadRequestResponse({
+    description:
+      'consent_required / legal_version_outdated, a free tournament, or registration closed',
+  })
   createPaymentIntent(
     @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: PaymentConsentDto,
     @Req() req: RequestWithJwtActor,
   ): Promise<TournamentPaymentIntentDto> {
     return this.tournamentPaymentsService.createIntentForCaptain(
       id,
       req.user!.playerId,
       req.headers,
+      body,
     );
   }
 
@@ -289,7 +299,8 @@ export class TournamentsController {
   })
   @ApiOkResponse({ type: TournamentDonationIntentDto })
   @ApiBadRequestResponse({
-    description: 'Amount is not an integer or is outside 1000..5000000 kopecks',
+    description:
+      'Amount is not an integer or is outside 1000..5000000 kopecks; consent_required / legal_version_outdated',
   })
   @ApiNotFoundResponse({ description: 'Tournament not found' })
   createDonationIntent(
@@ -301,6 +312,7 @@ export class TournamentsController {
       id,
       body.amount,
       req.headers,
+      body,
       playerIdFromOptionalBearer(req.headers, this.jwt),
     );
   }

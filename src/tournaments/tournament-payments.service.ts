@@ -22,6 +22,12 @@ import {
 } from '../connectors/wayforpay/wayforpay.types';
 import { wfpToInvoiceCallback } from '../connectors/wayforpay/wayforpay-callback.mapper';
 import { ENTRY_FEE_PRODUCT_NAME } from '../legal/legal.constants';
+import {
+  assertPaymentConsent,
+  recordPaymentConsent,
+  type TPaymentConsentInput,
+} from '../legal/payment-consent';
+import { PaymentConsentProduct } from '../legal/payment-consent.entity';
 import { Tournament } from './tournaments.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
 import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
@@ -117,12 +123,18 @@ export class TournamentPaymentsService {
    * Creates (or returns the existing) pending payment intent for the caller's
    * team on a fee'd tournament, so the captain can be redirected to the
    * provider-hosted payment page (WayForPay, or Monobank before the switch).
+   *
+   * Refused without consent to the current legal documents; every newly
+   * minted page is logged in `payment_consent` in the same transaction as the
+   * payment row (a reused live page is not logged again).
    */
   async createIntentForCaptain(
     tournamentId: string,
     playerId: string,
     headers: TRequestHeaders,
+    consent: TPaymentConsentInput,
   ): Promise<TournamentPaymentIntentDto> {
+    assertPaymentConsent(consent);
     const tournament = await this.dataSource
       .getRepository(Tournament)
       .findOne({ where: { id: tournamentId }, relations: ['teams'] });
@@ -247,6 +259,13 @@ export class TournamentPaymentsService {
           payment.paymentPageUrl = page.url;
           payment.amountDue = amountDue;
           payment = await repo.save(payment);
+          await recordPaymentConsent(manager, {
+            playerId,
+            product: PaymentConsentProduct.ENTRY_FEE,
+            reference: payment.reference,
+            amountKopecks: amountDue,
+            provider: 'wayforpay',
+          });
         } else {
           payment = await repo.save(payment);
         }
@@ -299,6 +318,13 @@ export class TournamentPaymentsService {
         payment.paymentPageUrl = invoice.pageUrl;
         payment.amountDue = amountDue;
         payment = await repo.save(payment);
+        await recordPaymentConsent(manager, {
+          playerId,
+          product: PaymentConsentProduct.ENTRY_FEE,
+          reference: payment.reference,
+          amountKopecks: amountDue,
+          provider: 'monobank',
+        });
       }
 
       return this.toIntentDto(payment, entryFee);

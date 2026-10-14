@@ -39,6 +39,15 @@ import {
   VIP_PRODUCT_NAME,
   VIP_RENEWAL_PRODUCT_NAME,
 } from '../legal/legal.constants';
+import {
+  assertPaymentConsent,
+  recordPaymentConsent,
+  type TPaymentConsentInput,
+} from '../legal/payment-consent';
+import {
+  PaymentConsentProduct,
+  type TPaymentConsentProvider,
+} from '../legal/payment-consent.entity';
 import { Player } from '../players/player.entity';
 import {
   acquiringWebHookUrlFrom,
@@ -186,12 +195,16 @@ export class VipService implements OnApplicationBootstrap {
   /**
    * Creates the first-payment page and returns it. Monobank tokenizes the card;
    * WayForPay starts a monthly regular payment. Refused while auto-renewal is
-   * already on — the card is charged automatically then.
+   * already on — the card is charged automatically then, and refused without
+   * consent to the current legal documents. The minted page and its
+   * `payment_consent` row are saved in one transaction.
    */
   async checkout(
     playerId: string,
     headers: TRequestHeaders,
+    consent: TPaymentConsentInput,
   ): Promise<VipCheckoutDto> {
+    assertPaymentConsent(consent);
     const buyer = await this.findPlayer(playerId);
     if (isVipLifetime(buyer)) {
       throw new ConflictException({
@@ -267,7 +280,7 @@ export class VipService implements OnApplicationBootstrap {
     });
     payment.invoiceId = invoice.invoiceId;
     payment.pageUrl = invoice.pageUrl;
-    payment = await payments.save(payment);
+    payment = await this.saveMintedPage(payment, 'monobank');
 
     return {
       pageUrl: payment.pageUrl,
@@ -316,7 +329,6 @@ export class VipService implements OnApplicationBootstrap {
       });
       payment.invoiceId = orderReference;
       payment.pageUrl = page.url;
-      payment = await payments.save(payment);
     } catch (err) {
       payment.status = VipPaymentStatus.FAILED;
       payment.failureReason =
@@ -331,11 +343,33 @@ export class VipService implements OnApplicationBootstrap {
         message: 'Платіжний сервіс не відповів — спробуйте за хвилину',
       });
     }
+    payment = await this.saveMintedPage(payment, 'wayforpay');
     return {
       pageUrl: payment.pageUrl,
       reference: payment.reference,
       amount: payment.amount,
     };
+  }
+
+  /**
+   * Records a newly minted checkout page on the payment row and logs the
+   * payer's consent in the same transaction: both land, or neither does.
+   */
+  private saveMintedPage(
+    payment: VipPayment,
+    provider: TPaymentConsentProvider,
+  ): Promise<VipPayment> {
+    return this.dataSource.transaction(async (em) => {
+      const saved = await em.getRepository(VipPayment).save(payment);
+      await recordPaymentConsent(em, {
+        playerId: payment.playerId,
+        product: PaymentConsentProduct.VIP,
+        reference: payment.reference,
+        amountKopecks: payment.amount,
+        provider,
+      });
+      return saved;
+    });
   }
 
   /** Stops future charges (a WayForPay regular payment is suspended there first); VIP stays until `vipUntil`. */

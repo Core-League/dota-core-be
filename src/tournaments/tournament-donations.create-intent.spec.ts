@@ -7,6 +7,11 @@ import {
   DONATION_INVOICE_VALIDITY_SEC,
   TournamentDonationsService,
 } from './tournament-donations.service';
+import { LEGAL_VERSION } from '../legal/legal.constants';
+import { PaymentConsent } from '../legal/payment-consent.entity';
+
+/** Checkout consent every payment intent must carry. */
+const CONSENT = { consent: true, legalVersion: LEGAL_VERSION };
 
 type TInvoiceParams = {
   amount: number;
@@ -68,6 +73,7 @@ describe('TournamentDonationsService.createIntent', () => {
         });
       }),
     };
+    const consentRepo = { insert: jest.fn() };
     const dataSource = {
       getRepository: jest.fn().mockReturnValue({
         findOne: jest
@@ -76,6 +82,16 @@ describe('TournamentDonationsService.createIntent', () => {
             options.tournament === undefined ? tournament : options.tournament,
           ),
       }),
+      // The row that records the minted invoice and its consent row are
+      // written in one transaction; the manager hands back the same stubs.
+      transaction: jest
+        .fn()
+        .mockImplementation((run: (m: unknown) => unknown) =>
+          run({
+            getRepository: (entity: unknown) =>
+              entity === PaymentConsent ? consentRepo : donationRepo,
+          }),
+        ),
     };
     const config = {
       getEnvConfig: () =>
@@ -90,7 +106,7 @@ describe('TournamentDonationsService.createIntent', () => {
       acquiring as never,
       config as never,
     );
-    return { service, donationRepo, acquiring };
+    return { service, donationRepo, acquiring, consentRepo };
   };
 
   const savedRows = (donationRepo: { save: jest.Mock }) =>
@@ -100,7 +116,7 @@ describe('TournamentDonationsService.createIntent', () => {
     const { service, donationRepo, acquiring } = build({ tournament: null });
 
     await expect(
-      service.createIntent('missing', 10000, headers),
+      service.createIntent('missing', 10000, headers, CONSENT),
     ).rejects.toThrow(NotFoundException);
 
     expect(donationRepo.save).not.toHaveBeenCalled();
@@ -110,7 +126,7 @@ describe('TournamentDonationsService.createIntent', () => {
   it('inserts a PENDING DON- row, creates the invoice with kopecks and derived URLs, then persists invoiceId/pageUrl', async () => {
     const { service, donationRepo, acquiring } = build();
 
-    const intent = await service.createIntent('t1', 10000, headers);
+    const intent = await service.createIntent('t1', 10000, headers, CONSENT);
 
     // First save: the bare PENDING row, before Monobank is called.
     const [inserted, withInvoice] = savedRows(donationRepo);
@@ -155,8 +171,8 @@ describe('TournamentDonationsService.createIntent', () => {
   it('mints a second row and a second invoice on a second call (no reuse)', async () => {
     const { service, donationRepo, acquiring } = build();
 
-    const first = await service.createIntent('t1', 10000, headers);
-    const second = await service.createIntent('t1', 10000, headers);
+    const first = await service.createIntent('t1', 10000, headers, CONSENT);
+    const second = await service.createIntent('t1', 10000, headers, CONSENT);
 
     expect(donationRepo.generateUniqueReference).toHaveBeenCalledTimes(2);
     expect(acquiring.createInvoice).toHaveBeenCalledTimes(2);
@@ -171,7 +187,7 @@ describe('TournamentDonationsService.createIntent', () => {
   it('attributes the donation to the caller when a player id is supplied', async () => {
     const { service, donationRepo } = build();
 
-    await service.createIntent('t1', 30000, headers, 'player-42');
+    await service.createIntent('t1', 30000, headers, CONSENT, 'player-42');
 
     const [inserted] = savedRows(donationRepo);
     expect(inserted.donorPlayerId).toBe('player-42');
@@ -183,7 +199,7 @@ describe('TournamentDonationsService.createIntent', () => {
     });
 
     await expect(
-      service.createIntent('t1', 50000, headers),
+      service.createIntent('t1', 50000, headers, CONSENT),
     ).resolves.toMatchObject({ amount: 50000 });
     expect(acquiring.createInvoice).toHaveBeenCalledTimes(1);
   });
@@ -193,7 +209,7 @@ describe('TournamentDonationsService.createIntent', () => {
       env: { CORS_ORIGINS: 'https://spa.example', MONOBANK_MERCHANT_TOKEN: '' },
     });
 
-    const intent = await service.createIntent('t1', 10000, headers);
+    const intent = await service.createIntent('t1', 10000, headers, CONSENT);
 
     expect(acquiring.createInvoice).not.toHaveBeenCalled();
     expect(donationRepo.save).toHaveBeenCalledTimes(1);
@@ -210,7 +226,12 @@ describe('TournamentDonationsService.createIntent', () => {
     // No `host` and no `x-forwarded-host`: a bare "http://" webHookUrl would
     // leave Monobank's callback nowhere to land.
     await expect(
-      service.createIntent('t1', 10000, { origin: 'https://spa.example' }),
+      service.createIntent(
+        't1',
+        10000,
+        { origin: 'https://spa.example' },
+        CONSENT,
+      ),
     ).rejects.toThrow(InternalServerErrorException);
 
     expect(acquiring.createInvoice).not.toHaveBeenCalled();
@@ -222,7 +243,7 @@ describe('TournamentDonationsService.createIntent', () => {
     });
 
     await expect(
-      service.createIntent('t1', 10000, { host: 'api.example' }),
+      service.createIntent('t1', 10000, { host: 'api.example' }, CONSENT),
     ).rejects.toThrow(InternalServerErrorException);
 
     expect(acquiring.createInvoice).not.toHaveBeenCalled();

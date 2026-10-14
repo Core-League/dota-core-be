@@ -1,12 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsInt, Max, Min } from 'class-validator';
+import { PaymentConsentDto } from '../../legal/dto/payment-consent.dto';
 
 /** Smallest support payment accepted, in kopecks (10 грн). */
 export const MIN_DONATION_KOPECKS = 1000;
 /** Largest support payment accepted, in kopecks (50 000 грн). */
 export const MAX_DONATION_KOPECKS = 5_000_000;
 
-export class CreateTournamentDonationDto {
+/** A voluntary support payment: the amount plus checkout consent. */
+export class CreateTournamentDonationDto extends PaymentConsentDto {
   @ApiProperty({
     description: 'Voluntary support amount in kopecks, e.g. 10000 for 100 грн.',
     minimum: MIN_DONATION_KOPECKS,

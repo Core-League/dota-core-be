@@ -7,6 +7,15 @@ import type { TInvoiceCallbackPayload } from '../connectors/monobank-acquiring/m
 import { WayForPayService } from '../connectors/wayforpay/wayforpay.service';
 import { wfpOrderReference } from '../connectors/wayforpay/wayforpay.types';
 import { SUPPORT_PRODUCT_NAME } from '../legal/legal.constants';
+import {
+  assertPaymentConsent,
+  recordPaymentConsent,
+  type TPaymentConsentInput,
+} from '../legal/payment-consent';
+import {
+  PaymentConsentProduct,
+  type TPaymentConsentProvider,
+} from '../legal/payment-consent.entity';
 import { Tournament } from './tournaments.entity';
 import { TournamentDonation } from './tournament-donation.entity';
 import { TournamentDonationRepository } from './tournament-donation.repository';
@@ -41,13 +50,18 @@ export class TournamentDonationsService {
    * the switch). Every call is a fresh row:
    * donations have no natural key to find-or-create on, so two clicks are two
    * donations by design. Allowed in any tournament status, COMPLETED included.
+   *
+   * Refused without consent to the current legal documents; the minted page
+   * and its `payment_consent` row are saved in one transaction.
    */
   async createIntent(
     tournamentId: string,
     amount: number,
     headers: TRequestHeaders,
+    consent: TPaymentConsentInput,
     donorPlayerId: string | null = null,
   ): Promise<TournamentDonationIntentDto> {
+    assertPaymentConsent(consent);
     const tournament = await this.dataSource
       .getRepository(Tournament)
       .findOne({ where: { id: tournamentId } });
@@ -87,7 +101,7 @@ export class TournamentDonationsService {
       });
       donation.invoiceId = orderReference;
       donation.paymentPageUrl = page.url;
-      donation = await this.donationRepo.save(donation);
+      donation = await this.saveMintedPage(donation, 'wayforpay');
       return this.toIntentDto(donation);
     }
     if (!env.MONOBANK_MERCHANT_TOKEN) {
@@ -118,9 +132,32 @@ export class TournamentDonationsService {
     });
     donation.invoiceId = invoice.invoiceId;
     donation.paymentPageUrl = invoice.pageUrl;
-    donation = await this.donationRepo.save(donation);
+    donation = await this.saveMintedPage(donation, 'monobank');
 
     return this.toIntentDto(donation);
+  }
+
+  /**
+   * Records a newly minted page on the donation row and logs the payer's
+   * consent in the same transaction: both land, or neither does.
+   */
+  private saveMintedPage(
+    donation: TournamentDonation,
+    provider: TPaymentConsentProvider,
+  ): Promise<TournamentDonation> {
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager
+        .getRepository(TournamentDonation)
+        .save(donation);
+      await recordPaymentConsent(manager, {
+        playerId: donation.donorPlayerId ?? null,
+        product: PaymentConsentProduct.SUPPORT,
+        reference: donation.reference,
+        amountKopecks: donation.amount,
+        provider,
+      });
+      return saved;
+    });
   }
 
   private toIntentDto(
