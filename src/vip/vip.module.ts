@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { ChatEventsModule } from '../chat/chat-access.events';
 import { MonobankAcquiringModule } from '../connectors/monobank-acquiring/monobank-acquiring.module';
+import { WayForPayModule } from '../connectors/wayforpay/wayforpay.module';
 import { Player } from '../players/player.entity';
 import { VipAdminController, VipController } from './vip.controller';
 import { VipPayment } from './vip-payment.entity';
@@ -11,9 +12,9 @@ import { VipSubscription } from './vip-subscription.entity';
 import { VipService } from './vip.service';
 
 /**
- * VIP status (api-v1). The Monobank webhook stays on the shared acquiring
- * receiver in the tournaments module, which hands VIP invoices to
- * {@link VipService.applyInvoiceCallback}.
+ * VIP status (api-v1). The Monobank and WayForPay callbacks stay on the shared
+ * receivers in the tournaments module, which hand VIP payments to
+ * {@link VipService.applyInvoiceCallback} / {@link VipService.applyWayForPayCallback}.
  */
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { VipService } from './vip.service';
     AuthModule,
     ChatEventsModule,
     MonobankAcquiringModule.register(),
+    WayForPayModule,
   ],
   controllers: [VipController, VipAdminController],
   providers: [VipService, VipRenewalScheduler],

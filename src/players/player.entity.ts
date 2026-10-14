@@ -69,13 +69,17 @@ export class Player {
   @Column({ nullable: true, type: 'timestamptz' })
   verifiedAt: Date | null;
 
-  /** VIP lasts while this lies in the future (paid through Monobank or granted by an admin). */
+  /** VIP lasts while this lies in the future (paid or granted by an admin). */
   @Column({ type: 'timestamptz', nullable: true })
   vipUntil: Date | null;
 
   /** Card frame colour from `VIP_FRAME_COLORS`; shown only while VIP lasts. */
   @Column({ type: 'varchar', length: 7, nullable: true })
   vipFrameColor: string | null;
+
+  /** The "payment method changed" pop-up (switch to WayForPay) was read; never shown again. */
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  vipPaymentNoticeSeenAt: Date | null;
 
   /**
    * Team reference: internal team UUID and/or public Dotabuff/OpenDota team id string,

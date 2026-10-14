@@ -19,6 +19,30 @@ export const VIP_RENEWAL_MAX_ATTEMPTS = 3;
 /** A claimed renewal nobody settled for this long may be claimed again. */
 export const VIP_RENEWAL_CLAIM_TTL_MINUTES = 30;
 
+/**
+ * Discount on every future VIP month for players who had paid through
+ * Monobank when the checkout moved to WayForPay (owner 2026-10-14): their
+ * Monobank auto-renewal was cancelled by the switch.
+ */
+export const VIP_SWITCH_DISCOUNT_PERCENT = 10;
+
+/**
+ * WayForPay charges a regular payment some time on its due day (Kyiv), and
+ * the charge is only seen through a callback or regularApi STATUS. VIP is
+ * kept this long past the next scheduled charge, so it never lapses while
+ * the charge is on its way.
+ */
+export const VIP_WFP_CHARGE_GRACE_HOURS = 36;
+
+/** No WayForPay charge seen yet: STATUS is read again after this pause… */
+export const VIP_WFP_RECHECK_HOURS = 6;
+
+/** …until VIP has been over for this long; then the subscription is given up. */
+export const VIP_WFP_GIVE_UP_HOURS = 72;
+
+/** How long a WayForPay regular payment is scheduled for (it runs until cancelled well before that). */
+export const VIP_WFP_REGULAR_YEARS = 5;
+
 /** VIP discount on every tournament entry fee, percent (applied when the paying captain is VIP). */
 export const VIP_TOURNAMENT_DISCOUNT_PERCENT = 10;
 
@@ -60,10 +84,16 @@ export function isVipFrameColor(value: string): value is TVipFrameColor {
 }
 
 export enum VipPaymentKind {
-  /** First payment through the Monobank page; tokenizes the card. */
+  /** First payment on the payment page (Monobank tokenizes the card, WayForPay starts the regular payment). */
   INITIAL = 'INITIAL',
-  /** Merchant-initiated charge of the saved token. */
+  /** A monthly charge: Monobank token charged by us, or WayForPay's own regular charge. */
   RENEWAL = 'RENEWAL',
+}
+
+/** Who renews a VIP subscription. */
+export enum VipProvider {
+  MONO = 'mono',
+  WAYFORPAY = 'wayforpay',
 }
 
 export enum VipPaymentStatus {

@@ -33,9 +33,60 @@ export class PlayerVipFieldsDto {
   vipFrameColor: string | null;
 }
 
-export class VipStatusDto extends PlayerVipFieldsDto {
-  @ApiProperty({ description: 'Price of one month, kopecks' })
+/**
+ * The one-time "payment method changed" pop-up (switch to WayForPay): shown to
+ * players whose paid VIP lost its Monobank auto-renewal, and to admins.
+ */
+export class VipPaymentNoticeDto {
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    format: 'date-time',
+    description: 'Paid VIP still running until then; null for an admin preview',
+  })
+  vipUntil: Date | null;
+
+  @ApiProperty({ description: 'Discount on every future month, percent' })
+  discountPercent: number;
+
+  @ApiProperty({ description: 'Discounted price of one month, kopecks' })
   priceKopecks: number;
+
+  @ApiProperty({ description: 'Regular price of one month, kopecks' })
+  fullPriceKopecks: number;
+
+  @ApiProperty({
+    description: 'Shown to an admin who is not an affected subscriber',
+  })
+  adminPreview: boolean;
+}
+
+export class VipStatusDto extends PlayerVipFieldsDto {
+  @ApiProperty({
+    description:
+      "Price of one month for this player, kopecks (after the player's discount)",
+  })
+  priceKopecks: number;
+
+  @ApiProperty({ description: 'Regular price of one month, kopecks' })
+  fullPriceKopecks: number;
+
+  @ApiProperty({
+    description: "This player's discount on every month, percent",
+  })
+  discountPercent: number;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    enum: ['wayforpay', 'monobank'],
+    description:
+      'Who takes new payments; null when payments are not configured',
+  })
+  paymentProvider: 'wayforpay' | 'monobank' | null;
+
+  @ApiPropertyOptional({ nullable: true, type: VipPaymentNoticeDto })
+  paymentNotice: VipPaymentNoticeDto | null;
 
   @ApiProperty({ type: [String], description: 'Frame colours a VIP may pick' })
   frameColors: string[];
@@ -69,7 +120,7 @@ export class VipStatusDto extends PlayerVipFieldsDto {
 export class VipCheckoutDto {
   @ApiPropertyOptional({
     nullable: true,
-    description: 'Monobank payment page; null when acquiring is not configured',
+    description: 'Payment page; null when payments are not configured',
   })
   pageUrl: string | null;
 

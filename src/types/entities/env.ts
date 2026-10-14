@@ -52,6 +52,19 @@ export const EnvSchema = z.object({
   // `GET /bank/webhook` (client-info `jars[].id`), NOT from the
   // `send.monobank.ua/{sendId}` link.
   MONOBANK_ACCOUNT_IDS: z.string().default(''),
+
+  // WayForPay merchant (owner 2026-10-14: replaces Monobank acquiring for
+  // entry fees, donations and VIP). All three credentials set = WayForPay
+  // takes every new payment; any missing = Monobank acquiring stays in charge.
+  // MERCHANT_PASSWORD is the regularApi password (VIP monthly subscription).
+  WAYFORPAY_MERCHANT_ACCOUNT: z.string().default(''),
+  WAYFORPAY_SECRET_KEY: z.string().default(''),
+  WAYFORPAY_MERCHANT_PASSWORD: z.string().default(''),
+  // merchantDomainName of every request: the store's site as registered at WayForPay.
+  WAYFORPAY_DOMAIN: z
+    .string()
+    .default('www.coreleague.online')
+    .transform((v) => v || 'www.coreleague.online'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

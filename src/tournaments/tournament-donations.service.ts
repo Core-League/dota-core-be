@@ -4,6 +4,8 @@ import { DataSource } from 'typeorm';
 import { ConfigConnectorService } from '../connectors/config/config-connector.service';
 import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monobank-acquiring.service';
 import type { TInvoiceCallbackPayload } from '../connectors/monobank-acquiring/monobank-acquiring.types';
+import { WayForPayService } from '../connectors/wayforpay/wayforpay.service';
+import { wfpOrderReference } from '../connectors/wayforpay/wayforpay.types';
 import { Tournament } from './tournaments.entity';
 import { TournamentDonation } from './tournament-donation.entity';
 import { TournamentDonationRepository } from './tournament-donation.repository';
@@ -13,6 +15,7 @@ import { TournamentDonationIntentDto } from './dto/tournament-donation-intent.dt
 import {
   acquiringWebHookUrlFrom,
   tournamentRedirectUrlFrom,
+  wayforpayServiceUrlFrom,
 } from './acquiring-urls.util';
 import type { TRequestHeaders } from './request-origin.util';
 
@@ -28,10 +31,13 @@ export class TournamentDonationsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly acquiring: MonobankAcquiringService,
     private readonly config: ConfigConnectorService,
+    /** Takes every new donation once configured (owner 2026-10-14); Monobank until then. */
+    private readonly wayforpay?: WayForPayService,
   ) {}
 
   /**
-   * Mints a new donation and its Monobank invoice. Every call is a fresh row:
+   * Mints a new donation and its payment page (WayForPay, or Monobank before
+   * the switch). Every call is a fresh row:
    * donations have no natural key to find-or-create on, so two clicks are two
    * donations by design. Allowed in any tournament status, COMPLETED included.
    */
@@ -61,6 +67,28 @@ export class TournamentDonationsService {
     );
 
     const env = this.config.getEnvConfig();
+    if (this.wayforpay?.isConfigured()) {
+      const expiresAt = new Date(
+        Date.now() + DONATION_INVOICE_VALIDITY_SEC * 1000,
+      );
+      const orderReference = wfpOrderReference(reference, expiresAt);
+      const page = await this.wayforpay.purchase({
+        orderReference,
+        amount,
+        productName: `Донат Core League — ${tournament.name}`,
+        serviceUrl: wayforpayServiceUrlFrom(headers),
+        returnUrl: tournamentRedirectUrlFrom(
+          headers,
+          env.CORS_ORIGINS,
+          tournamentId,
+        ),
+        lifetimeSec: DONATION_INVOICE_VALIDITY_SEC,
+      });
+      donation.invoiceId = orderReference;
+      donation.paymentPageUrl = page.url;
+      donation = await this.donationRepo.save(donation);
+      return this.toIntentDto(donation);
+    }
     if (!env.MONOBANK_MERCHANT_TOKEN) {
       // The only case that legitimately yields `pageUrl: null`. The row stays
       // PENDING with no invoice, mirroring an entry fee on an unconfigured box.

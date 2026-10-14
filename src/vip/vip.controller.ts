@@ -48,10 +48,11 @@ export class VipController {
   @Post('checkout')
   @HttpCode(200)
   @ApiOperation({
-    summary: 'Create the first VIP invoice (200 ₴) with card tokenization',
+    summary:
+      'Create the first VIP payment page (200 ₴, less a loyalty discount)',
     description:
-      'Returns the Monobank payment page. The card is saved and charged monthly until auto-renewal ' +
-      'is cancelled. 409 while auto-renewal is already on.',
+      'Returns the payment page (WayForPay, or Monobank before the switch). The same amount is then ' +
+      'charged monthly until auto-renewal is cancelled. 409 while auto-renewal is already on.',
   })
   @ApiOkResponse({ type: VipCheckoutDto })
   checkout(@Req() req: AuthedRequest): Promise<VipCheckoutDto> {
@@ -77,6 +78,16 @@ export class VipController {
   @ApiOkResponse({ type: VipStatusDto })
   resume(@Req() req: AuthedRequest): Promise<VipStatusDto> {
     return this.vip.resumeAutoRenew(req.user.playerId);
+  }
+
+  @Post('payment-notice/seen')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Mark the "payment method changed" pop-up as read',
+  })
+  @ApiOkResponse({ type: VipStatusDto })
+  paymentNoticeSeen(@Req() req: AuthedRequest): Promise<VipStatusDto> {
+    return this.vip.ackPaymentNotice(req.user.playerId);
   }
 
   @Patch('frame-color')

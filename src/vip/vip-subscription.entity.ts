@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Player } from '../players/player.entity';
+import { VipProvider } from './vip.constants';
 
 /**
  * One row per player who ever paid for VIP: the saved card and the
@@ -65,6 +66,29 @@ export class VipSubscription {
    */
   @Column({ type: 'varchar', nullable: true })
   webHookUrl: string | null;
+
+  /** Who renews it: Monobank card token, or WayForPay's own monthly charge. */
+  @Column({ type: 'varchar', length: 16, default: VipProvider.MONO })
+  provider: VipProvider;
+
+  /**
+   * WayForPay: order reference of the paid first month — the regular payment's
+   * name in regularApi (STATUS / SUSPEND / RESUME / REMOVE).
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  regularRef: string | null;
+
+  /** WayForPay: when the newest monthly charge that extended VIP was paid. */
+  @Column({ type: 'timestamptz', nullable: true })
+  lastChargeAt: Date | null;
+
+  /** Loyalty discount on every future month, percent (players who had paid through Monobank). */
+  @Column({ type: 'int', default: 0 })
+  discountPercent: number;
+
+  /** When the switch to WayForPay cancelled this Monobank subscription's auto-renewal. */
+  @Column({ type: 'timestamptz', nullable: true })
+  paymentSwitchedAt: Date | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

@@ -8,6 +8,8 @@ import { PlayoffModule } from '../playoff/playoff.module';
 import { TournamentsService } from './tournaments.service';
 import { TournamentsController } from './tournaments.controller';
 import { TournamentPaymentCallbackController } from './tournament-payment-callback.controller';
+import { WayForPayCallbackController } from './wayforpay-callback.controller';
+import { WayForPayModule } from '../connectors/wayforpay/wayforpay.module';
 import { Tournament } from './tournaments.entity';
 import { TournamentPlayoffTeam } from './tournament-playoff-team.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
@@ -48,6 +50,7 @@ import { VipModule } from '../vip/vip.module';
     DueloModule,
     MatchParticipantsModule,
     MonobankAcquiringModule.register(),
+    WayForPayModule,
     VipModule,
   ],
   providers: [
@@ -62,6 +65,10 @@ import { VipModule } from '../vip/vip.module';
     TournamentQualificationScheduler,
     TournamentManualMatchesService,
   ],
-  controllers: [TournamentsController, TournamentPaymentCallbackController],
+  controllers: [
+    TournamentsController,
+    TournamentPaymentCallbackController,
+    WayForPayCallbackController,
+  ],
 })
 export class TournamentsModule {}

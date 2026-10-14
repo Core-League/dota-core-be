@@ -14,6 +14,13 @@ import { QualificationService } from '../qualification/qualification.service';
 import { ConfigConnectorService } from '../connectors/config/config-connector.service';
 import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monobank-acquiring.service';
 import type { TInvoiceCallbackPayload } from '../connectors/monobank-acquiring/monobank-acquiring.types';
+import { WayForPayService } from '../connectors/wayforpay/wayforpay.service';
+import {
+  parseWfpOrderReference,
+  wfpOrderReference,
+  type TWfpTransaction,
+} from '../connectors/wayforpay/wayforpay.types';
+import { wfpToInvoiceCallback } from '../connectors/wayforpay/wayforpay-callback.mapper';
 import { Tournament } from './tournaments.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
 import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
@@ -26,6 +33,7 @@ import type { TRequestHeaders } from './request-origin.util';
 import {
   acquiringWebHookUrlFrom,
   tournamentRedirectUrlFrom,
+  wayforpayServiceUrlFrom,
 } from './acquiring-urls.util';
 import {
   getRegistrationBlockReason,
@@ -43,6 +51,8 @@ export class TournamentPaymentsService {
     private readonly acquiring: MonobankAcquiringService,
     private readonly config: ConfigConnectorService,
     private readonly qualification: QualificationService,
+    /** Takes every new entry fee once configured (owner 2026-10-14); Monobank until then. */
+    private readonly wayforpay?: WayForPayService,
   ) {}
 
   /** Per-team payment status for a tournament (used by admin overview and captain gating). */
@@ -172,7 +182,11 @@ export class TournamentPaymentsService {
      * lock across the HTTP round-trip is the accepted tradeoff: a slower
      * first request rather than that failure mode.
      */
-    return this.dataSource.transaction(async (manager) => {
+    const wfp = this.wayforpay?.isConfigured() ? this.wayforpay : null;
+    const settled: { payment: TournamentTeamPayment | null } = {
+      payment: null,
+    };
+    const intent = await this.dataSource.transaction(async (manager) => {
       const repo = manager.getRepository(TournamentTeamPayment);
       let payment = await repo.findOne({
         where: { tournamentId, teamId: team.id },
@@ -196,6 +210,47 @@ export class TournamentPaymentsService {
 
       // VIP perk: the captain who pays gets the entry fee 10% cheaper.
       const amountDue = vipEntryFee(entryFee, isVipActive(team.captain));
+
+      if (wfp) {
+        if (await this.reconcileForWayForPay(wfp, payment, amountDue)) {
+          payment = await repo.save(payment);
+          settled.payment = payment;
+          return this.toIntentDto(payment, entryFee);
+        }
+        if (!payment.invoiceId || !payment.paymentPageUrl) {
+          const expiresAt = new Date(
+            Date.now() +
+              invoiceValiditySeconds(
+                new Date(),
+                tournament.registrationEndsAt,
+              ) *
+                1000,
+          );
+          const orderReference = wfpOrderReference(
+            payment.reference,
+            expiresAt,
+          );
+          const page = await wfp.purchase({
+            orderReference,
+            amount: amountDue,
+            productName: `Вступний внесок — ${tournament.name}`,
+            serviceUrl: wayforpayServiceUrlFrom(headers),
+            returnUrl: tournamentRedirectUrlFrom(
+              headers,
+              this.config.getEnvConfig().CORS_ORIGINS,
+              tournamentId,
+            ),
+            lifetimeSec: Math.floor((expiresAt.getTime() - Date.now()) / 1000),
+          });
+          payment.invoiceId = orderReference;
+          payment.paymentPageUrl = page.url;
+          payment.amountDue = amountDue;
+          payment = await repo.save(payment);
+        } else {
+          payment = await repo.save(payment);
+        }
+        return this.toIntentDto(payment, entryFee);
+      }
 
       // The price changed since the open invoice was minted (the captain became
       // VIP, or VIP lapsed): invalidate it and mint one at the right amount. If
@@ -247,6 +302,80 @@ export class TournamentPaymentsService {
 
       return this.toIntentDto(payment, entryFee);
     });
+    // Registered after the lock is released, exactly like a callback would.
+    if (settled.payment) await this.joinPaidTeam(settled.payment);
+    return intent;
+  }
+
+  /**
+   * Decides, under the payment-row lock, whether the open invoice can be handed
+   * out again once WayForPay takes payments. Mutates `payment` in memory (the
+   * caller saves it); returns true when the open page turned out to be paid.
+   *
+   * - A WayForPay page that is still live at the right price is reused.
+   * - A lapsed or re-priced page is asked about first (CHECK_STATUS): paid →
+   *   settled now; mid-payment → kept; otherwise dropped for a fresh page. A
+   *   WayForPay page cannot be withdrawn, so a re-priced one stays payable until
+   *   it lapses — paying either one settles the fee (a reference match).
+   * - A Monobank invoice from before the switch is withdrawn at Monobank; if
+   *   Monobank refuses it is kept, rather than risk two payable invoices.
+   */
+  private async reconcileForWayForPay(
+    wfp: WayForPayService,
+    payment: TournamentTeamPayment,
+    amountDue: number,
+  ): Promise<boolean> {
+    if (!payment.invoiceId) return false;
+    const repriced =
+      payment.amountDue != null && payment.amountDue !== amountDue;
+    const order = parseWfpOrderReference(payment.invoiceId);
+    if (!order || order.reference !== payment.reference) {
+      try {
+        await this.acquiring.removeInvoice(payment.invoiceId);
+        payment.invoiceId = null;
+        payment.paymentPageUrl = null;
+      } catch (err) {
+        this.logger.warn(
+          `Payment ${payment.reference}: could not withdraw Monobank invoice ${payment.invoiceId} ` +
+            `after the switch to WayForPay (${err instanceof Error ? err.message : String(err)}); keeping it`,
+        );
+      }
+      return false;
+    }
+    // A minute of margin: never hand out a page that lapses while it loads.
+    const live = order.expiresAt.getTime() > Date.now() + 60_000;
+    if (live && !repriced) return false;
+
+    let tx: TWfpTransaction;
+    try {
+      tx = await wfp.checkStatus(payment.invoiceId);
+    } catch (err) {
+      this.logger.warn(
+        `Payment ${payment.reference}: WayForPay CHECK_STATUS of ${payment.invoiceId} failed ` +
+          `(${err instanceof Error ? err.message : String(err)}); keeping the page`,
+      );
+      return false;
+    }
+    const callback = wfpToInvoiceCallback(tx, payment.reference);
+    if (callback.status === 'success') {
+      const change = nextPaymentState(payment, callback, new Date());
+      if (!change) return false;
+      Object.assign(payment, change);
+      this.logger.log(
+        `Payment ${payment.reference}: WayForPay order ${tx.orderReference} found paid on re-request`,
+      );
+      return true;
+    }
+    // Money mid-flight on this page: never mint a second one under it.
+    if (
+      callback.status === 'processing' &&
+      tx.transactionStatus !== 'Declined'
+    ) {
+      return false;
+    }
+    payment.invoiceId = null;
+    payment.paymentPageUrl = null;
+    return false;
   }
 
   /** The caller's own team payment for a tournament (used for polling), or null. */

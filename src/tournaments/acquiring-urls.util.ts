@@ -26,13 +26,25 @@ function hasHost(origin: string): boolean {
  * through but never settles, silently. Fail loudly here instead.
  */
 export function acquiringWebHookUrlFrom(headers: TRequestHeaders): string {
+  return `${callbackOriginFrom(headers)}${ACQUIRING_WEBHOOK_PATH}`;
+}
+
+/** Path on THIS api where WayForPay posts payment results (`serviceUrl`). */
+export const WAYFORPAY_WEBHOOK_PATH = '/webhook/wayforpay';
+
+/** A WayForPay page's `serviceUrl`, derived from the request like the Monobank webHookUrl. */
+export function wayforpayServiceUrlFrom(headers: TRequestHeaders): string {
+  return `${callbackOriginFrom(headers)}${WAYFORPAY_WEBHOOK_PATH}`;
+}
+
+function callbackOriginFrom(headers: TRequestHeaders): string {
   const apiOrigin = apiOriginFrom(headers);
   if (!hasHost(apiOrigin)) {
     throw new InternalServerErrorException(
       "Cannot derive this API's public host from the request headers — refusing to create an invoice with an unreachable webHookUrl",
     );
   }
-  return `${apiOrigin}${ACQUIRING_WEBHOOK_PATH}`;
+  return apiOrigin;
 }
 
 /**
