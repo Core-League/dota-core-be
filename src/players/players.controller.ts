@@ -15,10 +15,12 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBadGatewayResponse,
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
   ApiOkResponse,
+  ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -101,6 +103,17 @@ export class PlayersController {
   @Delete(':id')
   @UseGuards(JwtAuthGuard, OwnPlayerOrAdminGuard)
   @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Delete a player account (own account or admin)',
+    description:
+      'First stops every VIP auto-payment: the WayForPay regular payment is removed at WayForPay ' +
+      'and a Monobank card token is forgotten, so the card is never charged again.',
+  })
+  @ApiBadGatewayResponse({
+    description:
+      'payment_provider: the WayForPay regular payment could not be removed (also 503 when WayForPay ' +
+      'is not configured); nothing was deleted, try again',
+  })
   async remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
     await this.playersService.remove(id);
   }

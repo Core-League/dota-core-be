@@ -700,6 +700,16 @@ export class VipService implements OnApplicationBootstrap {
       if (payment.kind !== VipPaymentKind.INITIAL) return true;
       const status = tx.transactionStatus;
       if (status === 'Approved') {
+        if (!(await this.playerExists(payment.playerId))) {
+          // Paid on a page opened before the account was deleted: there is
+          // nobody to credit, and the regular payment must not charge again.
+          await this.removeRegular(payment.playerId, tx.orderReference);
+          this.logger.error(
+            `VIP ${payment.reference}: WayForPay order ${tx.orderReference} paid after the account was deleted — ` +
+              'regular payment removed; refund it in the WayForPay cabinet',
+          );
+          return true;
+        }
         await this.settleWayForPaySuccess(payment.id, tx);
       } else if (status === 'Expired') {
         await this.settleFailure(payment.id, {
@@ -1209,6 +1219,86 @@ export class VipService implements OnApplicationBootstrap {
     }
   }
 
+  // ── account deletion ─────────────────────────────────────────────────────
+
+  /**
+   * Account deletion (`DELETE /players/:id`): no card of a deleted player may
+   * ever be charged again, so this runs before anything is deleted.
+   * - A WayForPay regular payment (active or suspended) is REMOVEd at
+   *   WayForPay. WayForPay charges it on its own, so if it cannot be removed
+   *   — WayForPay unreachable, a refusal, or credentials gone — this throws
+   *   (502 / 503) and the deletion is aborted with nothing changed; the
+   *   player can simply try again.
+   * - A Monobank card token is only ever charged by us, and the subscription
+   *   row goes with the account, so auto-renewal is switched off here and the
+   *   token deleted at Monobank best effort.
+   */
+  async stopPaymentsForAccountDeletion(playerId: string): Promise<void> {
+    const repo = this.dataSource.getRepository(VipSubscription);
+    const subscription = await repo.findOne({ where: { playerId } });
+    if (!subscription) return;
+
+    if (
+      subscription.provider === VipProvider.WAYFORPAY &&
+      subscription.regularRef
+    ) {
+      await this.removeRegularOrThrow(playerId, subscription.regularRef);
+    }
+    if (
+      subscription.cardToken &&
+      subscription.provider !== VipProvider.WAYFORPAY
+    ) {
+      await this.forgetMonoCard(playerId, subscription.cardToken);
+    }
+    await repo.update(
+      { id: subscription.id },
+      {
+        autoRenew: false,
+        nextChargeAt: null,
+        renewalClaimedAt: null,
+        cardToken: null,
+      },
+    );
+    this.logger.log(
+      `VIP: payments of ${playerId} stopped before account deletion ` +
+        `(${subscription.provider}${subscription.regularRef ? `, regular payment ${subscription.regularRef} removed` : ''})`,
+    );
+  }
+
+  /** REMOVE that must succeed (account deletion): any failure aborts the caller. */
+  private async removeRegularOrThrow(
+    playerId: string,
+    regularRef: string,
+  ): Promise<void> {
+    const refused = {
+      error: 'payment_provider',
+      message:
+        'Не вдалося скасувати автоплатіж VIP у платіжному сервісі — акаунт не видалено. Спробуйте за кілька хвилин',
+    };
+    const wfp = this.wfp();
+    if (!wfp) {
+      this.logger.error(
+        `VIP: account ${playerId} has WayForPay regular payment ${regularRef}, but WayForPay is not configured — deletion refused`,
+      );
+      throw new ServiceUnavailableException(refused);
+    }
+    let code: number;
+    try {
+      code = Number((await wfp.regular('REMOVE', regularRef)).reasonCode);
+    } catch (err) {
+      this.logger.error(
+        `VIP: regularApi REMOVE ${regularRef} before deleting ${playerId} failed — deletion refused: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw new BadGatewayException(refused);
+    }
+    if (code === WFP_REGULAR_OK || WFP_REGULAR_GONE.includes(code)) return;
+    this.logger.error(
+      `VIP: regularApi REMOVE ${regularRef} before deleting ${playerId} refused: ${code} — deletion refused`,
+    );
+    throw new BadGatewayException(refused);
+  }
+
   /** Lifetime grant or revoke: the player's WayForPay regular payment must never charge again. */
   private async removeRegularOf(playerId: string): Promise<void> {
     const subscription = await this.dataSource
@@ -1599,6 +1689,14 @@ export class VipService implements OnApplicationBootstrap {
   /** A new period starts where the current one ends, or now when VIP has lapsed. */
   private periodAnchor(player: Player, now = new Date()): Date {
     return isVipActive(player, now) && player.vipUntil ? player.vipUntil : now;
+  }
+
+  private async playerExists(playerId: string): Promise<boolean> {
+    return (
+      (await this.dataSource
+        .getRepository(Player)
+        .count({ where: { id: playerId } })) > 0
+    );
   }
 
   private async findPlayer(playerId: string): Promise<Player> {

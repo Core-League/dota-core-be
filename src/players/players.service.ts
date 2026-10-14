@@ -25,6 +25,7 @@ import {
   CityRoleSyncReport,
   DiscordBotService,
 } from '../discord/discord-bot.service';
+import { VipService } from '../vip/vip.service';
 
 /** LAN events happen in Ukraine: city roles and `lanCities` validation use its catalog. */
 const LAN_COUNTRY_CODE = 'UA';
@@ -39,6 +40,7 @@ export class PlayersService {
     private readonly teamsService: TeamsService,
     private readonly locationsService: LocationsService,
     private readonly discord: DiscordBotService,
+    private readonly vip: VipService,
   ) {}
 
   private toResponse(player: Player): PlayerResponseDto {
@@ -334,6 +336,10 @@ export class PlayersService {
     if (!player) {
       throw new NotFoundException('Гравця не знайдено');
     }
+    // First, before anything is deleted: a deleted account's card must never
+    // be charged again. Throws (and nothing is deleted) when the WayForPay
+    // regular payment cannot be removed — see stopPaymentsForAccountDeletion.
+    await this.vip.stopPaymentsForAccountDeletion(id);
     // If this player captains any active team, hand off captaincy (promote the
     // next main player, or disband) and revoke their Dota2 league admin before
     // deleting — otherwise the team is left with a deleted captain.

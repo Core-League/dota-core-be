@@ -12,6 +12,7 @@ import { UploadsModule } from '../uploads/uploads.module';
 import { TeamsModule } from '../teams/teams.module';
 import { LocationsModule } from '../locations/locations.module';
 import { DiscordBotModule } from '../discord/discord-bot.module';
+import { VipModule } from '../vip/vip.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { DiscordBotModule } from '../discord/discord-bot.module';
     TeamsModule,
     LocationsModule,
     DiscordBotModule,
+    VipModule,
   ],
   providers: [
     PlayersService,
