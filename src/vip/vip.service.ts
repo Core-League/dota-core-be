@@ -80,6 +80,7 @@ import {
   isVipActive,
   isVipLifetime,
   toVipPublicFields,
+  vipMonthlyPrice,
 } from './vip.utils';
 
 /** Renewals charged per scheduler tick; the rest wait for the next one. */
@@ -90,12 +91,6 @@ const FAILED_INVOICE_STATUSES = new Set(['failure', 'expired', 'reversed']);
 
 /** Two WayForPay charges closer than this are one charge reported twice. */
 const WFP_SAME_CHARGE_MS = 24 * 3600 * 1000;
-
-/** `amount` kopecks with `percent` off, rounded like the entry-fee discount. */
-function discounted(amount: number, percent: number): number {
-  if (percent <= 0) return amount;
-  return Math.round((amount * (100 - percent)) / 100);
-}
 
 /**
  * VIP status: 200 ₴ a month, or granted by an admin.
@@ -158,7 +153,7 @@ export class VipService implements OnApplicationBootstrap {
     const isAdmin = (player.roles ?? []).some((r) => r.isAdminRole);
     return {
       ...toVipPublicFields(player),
-      priceKopecks: discounted(VIP_MONTHLY_PRICE_KOPECKS, discountPercent),
+      priceKopecks: vipMonthlyPrice(discountPercent),
       fullPriceKopecks: VIP_MONTHLY_PRICE_KOPECKS,
       discountPercent,
       paymentProvider: this.paymentProvider(),
@@ -216,10 +211,7 @@ export class VipService implements OnApplicationBootstrap {
         reference: await this.generateReference(),
         kind: VipPaymentKind.INITIAL,
         status: VipPaymentStatus.PENDING,
-        amount: discounted(
-          VIP_MONTHLY_PRICE_KOPECKS,
-          existing?.discountPercent ?? 0,
-        ),
+        amount: vipMonthlyPrice(existing?.discountPercent ?? 0),
         invoiceId: null,
         pageUrl: null,
       }),
@@ -892,12 +884,7 @@ export class VipService implements OnApplicationBootstrap {
             reference,
             kind: VipPaymentKind.RENEWAL,
             status: VipPaymentStatus.PAID,
-            amount:
-              amount ??
-              discounted(
-                VIP_MONTHLY_PRICE_KOPECKS,
-                subscription.discountPercent,
-              ),
+            amount: amount ?? vipMonthlyPrice(subscription.discountPercent),
             invoiceId: chargeKey,
             pageUrl: null,
             paidAt,
@@ -1151,10 +1138,7 @@ export class VipService implements OnApplicationBootstrap {
     return {
       vipUntil: affected ? player.vipUntil : null,
       discountPercent: VIP_SWITCH_DISCOUNT_PERCENT,
-      priceKopecks: discounted(
-        VIP_MONTHLY_PRICE_KOPECKS,
-        VIP_SWITCH_DISCOUNT_PERCENT,
-      ),
+      priceKopecks: vipMonthlyPrice(VIP_SWITCH_DISCOUNT_PERCENT),
       fullPriceKopecks: VIP_MONTHLY_PRICE_KOPECKS,
       adminPreview: !affected,
     };
@@ -1285,10 +1269,7 @@ export class VipService implements OnApplicationBootstrap {
         reference: await this.generateReference(),
         kind: VipPaymentKind.RENEWAL,
         status: VipPaymentStatus.PENDING,
-        amount: discounted(
-          VIP_MONTHLY_PRICE_KOPECKS,
-          subscription.discountPercent ?? 0,
-        ),
+        amount: vipMonthlyPrice(subscription.discountPercent ?? 0),
         invoiceId: null,
         pageUrl: null,
       });

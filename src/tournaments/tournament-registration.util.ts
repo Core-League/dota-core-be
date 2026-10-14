@@ -68,3 +68,33 @@ export function registrationBlockMessage(
 ): string {
   return REGISTRATION_BLOCK_MESSAGES[reason];
 }
+
+/**
+ * When play begins: the qualification window when the tournament runs one,
+ * else the playoff start. The public price list shows it as `startsAt`, and a
+ * refunded entry fee only withdraws the team before this moment.
+ */
+export function tournamentPlayStartsAt(
+  tournament: Pick<
+    Tournament,
+    'hasQualification' | 'qualificationStartsAt' | 'tournamentStartsAt'
+  >,
+): Date | null {
+  if (tournament.hasQualification && tournament.qualificationStartsAt) {
+    return tournament.qualificationStartsAt;
+  }
+  return tournament.tournamentStartsAt ?? null;
+}
+
+/** The moment registration actually closes: the deadline, or an earlier admin close. */
+export function registrationClosesAt(
+  tournament: Pick<Tournament, 'registrationEndsAt' | 'registrationClosedAt'>,
+): Date | null {
+  const { registrationEndsAt, registrationClosedAt } = tournament;
+  if (registrationClosedAt && registrationEndsAt) {
+    return registrationClosedAt < registrationEndsAt
+      ? registrationClosedAt
+      : registrationEndsAt;
+  }
+  return registrationClosedAt ?? registrationEndsAt ?? null;
+}

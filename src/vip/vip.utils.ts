@@ -1,6 +1,7 @@
 import type { Player } from '../players/player.entity';
 import {
   VIP_LIFETIME_UNTIL,
+  VIP_MONTHLY_PRICE_KOPECKS,
   VIP_TOURNAMENT_DISCOUNT_PERCENT,
 } from './vip.constants';
 
@@ -41,6 +42,18 @@ export function addHours(anchor: Date, hours: number): Date {
 export function vipEntryFee(entryFee: number, isVip: boolean): number {
   if (!isVip || entryFee <= 0) return entryFee;
   return Math.round((entryFee * (100 - VIP_TOURNAMENT_DISCOUNT_PERCENT)) / 100);
+}
+
+/**
+ * One VIP month (kopecks) with a loyalty discount, rounded like the entry-fee
+ * discount. The checkout, renewals, `/vip/me` and `GET /public/pricing` all
+ * price VIP through here.
+ */
+export function vipMonthlyPrice(discountPercent = 0): number {
+  if (discountPercent <= 0) return VIP_MONTHLY_PRICE_KOPECKS;
+  return Math.round(
+    (VIP_MONTHLY_PRICE_KOPECKS * (100 - discountPercent)) / 100,
+  );
 }
 
 /** Lifetime VIP: `vipUntil` set to {@link VIP_LIFETIME_UNTIL} by an admin. */

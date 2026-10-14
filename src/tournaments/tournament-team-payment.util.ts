@@ -1,4 +1,5 @@
 import { randomInt } from 'node:crypto';
+import { MAIN_ROSTER_SIZE } from '../recruitment/recruitment.constants';
 
 /** Unambiguous alphabet (no 0/O/1/I) for human-readable payment references. */
 const REFERENCE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -18,4 +19,13 @@ export function generatePaymentReference(
     code += REFERENCE_ALPHABET[randomInt(REFERENCE_ALPHABET.length)];
   }
   return `${prefix}${code}`;
+}
+
+/**
+ * The entry fee (kopecks) split over a full main roster: what the site shows
+ * as "per player". Informational only: the captain pays the whole fee.
+ */
+export function entryFeePerPlayer(entryFee: number): number {
+  if (entryFee <= 0) return 0;
+  return Math.round(entryFee / MAIN_ROSTER_SIZE);
 }

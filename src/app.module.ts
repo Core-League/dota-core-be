@@ -19,6 +19,7 @@ import { DuelsModule } from './duels/duels.module';
 import { FriendsModule } from './friends/friends.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { VipModule } from './vip/vip.module';
+import { LegalModule } from './legal/legal.module';
 import { ChatModule } from './chat/chat.module';
 import { RecruitmentModule } from './recruitment/recruitment.module';
 import { Match3Module } from './match3/match3.module';
@@ -53,6 +54,7 @@ import { Match3Module } from './match3/match3.module';
     FriendsModule,
     NotificationsModule,
     VipModule,
+    LegalModule,
     ChatModule,
     RecruitmentModule,
     Match3Module,
