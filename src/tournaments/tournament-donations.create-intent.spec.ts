@@ -131,7 +131,7 @@ describe('TournamentDonationsService.createIntent', () => {
     expect(params).toEqual({
       amount: 10000,
       reference: 'DON-REF1',
-      destination: 'Донат Core League — Core Cup',
+      destination: 'Добровільна підтримка Core League',
       redirectUrl: 'https://spa.example/tournaments/t1',
       webHookUrl: 'https://api.example/webhook/monobank/acquiring',
       validitySec: DONATION_INVOICE_VALIDITY_SEC,

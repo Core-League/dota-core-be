@@ -27,12 +27,16 @@ describe('CreateTournamentDonationDto', () => {
 
   it('rejects a non-integer amount with a Ukrainian message', async () => {
     const messages = await validateAmount(100.5);
-    expect(messages).toContain('Сума донату має бути цілим числом у копійках');
+    expect(messages).toContain(
+      'Сума підтримки має бути цілим числом у копійках',
+    );
   });
 
   it('rejects a numeric string (no implicit coercion)', async () => {
     const messages = await validateAmount('10000');
-    expect(messages).toContain('Сума донату має бути цілим числом у копійках');
+    expect(messages).toContain(
+      'Сума підтримки має бути цілим числом у копійках',
+    );
   });
 
   it('rejects a missing amount', async () => {
@@ -42,20 +46,20 @@ describe('CreateTournamentDonationDto', () => {
 
   it('rejects an amount below the 10 грн minimum', async () => {
     const messages = await validateAmount(MIN_DONATION_KOPECKS - 1);
-    expect(messages).toEqual(['Мінімальна сума донату — 10 грн']);
+    expect(messages).toEqual(['Мінімальна сума підтримки — 10 грн']);
   });
 
   it('rejects an amount above the 50 000 грн maximum', async () => {
     const messages = await validateAmount(MAX_DONATION_KOPECKS + 1);
-    expect(messages).toEqual(['Максимальна сума донату — 50 000 грн']);
+    expect(messages).toEqual(['Максимальна сума підтримки — 50 000 грн']);
   });
 
   it('rejects zero and negative amounts', async () => {
     await expect(validateAmount(0)).resolves.toEqual([
-      'Мінімальна сума донату — 10 грн',
+      'Мінімальна сума підтримки — 10 грн',
     ]);
     await expect(validateAmount(-10000)).resolves.toEqual([
-      'Мінімальна сума донату — 10 грн',
+      'Мінімальна сума підтримки — 10 грн',
     ]);
   });
 });

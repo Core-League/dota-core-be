@@ -1,23 +1,23 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 /**
- * A freshly minted donation intent: the reference carried on the Monobank
- * invoice, the amount requested, and the hosted page to pay on.
+ * A freshly minted voluntary support payment: the reference carried on the
+ * payment page, the amount requested, and the hosted page to pay on.
  */
 export class TournamentDonationIntentDto {
   @ApiProperty({
     description:
-      'Unique DON- code carried as the reference on the Monobank invoice.',
+      'Unique DON- code carried as the payment reference (shown to the payer).',
   })
   reference: string;
 
-  @ApiProperty({ description: 'Donation amount requested, in kopecks.' })
+  @ApiProperty({ description: 'Support amount requested, in kopecks.' })
   amount: number;
 
   @ApiProperty({
     nullable: true,
     description:
-      'Monobank payment page for the invoice, or null when acquiring is not configured.',
+      'Hosted payment page of the payment provider, or null when no provider is configured.',
   })
   pageUrl: string | null;
 }

@@ -21,6 +21,7 @@ import {
   type TWfpTransaction,
 } from '../connectors/wayforpay/wayforpay.types';
 import { wfpToInvoiceCallback } from '../connectors/wayforpay/wayforpay-callback.mapper';
+import { ENTRY_FEE_PRODUCT_NAME } from '../legal/legal.constants';
 import { Tournament } from './tournaments.entity';
 import { TournamentTeamPayment } from './tournament-team-payment.entity';
 import { TournamentTeamPaymentRepository } from './tournament-team-payment.repository';
@@ -115,7 +116,7 @@ export class TournamentPaymentsService {
   /**
    * Creates (or returns the existing) pending payment intent for the caller's
    * team on a fee'd tournament, so the captain can be redirected to the
-   * Monobank-hosted payment page.
+   * provider-hosted payment page (WayForPay, or Monobank before the switch).
    */
   async createIntentForCaptain(
     tournamentId: string,
@@ -233,7 +234,7 @@ export class TournamentPaymentsService {
           const page = await wfp.purchase({
             orderReference,
             amount: amountDue,
-            productName: `Вступний внесок — ${tournament.name}`,
+            productName: ENTRY_FEE_PRODUCT_NAME,
             serviceUrl: wayforpayServiceUrlFrom(headers),
             returnUrl: tournamentRedirectUrlFrom(
               headers,
@@ -286,7 +287,7 @@ export class TournamentPaymentsService {
         const invoice = await this.acquiring.createInvoice({
           amount: amountDue,
           reference: payment.reference,
-          destination: `Вступний внесок — ${tournament.name}`,
+          destination: ENTRY_FEE_PRODUCT_NAME,
           redirectUrl,
           webHookUrl,
           validitySec: invoiceValiditySeconds(

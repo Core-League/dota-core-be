@@ -6,6 +6,7 @@ import { MonobankAcquiringService } from '../connectors/monobank-acquiring/monob
 import type { TInvoiceCallbackPayload } from '../connectors/monobank-acquiring/monobank-acquiring.types';
 import { WayForPayService } from '../connectors/wayforpay/wayforpay.service';
 import { wfpOrderReference } from '../connectors/wayforpay/wayforpay.types';
+import { SUPPORT_PRODUCT_NAME } from '../legal/legal.constants';
 import { Tournament } from './tournaments.entity';
 import { TournamentDonation } from './tournament-donation.entity';
 import { TournamentDonationRepository } from './tournament-donation.repository';
@@ -75,7 +76,7 @@ export class TournamentDonationsService {
       const page = await this.wayforpay.purchase({
         orderReference,
         amount,
-        productName: `Донат Core League — ${tournament.name}`,
+        productName: SUPPORT_PRODUCT_NAME,
         serviceUrl: wayforpayServiceUrlFrom(headers),
         returnUrl: tournamentRedirectUrlFrom(
           headers,
@@ -110,7 +111,7 @@ export class TournamentDonationsService {
     const invoice = await this.acquiring.createInvoice({
       amount,
       reference,
-      destination: `Донат Core League — ${tournament.name}`,
+      destination: SUPPORT_PRODUCT_NAME,
       redirectUrl,
       webHookUrl,
       validitySec: DONATION_INVOICE_VALIDITY_SEC,

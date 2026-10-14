@@ -283,9 +283,9 @@ export class TournamentsController {
    */
   @Post(':id/donations/intent')
   @ApiOperation({
-    summary: 'Create a donation intent (public; no auth required)',
+    summary: 'Create a voluntary support payment (public; no auth required)',
     description:
-      'Mints a new Monobank invoice for a donation towards the tournament and returns its hosted payment page. Every call is a separate donation.',
+      'Mints a new payment page (WayForPay, or Monobank before the switch) for voluntary support of Core League, shown on this tournament, and returns it. Every call is a separate payment.',
   })
   @ApiOkResponse({ type: TournamentDonationIntentDto })
   @ApiBadRequestResponse({

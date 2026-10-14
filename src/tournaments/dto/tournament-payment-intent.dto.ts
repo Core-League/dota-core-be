@@ -2,14 +2,13 @@ import { ApiProperty } from '@nestjs/swagger';
 import { PaymentStatus } from '../tournament-team-payment.model';
 
 /**
- * A captain-scoped payment intent: the reference carried on the Monobank
- * invoice, the amount owed, and the hosted page to pay on. Returned by the
+ * A captain-scoped payment intent: the reference carried on the payment page, the amount owed, and the hosted page to pay on. Returned by the
  * create-intent and status endpoints so the frontend can redirect and poll.
  */
 export class TournamentPaymentIntentDto {
   @ApiProperty({
     description:
-      'Unique code carried as the reference on the Monobank invoice.',
+      'Unique code carried as the payment reference (shown to the payer).',
   })
   reference: string;
 
@@ -35,7 +34,7 @@ export class TournamentPaymentIntentDto {
   @ApiProperty({
     nullable: true,
     description:
-      'Monobank payment page for the open invoice, or null when there is none to pay.',
+      'Hosted payment page of the payment provider for the open invoice, or null when there is none to pay.',
   })
   pageUrl: string | null;
 }

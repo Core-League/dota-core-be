@@ -35,6 +35,10 @@ import {
   wfpTime,
   type TWfpTransaction,
 } from '../connectors/wayforpay/wayforpay.types';
+import {
+  VIP_PRODUCT_NAME,
+  VIP_RENEWAL_PRODUCT_NAME,
+} from '../legal/legal.constants';
 import { Player } from '../players/player.entity';
 import {
   acquiringWebHookUrlFrom,
@@ -255,7 +259,7 @@ export class VipService implements OnApplicationBootstrap {
     const invoice = await this.acquiring.createInvoice({
       amount: payment.amount,
       reference: payment.reference,
-      destination: 'VIP-статус Core League — 1 місяць',
+      destination: VIP_PRODUCT_NAME,
       redirectUrl,
       webHookUrl,
       validitySec: VIP_INVOICE_VALIDITY_SEC,
@@ -300,7 +304,7 @@ export class VipService implements OnApplicationBootstrap {
       const page = await wfp.purchase({
         orderReference,
         amount: payment.amount,
-        productName: 'VIP-статус Core League — 1 місяць',
+        productName: VIP_PRODUCT_NAME,
         serviceUrl,
         returnUrl,
         lifetimeSec: VIP_INVOICE_VALIDITY_SEC,
@@ -1280,7 +1284,7 @@ export class VipService implements OnApplicationBootstrap {
         cardToken: subscription.cardToken,
         amount: payment.amount,
         reference: payment.reference,
-        destination: 'Продовження VIP-статусу Core League — 1 місяць',
+        destination: VIP_RENEWAL_PRODUCT_NAME,
         webHookUrl: subscription.webHookUrl,
       });
       payment.invoiceId = result.invoiceId;
