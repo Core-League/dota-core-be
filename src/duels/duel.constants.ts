@@ -285,6 +285,35 @@ export const DUEL_BRACKET_MIN_PARTICIPANTS = 2;
 export const DUEL_BRACKET_MAX_PARTICIPANTS = 64;
 /** Prize places a bracket can award: 1–2, and 3–4 through the third-place match. */
 export const DUEL_BRACKET_PRIZE_PLACE_MAX = 4;
+
+/** Streamer channels a bracket may list besides the main stream link. */
+export const DUEL_BRACKET_STREAMER_PLATFORMS = [
+  'telegram',
+  'kick',
+  'youtube',
+  'tiktok',
+  'instagram',
+] as const;
+export type DuelBracketStreamerPlatform =
+  (typeof DUEL_BRACKET_STREAMER_PLATFORMS)[number];
+
+/** `duel_bracket.streamerLinks` (jsonb): every platform key, null = not set. */
+export type DuelBracketStreamerLinks = Record<
+  DuelBracketStreamerPlatform,
+  string | null
+>;
+
+/** Fills every platform key; absent / empty → null. */
+export function normalizeStreamerLinks(
+  links:
+    | Partial<Record<DuelBracketStreamerPlatform, string | null>>
+    | null
+    | undefined,
+): DuelBracketStreamerLinks {
+  return Object.fromEntries(
+    DUEL_BRACKET_STREAMER_PLATFORMS.map((p) => [p, links?.[p] || null]),
+  ) as DuelBracketStreamerLinks;
+}
 /**
  * Duels of one match that may end without a game for a technical reason
  * (lobby not created, game aborted) before the organiser has to decide.

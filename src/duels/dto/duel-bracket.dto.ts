@@ -6,11 +6,13 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
   IsUrl,
   IsUUID,
   Max,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -44,6 +46,52 @@ const toNullableText = ({ value }: { value: unknown }): unknown => {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
 };
+
+/** An http(s) link whose host is one of `hosts` or their subdomain. */
+const hostLink = (...hosts: string[]): RegExp =>
+  new RegExp(
+    `^https?://([a-z0-9-]+\\.)*(${hosts.map((h) => h.replace(/\./g, '\\.')).join('|')})(/|$)`,
+    'i',
+  );
+
+/** Shared by every platform field: optional, empty clears it. */
+const StreamerLink = (
+  description: string,
+  pattern: RegExp,
+): PropertyDecorator => {
+  const decorators: PropertyDecorator[] = [
+    ApiPropertyOptional({
+      nullable: true,
+      type: String,
+      maxLength: STREAM_URL_MAX,
+      description,
+    }),
+    IsOptional(),
+    Transform(toNullableText),
+    IsUrl({ protocols: ['http', 'https'], require_protocol: true }),
+    Matches(pattern, { message: `$property must be a ${description} link` }),
+    MaxLength(STREAM_URL_MAX),
+  ];
+  return (target, key) => decorators.forEach((d) => d(target, key));
+};
+
+/** Streamer channels besides the main stream link; null = not set. */
+export class DuelBracketStreamerLinksDto {
+  @StreamerLink('Telegram', hostLink('t.me', 'telegram.me'))
+  telegram?: string | null;
+
+  @StreamerLink('Kick', hostLink('kick.com'))
+  kick?: string | null;
+
+  @StreamerLink('YouTube', hostLink('youtube.com', 'youtu.be'))
+  youtube?: string | null;
+
+  @StreamerLink('TikTok', hostLink('tiktok.com'))
+  tiktok?: string | null;
+
+  @StreamerLink('Instagram', hostLink('instagram.com'))
+  instagram?: string | null;
+}
 
 /** One bracket tournament as the media list shows it. */
 export class DuelBracketSummaryDto {
@@ -82,6 +130,12 @@ export class DuelBracketSummaryDto {
     description: 'Stream link (http/https)',
   })
   streamUrl: string | null;
+
+  @ApiProperty({
+    type: DuelBracketStreamerLinksDto,
+    description: 'Streamer channels; every key present, null = not set',
+  })
+  streamerLinks: DuelBracketStreamerLinksDto;
 
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt: Date;
@@ -311,6 +365,17 @@ export class CreateDuelBracketDto {
   streamUrl?: string | null;
 
   @ApiPropertyOptional({
+    type: DuelBracketStreamerLinksDto,
+    description:
+      'Telegram / Kick / YouTube / TikTok / Instagram of the streamer',
+  })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => DuelBracketStreamerLinksDto)
+  streamerLinks?: DuelBracketStreamerLinksDto;
+
+  @ApiPropertyOptional({
     type: DuelTournamentPrizeInputDto,
     isArray: true,
     maxItems: DUEL_BRACKET_PRIZE_PLACE_MAX,
@@ -389,6 +454,16 @@ export class UpdateDuelBracketDto {
   @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
   @MaxLength(STREAM_URL_MAX)
   streamUrl?: string | null;
+
+  @ApiPropertyOptional({
+    type: DuelBracketStreamerLinksDto,
+    description: 'Replaces all streamer channels; null / empty clears one',
+  })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => DuelBracketStreamerLinksDto)
+  streamerLinks?: DuelBracketStreamerLinksDto;
 
   @ApiPropertyOptional({
     type: DuelTournamentPrizeInputDto,

@@ -11,6 +11,7 @@ import { Player } from '../players/player.entity';
 import {
   DuelBracketSeeding,
   DuelBracketStatus,
+  DuelBracketStreamerLinks,
   DuelTournamentPrize,
 } from './duel.constants';
 
@@ -55,6 +56,10 @@ export class DuelBracket {
   /** Stream link (http/https) shown on the tournament page. */
   @Column({ type: 'varchar', length: 512, nullable: true, default: null })
   streamUrl: string | null;
+
+  /** Streamer's Telegram / Kick / YouTube / TikTok / Instagram; missing key = not set. */
+  @Column({ type: 'jsonb', default: () => `'{}'` })
+  streamerLinks: Partial<DuelBracketStreamerLinks>;
 
   /** Prize places 1–4, sorted by place; `awardedPlayerId` filled at the finish. */
   @Column({ type: 'jsonb', default: () => `'[]'` })

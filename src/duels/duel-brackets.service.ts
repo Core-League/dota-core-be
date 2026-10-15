@@ -33,6 +33,7 @@ import {
   DuelState,
   DuelTournamentPrize,
   DuelTournamentPrizeKind,
+  normalizeStreamerLinks,
 } from './duel.constants';
 import { Duel } from './duel.entity';
 import { DuelBracket } from './duel-bracket.entity';
@@ -181,6 +182,7 @@ export class DuelBracketsService {
         maxParticipants: body.maxParticipants,
         scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
         streamUrl: body.streamUrl ?? null,
+        streamerLinks: normalizeStreamerLinks(body.streamerLinks),
         prizes,
         createdById: actorId,
       }),
@@ -205,6 +207,9 @@ export class DuelBracketsService {
     if (body.name != null) row.name = body.name.trim();
     if (body.description !== undefined) row.description = body.description;
     if (body.streamUrl !== undefined) row.streamUrl = body.streamUrl;
+    if (body.streamerLinks !== undefined) {
+      row.streamerLinks = normalizeStreamerLinks(body.streamerLinks);
+    }
     if (body.scheduledAt !== undefined) {
       row.scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
     }
@@ -1346,6 +1351,7 @@ export class DuelBracketsService {
       hasPassword: !!row.password,
       scheduledAt: row.scheduledAt,
       streamUrl: row.streamUrl ?? null,
+      streamerLinks: normalizeStreamerLinks(row.streamerLinks),
       createdAt: row.createdAt,
       startedAt: row.startedAt,
       finishedAt: row.finishedAt,
