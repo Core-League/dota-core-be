@@ -10,12 +10,15 @@ declare module 'steam-user' {
     /** null disables on-disk storage of sentry / refresh tokens. */
     dataDirectory?: string | null;
     autoRelogin?: boolean;
+    /** Ask Steam for a fresh refresh token on refresh-token logons (emits `refreshToken`). */
+    renewRefreshTokens?: boolean;
     /** Milliseconds; default 60000. */
     webCompatibilityMode?: boolean;
   }
 
   interface LogOnDetails {
-    accountName: string;
+    /** Omitted for refresh-token logons (the token names the account). */
+    accountName?: string;
     password?: string;
     refreshToken?: string;
     logonID?: number;
@@ -53,6 +56,7 @@ declare module 'steam-user' {
       event: 'error',
       listener: (err: Error & { eresult?: number }) => void,
     ): this;
+    on(event: 'refreshToken', listener: (token: string) => void): this;
     on(event: 'appLaunched', listener: (appid: number) => void): this;
     on(event: 'appQuit', listener: (appid: number) => void): this;
     on(

@@ -23,6 +23,18 @@ export class HostBot {
   @Column({ type: 'text' })
   passwordEnc: string;
 
+  /**
+   * Steam refresh token (encrypted like the password), saved after a password
+   * logon. Later logons use it instead of the password — Steam throttles
+   * repeated password logons. Cleared when credentials change or Steam rejects it.
+   */
+  @Column({ type: 'text', nullable: true })
+  refreshTokenEnc: string | null;
+
+  /** Steam answered AccountLoginDeniedThrottle: no logon attempts before this moment. */
+  @Column({ type: 'timestamptz', nullable: true })
+  loginCooldownUntil: Date | null;
+
   /** Known after the first successful login. */
   @Column({ type: 'varchar', length: 32, nullable: true })
   steamId64: string | null;

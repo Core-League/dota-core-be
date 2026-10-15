@@ -20,11 +20,38 @@ import {
 } from './dota-gc.protocol';
 
 const HELLO_INTERVAL_MS = 5_000;
+/** Treat a refresh token this close to expiry as expired — renew it via a password logon instead. */
+const REFRESH_TOKEN_EXPIRY_MARGIN_S = 24 * 3600;
 
 export interface DotaGcClientOptions {
   accountName: string;
   password: string;
+  /** Saved Steam refresh token; preferred over the password when usable. */
+  refreshToken?: string | null;
   label: string;
+}
+
+/**
+ * steam-user validates a refresh token inside an async `nextTick`, so a bad
+ * one becomes an unhandled rejection instead of an `error` event. Check the
+ * same things up front (Steam issuer, `client` audience) plus expiry.
+ */
+export function isUsableRefreshToken(
+  token: string | null | undefined,
+): token is string {
+  if (!token) return false;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8'),
+    ) as { iss?: string; aud?: string[]; exp?: number };
+    const audience = Array.isArray(payload.aud) ? payload.aud : [];
+    const expiresOk =
+      typeof payload.exp !== 'number' ||
+      payload.exp - REFRESH_TOKEN_EXPIRY_MARGIN_S > Date.now() / 1000;
+    return payload.iss === 'steam' && audience.includes('client') && expiresOk;
+  } catch {
+    return false;
+  }
 }
 
 export interface CreateLobbyOptions {
@@ -48,6 +75,7 @@ interface SoObject {
  *   `lobbyNew`(lobby)     — a lobby object appeared in the cache
  *   `lobbyChanged`(lobby) — the lobby object was updated
  *   `lobbyRemoved`()      — the lobby object was removed
+ *   `refreshToken`(token) — Steam issued a (new) refresh token; persist it
  *   `disconnected`(eresult, msg), `fatal`(error)
  */
 export class DotaGcClient extends EventEmitter {
@@ -57,13 +85,23 @@ export class DotaGcClient extends EventEmitter {
   private _ready = false;
   private _loggedOn = false;
   private _lobby: GcLobby | null = null;
+  private _usingRefreshToken = false;
   private stopped = false;
 
   constructor(private readonly opts: DotaGcClientOptions) {
     super();
     this.logger = new Logger(`GC:${opts.label}`);
-    this.user = new SteamUser({ dataDirectory: null, autoRelogin: true });
+    this.user = new SteamUser({
+      dataDirectory: null,
+      autoRelogin: true,
+      renewRefreshTokens: true,
+    });
     this.wire();
+  }
+
+  /** The current logon attempt uses the saved refresh token, not the password. */
+  get usingRefreshToken(): boolean {
+    return this._usingRefreshToken;
   }
 
   get ready(): boolean {
@@ -90,12 +128,23 @@ export class DotaGcClient extends EventEmitter {
 
   logOn(): void {
     this.stopped = false;
-    this.logger.log('Logging into Steam…');
+    const common = {
+      logonID: randomInt(1, 0x7fffffff),
+      machineName: 'core-league-hostbot',
+    };
+    // Password logons are what Steam throttles (AccountLoginDeniedThrottle):
+    // reuse the saved session whenever there is a usable one.
+    this._usingRefreshToken = isUsableRefreshToken(this.opts.refreshToken);
+    if (this._usingRefreshToken) {
+      this.logger.log('Logging into Steam (saved session)…');
+      this.user.logOn({ refreshToken: this.opts.refreshToken!, ...common });
+      return;
+    }
+    this.logger.log('Logging into Steam (password)…');
     this.user.logOn({
       accountName: this.opts.accountName,
       password: this.opts.password,
-      logonID: randomInt(1, 0x7fffffff),
-      machineName: 'core-league-hostbot',
+      ...common,
     });
   }
 
@@ -116,6 +165,10 @@ export class DotaGcClient extends EventEmitter {
       this.logger.log(`Steam OK (${this.steamId64}). Launching Dota 2…`);
       this.user.setPersona(SteamUser.EPersonaState.Online);
       this.user.gamesPlayed([DOTA_APP_ID]);
+    });
+
+    this.user.on('refreshToken', (token: string) => {
+      this.emit('refreshToken', token);
     });
 
     this.user.on('appLaunched', (appid: number) => {

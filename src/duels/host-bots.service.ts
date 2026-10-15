@@ -27,9 +27,13 @@ export interface HostBotAccount {
   id: number;
   accountName: string;
   password: string;
+  /** Saved Steam refresh token; null → the next logon uses the password. */
+  refreshToken: string | null;
   region: number;
   /** Epoch ms of the last admin restart request; 0 when none. */
   reloadRequestedAt: number;
+  /** Epoch ms before which Steam must not be asked to log this bot in; 0 when none. */
+  loginCooldownUntil: number;
 }
 
 /**
@@ -114,6 +118,8 @@ export class HostBotsService {
     if (!bot) throw new NotFoundException('Host bot not found');
     if (dto.password != null) {
       bot.passwordEnc = encryptHostBotPassword(dto.password);
+      // New password: the old session may be revoked — start over from a password logon.
+      bot.refreshTokenEnc = null;
     }
     if (dto.enabled != null) {
       bot.enabled = dto.enabled;
@@ -171,11 +177,34 @@ export class HostBotsService {
         id: row.id,
         accountName: row.accountName,
         password: decryptHostBotPassword(row.passwordEnc),
+        refreshToken: this.decryptRefreshToken(row),
         region: row.region,
         reloadRequestedAt: row.reloadRequestedAt?.getTime() ?? 0,
+        loginCooldownUntil: row.loginCooldownUntil?.getTime() ?? 0,
       });
     }
     return out;
+  }
+
+  /** A token that can't be decrypted (rotated key) just means a password logon. */
+  private decryptRefreshToken(row: HostBot): string | null {
+    if (!row.refreshTokenEnc) return null;
+    try {
+      return decryptHostBotPassword(row.refreshTokenEnc);
+    } catch {
+      return null;
+    }
+  }
+
+  async saveRefreshToken(id: number, token: string | null): Promise<void> {
+    await this.repo.update(
+      { id },
+      { refreshTokenEnc: token ? encryptHostBotPassword(token) : null },
+    );
+  }
+
+  async setLoginCooldown(id: number, until: Date | null): Promise<void> {
+    await this.repo.update({ id }, { loginCooldownUntil: until });
   }
 
   async setStatus(

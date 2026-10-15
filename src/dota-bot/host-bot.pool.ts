@@ -30,6 +30,8 @@ const CLAIM_INTERVAL_MS = 3_000;
 const RECOVER_INTERVAL_MS = 60_000;
 const RELOAD_INTERVAL_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
+/** Gap between logons of bots started in the same pass — a burst from one IP invites Steam's login throttle. */
+const LOGIN_STAGGER_MS = 10_000;
 /** Git-ignored seed file at the repo root; `HOSTBOT_ACCOUNTS_FILE` overrides the path. */
 const DEFAULT_ACCOUNTS_FILE = 'hostbot-accounts.json';
 
@@ -246,6 +248,7 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
           this.workers.delete(id);
         }
       }
+      let starting = 0;
       for (const account of accounts) {
         if (this.workers.has(account.id)) continue;
         const worker = new HostBotWorker(account, this.config, {
@@ -254,7 +257,7 @@ export class HostBotPool implements OnModuleInit, OnModuleDestroy {
           stats: this.stats,
         });
         this.workers.set(account.id, worker);
-        worker.start();
+        worker.start({ delayMs: starting++ * LOGIN_STAGGER_MS });
         this.logger.log(
           `Started bot #${account.id} (${account.accountName}, region ${account.region})`,
         );

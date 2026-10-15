@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import {
   DUEL_GC_DETAILS_INTERVAL_SECONDS,
@@ -66,6 +67,27 @@ const SERVER_GONE_AFTER_MS = 20_000;
 const SERVER_GONE_MIN_MISSES = 3;
 /** How often the "still following" line is logged while a game runs without the lobby. */
 const FOLLOW_LOG_INTERVAL_MS = 30_000;
+
+/** Login retry backoff after an ordinary Steam error: first wait, then doubling up to the cap. */
+const LOGIN_BACKOFF_MIN_MS = 30_000;
+const LOGIN_BACKOFF_MAX_MS = 15 * 60_000;
+/**
+ * `AccountLoginDeniedThrottle` / `RateLimitExceeded`: Steam blocks logons for
+ * a while and every attempt inside the window extends it, so wait it out —
+ * 30 min, doubling on repeat strikes up to 2 h (plus jitter so bots behind
+ * one IP don't retry in lockstep). The deadline is persisted, so restarts,
+ * deploys and admin "restart" requests respect it too.
+ */
+const LOGIN_THROTTLE_COOLDOWN_MS = 30 * 60_000;
+const LOGIN_THROTTLE_COOLDOWN_MAX_MS = 2 * 60 * 60_000;
+const LOGIN_THROTTLE_JITTER_MS = 2 * 60_000;
+const ERESULT_RATE_LIMIT_EXCEEDED = 84;
+const ERESULT_ACCOUNT_LOGIN_DENIED_THROTTLE = 87;
+/** Answers to a refresh-token logon that mean the saved session is dead — fall back to the password. */
+const REFRESH_TOKEN_REJECTED_ERESULTS = new Set([
+  5 /* InvalidPassword */, 8 /* InvalidParam */, 15 /* AccessDenied */,
+  26 /* Revoked */, 27 /* Expired */,
+]);
 /**
  * `DOTA_GameState` values a match sits in before the game proper: INIT,
  * WAIT_FOR_PLAYERS_TO_LOAD, WAIT_FOR_MAP_TO_LOAD. A server that vanishes
@@ -333,7 +355,9 @@ export class HostBotWorker {
   private tickTimer: NodeJS.Timeout | null = null;
   private statsTimer: NodeJS.Timeout | null = null;
   private reloginTimer: NodeJS.Timeout | null = null;
-  private backoffMs = 5_000;
+  private backoffMs = LOGIN_BACKOFF_MIN_MS;
+  /** Consecutive throttle answers; a persisted cooldown counts as one already. */
+  private throttleStrikes: number;
   private stopping = false;
   private ticking = false;
   private gaveUp = false;
@@ -345,6 +369,7 @@ export class HostBotWorker {
     private readonly deps: HostBotWorkerDeps,
   ) {
     this.logger = new Logger(`HostBot:${account.accountName}`);
+    this.throttleStrikes = account.loginCooldownUntil > 0 ? 1 : 0;
   }
 
   get id(): number {
@@ -379,11 +404,22 @@ export class HostBotWorker {
 
   // ── lifecycle ────────────────────────────────────────────────────────────
 
-  start(): void {
+  /** `delayMs` staggers logons when the pool starts several bots at once. */
+  start(opts: { delayMs?: number } = {}): void {
     this.stopping = false;
     this.gaveUp = false;
     this.startedAtMs = Date.now();
-    this.connect();
+    const cooldownLeft = this.account.loginCooldownUntil - Date.now();
+    if (cooldownLeft > 0) {
+      this.logger.warn(
+        `Steam login throttled earlier — waiting until ${new Date(this.account.loginCooldownUntil).toISOString()}`,
+      );
+      this.scheduleConnect(Math.max(cooldownLeft, opts.delayMs ?? 0));
+    } else if (opts.delayMs) {
+      this.scheduleConnect(opts.delayMs);
+    } else {
+      this.connect();
+    }
     this.tickTimer = setInterval(
       () => void this.safeTick(),
       this.config.tickMs,
@@ -424,10 +460,12 @@ export class HostBotWorker {
     const gc = new DotaGcClient({
       accountName: this.account.accountName,
       password: this.account.password,
+      refreshToken: this.account.refreshToken,
       label: this.account.accountName,
     });
     this.gc = gc;
 
+    gc.on('refreshToken', (token: string) => void this.saveRefreshToken(token));
     gc.on('ready', () => void this.onGcReady());
     gc.on('notReady', () => void this.setStatus(HostBotStatus.OFFLINE));
     gc.on('lobbyNew', (lobby: GcLobby) => void this.onLobbyNew(lobby));
@@ -443,6 +481,26 @@ export class HostBotWorker {
       });
     });
     gc.on('fatal', (err: Error & { eresult?: number }) => {
+      if (
+        err.eresult === ERESULT_ACCOUNT_LOGIN_DENIED_THROTTLE ||
+        err.eresult === ERESULT_RATE_LIMIT_EXCEEDED
+      ) {
+        this.onLoginThrottled(err.message);
+        return;
+      }
+      if (
+        gc.usingRefreshToken &&
+        err.eresult != null &&
+        REFRESH_TOKEN_REJECTED_ERESULTS.has(err.eresult)
+      ) {
+        // The saved session is dead, not the account: one password logon renews it.
+        this.logger.warn(
+          `Saved Steam session rejected (${err.message}) — next login uses the password`,
+        );
+        void this.saveRefreshToken(null);
+        this.scheduleRelogin('saved session rejected');
+        return;
+      }
       const fatalForGood =
         err.message === 'steam_guard_required' ||
         err.eresult === 5 /* InvalidPassword */ ||
@@ -466,11 +524,54 @@ export class HostBotWorker {
   private scheduleRelogin(reason: string): void {
     if (this.stopping || this.reloginTimer) return;
     this.logger.warn(`${reason} — retrying login in ${this.backoffMs / 1000}s`);
+    this.scheduleConnect(this.backoffMs);
+    this.backoffMs = Math.min(this.backoffMs * 2, LOGIN_BACKOFF_MAX_MS);
+  }
+
+  private scheduleConnect(delayMs: number): void {
+    if (this.stopping) return;
+    if (this.reloginTimer) clearTimeout(this.reloginTimer);
     this.reloginTimer = setTimeout(() => {
       this.reloginTimer = null;
-      this.backoffMs = Math.min(this.backoffMs * 2, 300_000);
       this.connect();
-    }, this.backoffMs);
+    }, delayMs);
+  }
+
+  /** Steam refuses logons for a while: drop the client and wait the window out. */
+  private onLoginThrottled(message: string): void {
+    this.throttleStrikes += 1;
+    const cooldownMs =
+      Math.min(
+        LOGIN_THROTTLE_COOLDOWN_MS * 2 ** (this.throttleStrikes - 1),
+        LOGIN_THROTTLE_COOLDOWN_MAX_MS,
+      ) + randomInt(0, LOGIN_THROTTLE_JITTER_MS);
+    const until = Date.now() + cooldownMs;
+    this.account.loginCooldownUntil = until;
+    this.gc?.logOff();
+    this.logger.warn(
+      `Steam login throttled (${message}) — no logon attempts for ${Math.round(cooldownMs / 60_000)} min`,
+    );
+    void this.setStatus(HostBotStatus.OFFLINE, {
+      lastError: `${message} — Steam is blocking logons, next attempt at ${new Date(until).toISOString()}`,
+    });
+    this.deps.hostBots
+      .setLoginCooldown(this.id, new Date(until))
+      .catch((err: unknown) => this.logDbError('save login cooldown', err));
+    this.scheduleConnect(cooldownMs);
+  }
+
+  private async saveRefreshToken(token: string | null): Promise<void> {
+    this.account.refreshToken = token;
+    try {
+      await this.deps.hostBots.saveRefreshToken(this.id, token);
+    } catch (err) {
+      this.logDbError('save Steam refresh token', err);
+    }
+  }
+
+  private logDbError(what: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    this.logger.error(`could not ${what}: ${message}`);
   }
 
   private async setStatus(
@@ -493,7 +594,14 @@ export class HostBotWorker {
   // ── GC events ────────────────────────────────────────────────────────────
 
   private async onGcReady(): Promise<void> {
-    this.backoffMs = 5_000;
+    this.backoffMs = LOGIN_BACKOFF_MIN_MS;
+    this.throttleStrikes = 0;
+    if (this.account.loginCooldownUntil) {
+      this.account.loginCooldownUntil = 0;
+      this.deps.hostBots
+        .setLoginCooldown(this.id, null)
+        .catch((err: unknown) => this.logDbError('clear login cooldown', err));
+    }
     const gc = this.gc;
     if (!gc) return;
 
