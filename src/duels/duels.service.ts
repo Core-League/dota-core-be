@@ -60,9 +60,11 @@ import {
   MATCH_OUTCOME_RADIANT,
   duelRatingDeltaFor,
   type DuelLobbyPlayer,
+  type DuelSpectator,
   type DuelStats,
 } from './duel.constants';
 import { Duel } from './duel.entity';
+import { DuelBracketMatch } from './duel-bracket-match.entity';
 import { DuelChallenge } from './duel-challenge.entity';
 import { DuelEventsPublisher } from './duel-events.publisher';
 import { heroById, pickRandomHeroes } from './dota-heroes';
@@ -76,6 +78,7 @@ import { HostBotsService } from './host-bots.service';
 import { AdminDuelDto, AdminPurgeDuelsResultDto } from './dto/duel-admin.dto';
 import {
   DuelBotsStatusDto,
+  DuelBracketRefDto,
   DuelChallengeDto,
   DuelChallengesStateDto,
   DuelDto,
@@ -105,6 +108,8 @@ interface DuelDtoLookups {
   tournaments: Map<string, DuelTournament>;
   /** Tournament ratings by `${tournamentId}:${playerId}`. */
   tournamentRatings: Map<string, number>;
+  /** Bracket refs of `bracket` duels by bracket match id. */
+  brackets: Map<string, DuelBracketRefDto>;
 }
 
 /** A player's numbers on the board a duel counts for: the ladder or a tournament. */
@@ -229,6 +234,9 @@ export class DuelsService {
       tournament: tournament
         ? { id: tournament.id, name: tournament.name }
         : null,
+      bracket: duel.bracketMatchId
+        ? (lookups.brackets.get(duel.bracketMatchId) ?? null)
+        : null,
       createdAt: duel.createdAt,
       lobbyReadyAt: duel.lobbyReadyAt,
       liveAt: duel.liveAt,
@@ -273,11 +281,13 @@ export class DuelsService {
     };
   }
 
-  /** Ladder lines, tournament lines and tournament names the duel cards need. */
+  /** Ladder lines, tournament lines, tournament names and bracket refs the duel cards need. */
   private async lookupsFor(duels: Duel[]): Promise<DuelDtoLookups> {
     const ladderIds = new Set<string>();
     const tournamentIds = new Set<string>();
+    const bracketMatchIds = new Set<string>();
     for (const d of duels) {
+      if (d.bracketMatchId) bracketMatchIds.add(d.bracketMatchId);
       if (d.tournamentId) {
         tournamentIds.add(d.tournamentId);
         continue;
@@ -285,24 +295,51 @@ export class DuelsService {
       if (d.player1Id) ladderIds.add(d.player1Id);
       if (d.player2Id) ladderIds.add(d.player2Id);
     }
-    const [ratingRows, tournamentRows, lineRows] = await Promise.all([
-      ladderIds.size
-        ? this.ratings.find({ where: { playerId: In([...ladderIds]) } })
-        : Promise.resolve([] as DuelRating[]),
-      tournamentIds.size
-        ? this.tournaments.find({
-            where: { id: In([...tournamentIds]) },
-            select: { id: true, name: true },
-          })
-        : Promise.resolve([] as DuelTournament[]),
-      tournamentIds.size
-        ? this.participants.find({
-            where: { tournamentId: In([...tournamentIds]) },
-            select: { tournamentId: true, playerId: true, rating: true },
-          })
-        : Promise.resolve([] as DuelTournamentParticipant[]),
-    ]);
+    const [ratingRows, tournamentRows, lineRows, bracketMatches] =
+      await Promise.all([
+        ladderIds.size
+          ? this.ratings.find({ where: { playerId: In([...ladderIds]) } })
+          : Promise.resolve([] as DuelRating[]),
+        tournamentIds.size
+          ? this.tournaments.find({
+              where: { id: In([...tournamentIds]) },
+              select: { id: true, name: true },
+            })
+          : Promise.resolve([] as DuelTournament[]),
+        tournamentIds.size
+          ? this.participants.find({
+              where: { tournamentId: In([...tournamentIds]) },
+              select: { tournamentId: true, playerId: true, rating: true },
+            })
+          : Promise.resolve([] as DuelTournamentParticipant[]),
+        bracketMatchIds.size
+          ? this.dataSource.getRepository(DuelBracketMatch).find({
+              where: { id: In([...bracketMatchIds]) },
+              relations: ['bracket'],
+              select: {
+                id: true,
+                round: true,
+                isThirdPlace: true,
+                bracketId: true,
+                bracket: { id: true, name: true, rounds: true },
+              },
+            })
+          : Promise.resolve([] as DuelBracketMatch[]),
+      ]);
     return {
+      brackets: new Map(
+        bracketMatches.map((m) => [
+          m.id,
+          {
+            id: m.bracketId,
+            name: m.bracket?.name ?? '',
+            matchId: m.id,
+            round: m.round,
+            rounds: m.bracket?.rounds ?? m.round,
+            isThirdPlace: m.isThirdPlace,
+          },
+        ]),
+      ),
       ratings: new Map(ratingRows.map((r) => [r.playerId, r])),
       tournaments: new Map(tournamentRows.map((t) => [t.id, t])),
       tournamentRatings: new Map(
@@ -486,13 +523,15 @@ export class DuelsService {
    * tournament duel whose tournament an admin deleted (`tournamentId` set to
    * null by the FK) has no line at all — null, nothing is written. Same for a
    * ladder duel of a season that is already over: the ladder was frozen and
-   * reset at the rollover, so its late result counts for nobody.
+   * reset at the rollover, so its late result counts for nobody. Bracket
+   * duels move no rating at all: their result only advances the bracket.
    */
   private async ratingLine(
     em: EntityManager,
     duel: Pick<Duel, 'tournamentId' | 'kind' | 'seasonId'>,
     playerId: string,
   ): Promise<DuelRatingLine | null> {
+    if (duel.kind === DuelKind.BRACKET) return null;
     const tournamentId = duel.tournamentId;
     if (!tournamentId) {
       if (duel.kind === DuelKind.TOURNAMENT) return null;
@@ -840,7 +879,10 @@ export class DuelsService {
       line.rating = Math.max(DUEL_RATING_FLOOR, line.rating - points);
       await em.save(line);
     }
-    if (cooldownUntil) await this.setQueueCooldown(em, playerId, cooldownUntil);
+    // A bracket no-show is punished by elimination, not by a ladder cooldown.
+    if (cooldownUntil && duel.kind !== DuelKind.BRACKET) {
+      await this.setQueueCooldown(em, playerId, cooldownUntil);
+    }
   }
 
   /**
@@ -976,7 +1018,8 @@ export class DuelsService {
       duel.cancelReason = DuelCancelReason.PLAYER_CANCELLED;
       duel.cancelledById = playerId;
       duel.loserId = playerId;
-      duel.ratingDelta = DUEL_CANCEL_PENALTY;
+      duel.ratingDelta =
+        duel.kind === DuelKind.BRACKET ? null : DUEL_CANCEL_PENALTY;
       duel.ratingAppliedAt = now;
       duel.finishedAt = now;
       duel.error = `cancelled by player ${playerId}`;
@@ -1194,6 +1237,88 @@ export class DuelsService {
   }
 
   /**
+   * Duel for a bracket match, inside the bracket's transaction: the players
+   * signed up for the tournament, so it starts in PENDING (no accept window)
+   * and the next free host bot claims it. Both leave any queue they wait in
+   * — the bracket game comes first. Moves no rating.
+   */
+  async createBracketDuel(
+    em: EntityManager,
+    bracketMatchId: string,
+    player1Id: string,
+    player2Id: string,
+  ): Promise<Duel> {
+    const [r1, r2] = await Promise.all([
+      this.ensureRating(player1Id, em),
+      this.ensureRating(player2Id, em),
+    ]);
+    await em.delete(DuelQueueEntry, { playerId: In([player1Id, player2Id]) });
+    const { lobbyName, region } = DuelsService.lobbySettingsFromEnv();
+    const duel = em.create(Duel, {
+      state: DuelState.PENDING,
+      kind: DuelKind.BRACKET,
+      bracketMatchId,
+      acceptDeadlineAt: null,
+      acceptedPlayerIds: [player1Id, player2Id],
+      heroes: pickRandomHeroes(2).map((hero, ix) => ({
+        playerId: ix === 0 ? player1Id : player2Id,
+        heroId: hero.id,
+      })),
+      player1Id,
+      player2Id,
+      player1Rating: r1.rating,
+      player2Rating: r2.rating,
+      lobbyName,
+      lobbyPassword: DuelsService.generateLobbyPassword(),
+      region,
+    });
+    return em.save(duel);
+  }
+
+  /**
+   * Lets `spectator` into the duel's lobby: the host bot invites them on its
+   * next tick and does not kick them. Idempotent; only while the lobby has
+   * not launched (the bot leaves the lobby when the game starts).
+   */
+  async addSpectator(duelId: string, spectator: DuelSpectator): Promise<Duel> {
+    const saved = await this.dataSource.transaction(async (em) => {
+      const duel = await em.findOne(Duel, {
+        where: { id: duelId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!duel) throw new NotFoundException('Duel not found');
+      if (
+        duel.player1Id === spectator.playerId ||
+        duel.player2Id === spectator.playerId
+      ) {
+        throw new ConflictException({
+          error: 'spectator_is_player',
+          message: 'Ви граєте цей матч — спостерігати не можна',
+        });
+      }
+      const open: DuelState[] = [
+        DuelState.PENDING,
+        DuelState.LOBBY_CREATING,
+        DuelState.WAITING_PLAYERS,
+      ];
+      if (!open.includes(duel.state)) {
+        throw new ConflictException({
+          error: 'spectate_closed',
+          message:
+            'Гру вже запущено або завершено — бот більше не в лобі, інвайт неможливий',
+        });
+      }
+      const list = (duel.spectators ?? []).filter(
+        (s) => s.playerId !== spectator.playerId,
+      );
+      duel.spectators = [...list, spectator];
+      return em.save(duel);
+    });
+    this.events.duelChanged(duelId);
+    return saved;
+  }
+
+  /**
    * Creates the duel and removes both players from the queue atomically.
    * Returns null when either player left the queue in the meantime.
    */
@@ -1255,7 +1380,7 @@ export class DuelsService {
   /**
    * Puts the duel's players back into the queue (after `no_bots_available`,
    * a cancel by the other side, …). `only` limits it to a subset. Friendly
-   * duels never came from the queue, so nobody is put there. Tournament
+   * and bracket duels never came from the queue, so nobody is put there. Tournament
    * duels go back to their tournament's queue — only while it is ACTIVE.
    */
   async requeuePlayers(
@@ -1263,7 +1388,9 @@ export class DuelsService {
     em: EntityManager,
     only?: string[],
   ): Promise<void> {
-    if (duel.kind === DuelKind.FRIEND) return;
+    if (duel.kind === DuelKind.FRIEND || duel.kind === DuelKind.BRACKET) {
+      return;
+    }
     const tournamentId = duel.tournamentId ?? null;
     // Its tournament was deleted — never fall through into the ladder queue.
     if (duel.kind === DuelKind.TOURNAMENT && !tournamentId) return;
@@ -1660,7 +1787,8 @@ export class DuelsService {
   /**
    * Nobody (or only one player) showed up. The absent player loses the duel's
    * delta (25, or 10 in a friendly duel; floor 0) and gets a queue cooldown;
-   * the present player is untouched.
+   * the present player is untouched. In a bracket duel nothing moves — the
+   * absent player is recorded as the loser and drops out of the bracket.
    * A no-show is not a played game, so wins/losses stay as they were.
    */
   async applyNoShow(duelId: string, absentPlayerIds: string[]): Promise<Duel> {
@@ -1682,8 +1810,12 @@ export class DuelsService {
       }
       duel.state = DuelState.CANCELLED;
       duel.cancelReason = DuelCancelReason.PLAYERS_NO_SHOW;
-      duel.ratingDelta = absentPlayerIds.length ? delta : null;
+      duel.ratingDelta = absentPlayerIds.length && delta ? delta : null;
       duel.ratingAppliedAt = absentPlayerIds.length ? now : null;
+      // A bracket match needs to know who forfeited; the other one advances.
+      if (duel.kind === DuelKind.BRACKET && absentPlayerIds.length === 1) {
+        duel.loserId = absentPlayerIds[0];
+      }
       duel.finishedAt = now;
       duel.error = absentPlayerIds.length
         ? `no-show: ${absentPlayerIds.join(', ')}`
@@ -1759,13 +1891,15 @@ export class DuelsService {
   }
 
   /**
-   * State + pending "invite me" requests — the worker polls this each tick
-   * to notice admin cancels and invite requests from the site.
+   * State + pending "invite me" requests + spectators — the worker polls this
+   * each tick to notice admin cancels, invite requests from the site and a
+   * streamer who asked to watch the match.
    */
   async getWorkerView(duelId: string): Promise<{
     state: DuelState;
     inviteRequests: Record<string, string> | null;
     restartRequests: Record<string, string> | null;
+    spectators: DuelSpectator[];
   } | null> {
     const row = await this.duels.findOne({
       where: { id: duelId },
@@ -1774,6 +1908,7 @@ export class DuelsService {
         state: true,
         inviteRequests: true,
         restartRequests: true,
+        spectators: true,
       },
     });
     return row
@@ -1781,6 +1916,7 @@ export class DuelsService {
           state: row.state,
           inviteRequests: row.inviteRequests ?? null,
           restartRequests: row.restartRequests ?? null,
+          spectators: row.spectators ?? [],
         }
       : null;
   }
@@ -1866,12 +2002,16 @@ export class DuelsService {
     viewerId: string | null,
   ): Promise<DuelPlayerProfileDto> {
     const season = await this.activeSeason();
-    // The history restarts with each season: its ladder duels plus the tournament games played since it began.
+    // The history restarts with each season: its ladder duels plus the tournament / bracket games played since it began.
     const ofSeason: FindOptionsWhere<Duel>[] = season
       ? [
           { seasonId: season.id },
           {
             kind: DuelKind.TOURNAMENT,
+            createdAt: MoreThanOrEqual(season.startsAt),
+          },
+          {
+            kind: DuelKind.BRACKET,
             createdAt: MoreThanOrEqual(season.startsAt),
           },
         ]

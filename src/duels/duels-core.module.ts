@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Player } from '../players/player.entity';
 import { Duel } from './duel.entity';
+import { DuelBracket } from './duel-bracket.entity';
+import { DuelBracketMatch } from './duel-bracket-match.entity';
+import { DuelBracketParticipant } from './duel-bracket-participant.entity';
 import { DuelChallenge } from './duel-challenge.entity';
 import { DuelEventsPublisher } from './duel-events.publisher';
 import { DuelQueueEntry } from './duel-queue.entity';
@@ -30,6 +33,9 @@ import { HostBotsService } from './host-bots.service';
       DuelTournamentParticipant,
       DuelSeason,
       DuelSeasonStanding,
+      DuelBracket,
+      DuelBracketParticipant,
+      DuelBracketMatch,
       HostBot,
       Player,
     ]),

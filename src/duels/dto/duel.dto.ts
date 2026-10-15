@@ -118,6 +118,27 @@ export class DuelTournamentRefDto {
   name: string;
 }
 
+/** Where a `bracket` duel sits in its media tournament. */
+export class DuelBracketRefDto {
+  @ApiProperty({ description: 'Bracket tournament id' })
+  id: string;
+
+  @ApiProperty()
+  name: string;
+
+  @ApiProperty({ description: 'Bracket match id' })
+  matchId: string;
+
+  @ApiProperty({ description: '1-based round of the match' })
+  round: number;
+
+  @ApiProperty({ description: 'Rounds of the bracket (the final is the last)' })
+  rounds: number;
+
+  @ApiProperty({ description: 'The match for third place' })
+  isThirdPlace: boolean;
+}
+
 export class DuelDto {
   @ApiProperty()
   id: string;
@@ -132,7 +153,8 @@ export class DuelDto {
     enum: DuelKind,
     description:
       '`ranked` — paired from the queue (±25); `friend` — created from an accepted friend challenge (±10); ' +
-      '`tournament` — paired from a tournament queue (±25 on the tournament table)',
+      '`tournament` — paired from a tournament queue (±25 on the tournament table); ' +
+      '`bracket` — a match of a single-elimination media tournament (no rating change)',
   })
   kind: DuelKind;
 
@@ -142,6 +164,14 @@ export class DuelDto {
     description: 'Tournament of a `tournament` duel; null otherwise',
   })
   tournament: DuelTournamentRefDto | null;
+
+  @ApiPropertyOptional({
+    type: DuelBracketRefDto,
+    nullable: true,
+    description:
+      'Bracket tournament and match of a `bracket` duel; null otherwise',
+  })
+  bracket: DuelBracketRefDto | null;
 
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt: Date;

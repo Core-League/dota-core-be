@@ -16,6 +16,7 @@ import {
   HostBotStatus,
   type DuelLobbyPlayer,
   type DuelLobbySide,
+  type DuelSpectator,
   type DuelStats,
 } from '../duels/duel.constants';
 import type { Duel } from '../duels/duel.entity';
@@ -84,6 +85,9 @@ export interface HostBotWorkerConfig {
   statsPollMs: number;
 }
 
+/** A spectator kicked out of a game slot is invited again after this pause (lets the kick land first). */
+const SPECTATOR_REINVITE_DELAY_MS = 5_000;
+
 export interface HostBotWorkerDeps {
   duels: DuelsService;
   hostBots: HostBotsService;
@@ -143,6 +147,20 @@ class DuelCtx {
   relaunchNotBefore = 0;
   /** Per player id: when they were last invited, how often on the bot's own initiative, which site request was served. */
   readonly invites = new Map<string, InviteTrack>();
+  /**
+   * Spectators by account id (a streamer watching a bracket match): let into
+   * the lobby without a game slot. `invitedAt` 0 = an invite is still owed,
+   * not before `notBefore` (epoch ms).
+   */
+  readonly spectators = new Map<
+    number,
+    {
+      playerId: string;
+      steamId64: string;
+      invitedAt: number;
+      notBefore: number;
+    }
+  >();
   /** First moment we knew the game was over (lobby left RUN, or vanished after RUN). */
   gameEndedAt: number | null = null;
   /** GC match-details polling bookkeeping. */
@@ -202,6 +220,22 @@ class DuelCtx {
     this.lastServerId = duel.serverSteamId;
     this.restarts = duel.lobbyRestarts ?? 0;
     this.joinDeadline = this.startedAt + joinTimeoutSeconds * 1000;
+    this.syncSpectators(duel.spectators ?? []);
+  }
+
+  /** Adds spectators the site registered since the last look (never removes — a lobby keeps its guests). */
+  syncSpectators(list: DuelSpectator[]): void {
+    for (const s of list) {
+      const accountId = accountIdOf(s.steamId64);
+      if (!accountId || this.invited.has(accountId)) continue;
+      if (this.spectators.has(accountId)) continue;
+      this.spectators.set(accountId, {
+        playerId: s.playerId,
+        steamId64: s.steamId64,
+        invitedAt: 0,
+        notBefore: 0,
+      });
+    }
   }
 
   playerIdOf(accountId: number | null): string | null {
@@ -266,6 +300,7 @@ class DuelCtx {
     this.joinDeadline = now + joinTimeoutSeconds * 1000;
     this.relaunchNotBefore = now + DUEL_RELAUNCH_DELAY_SECONDS * 1000;
     this.invites.clear();
+    for (const s of this.spectators.values()) s.invitedAt = 0;
     if (!sameLobby) {
       this.lobbyId = null;
       this.expectingCreate = false;
@@ -514,6 +549,7 @@ export class HostBotWorker {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`invite failed: ${message}`);
     }
+    this.inviteSpectators(ctx, gc, new Set(), Date.now());
     await this.deps.duels.markLobbyReady(ctx.id, lobby.lobby_id);
   }
 
@@ -703,6 +739,7 @@ export class HostBotWorker {
       await this.finish();
       return;
     }
+    ctx.syncSpectators(view.spectators);
 
     const lobby = gc.lobby;
 
@@ -823,13 +860,27 @@ export class HostBotWorker {
       gc.setTeamSlot(DOTA_GC_TEAM.PLAYER_POOL);
     }
 
-    // 2) kick anyone who was not invited
+    // 2) kick anyone who was not invited. Spectators stay — unless one sits
+    //    in a game slot before the launch (that would block it, or turn the
+    //    duel into a 2v1): kicked and invited again, to take a spectator slot.
     for (const m of members) {
-      if (
-        m.accountId &&
-        m.accountId !== botAcc &&
-        !ctx.invited.has(m.accountId)
-      ) {
+      if (!m.accountId || m.accountId === botAcc) continue;
+      const spectator = ctx.spectators.get(m.accountId);
+      if (spectator) {
+        const inGameSlot =
+          m.team === DOTA_GC_TEAM.GOOD_GUYS || m.team === DOTA_GC_TEAM.BAD_GUYS;
+        if (inGameSlot && !ctx.launched) {
+          this.logger.warn(
+            `Spectator ${m.accountId} took a game slot — kicking, will re-invite`,
+          );
+          gc.kick(m.accountId);
+          spectator.invitedAt = 0;
+          spectator.notBefore = now + SPECTATOR_REINVITE_DELAY_MS;
+          inLobby.delete(m.accountId);
+        }
+        continue;
+      }
+      if (!ctx.invited.has(m.accountId)) {
         this.logger.warn(`Kicking uninvited account ${m.accountId}`);
         gc.kick(m.accountId);
       }
@@ -847,6 +898,7 @@ export class HostBotWorker {
     if (!ctx.launched) {
       await this.broadcastRoster(ctx, inLobby, radiant, dire);
       this.resendInvites(ctx, gc, inLobby, view.inviteRequests, now);
+      this.inviteSpectators(ctx, gc, inLobby, now);
     }
 
     // 4) launch when both invited players sit on opposite sides (after an
@@ -1454,6 +1506,31 @@ export class HostBotWorker {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`re-invite failed: ${message}`);
+      }
+    }
+  }
+
+  /**
+   * One invite per spectator who is owed one and not in the lobby yet; a
+   * kicked spectator waits a few seconds so the kick is processed first.
+   */
+  private inviteSpectators(
+    ctx: DuelCtx,
+    gc: DotaGcClient,
+    inLobby: Set<number>,
+    now: number,
+  ): void {
+    for (const [accountId, s] of ctx.spectators) {
+      if (s.invitedAt > 0 || now < s.notBefore || inLobby.has(accountId)) {
+        continue;
+      }
+      s.invitedAt = now;
+      this.logger.log(`Inviting spectator ${s.steamId64} (${s.playerId})`);
+      try {
+        gc.inviteToLobby(s.steamId64);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`spectator invite failed: ${message}`);
       }
     }
   }

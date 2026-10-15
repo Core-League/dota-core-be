@@ -92,6 +92,11 @@ export enum DuelCancelReason {
   TOURNAMENT_DELETED = 'tournament_deleted',
   /** The ladder season ended before the game started. No rating change. */
   SEASON_ENDED = 'season_ended',
+  /**
+   * The organiser of the duel's bracket decided the match by hand or
+   * cancelled the bracket before the game started.
+   */
+  BRACKET_ORGANISER = 'bracket_organiser',
 }
 
 /** States in which a participant may still cancel the duel themselves. */
@@ -114,6 +119,15 @@ export enum DuelFailReason {
 export interface DuelHeroPick {
   playerId: string;
   heroId: number;
+}
+
+/**
+ * Someone the host bot lets into the lobby without a game slot (a streamer
+ * watching a bracket match): invited once, never kicked, never a player.
+ */
+export interface DuelSpectator {
+  playerId: string;
+  steamId64: string;
 }
 
 export type DuelLobbySide = 'radiant' | 'dire' | 'unassigned';
@@ -173,6 +187,11 @@ export enum DuelKind {
    * own table (`duel_tournament_participant`), the global ladder is untouched.
    */
   TOURNAMENT = 'tournament',
+  /**
+   * One match of a single-elimination bracket (`duel_bracket_match`): no
+   * rating moves anywhere, the winner advances in the bracket.
+   */
+  BRACKET = 'bracket',
 }
 
 /** A password-protected tournament run by media staff / admins. */
@@ -214,6 +233,66 @@ export const DUEL_TOURNAMENT_PRIZE_PLACE_MAX = 100;
 export const DUEL_TOURNAMENT_PRIZE_VIP_MONTHS_MAX = 12;
 /** How often api-v1 retries settling the prizes of ended tournaments (their last games may still run). */
 export const DUEL_TOURNAMENT_PRIZES_SWEEP_MS = 60_000;
+
+// ── single-elimination brackets (media tournaments) ──────────────────────
+
+/** Lifecycle of a bracket tournament (`duel_bracket`). */
+export enum DuelBracketStatus {
+  /** Players register (password if set); the organiser may edit everything. */
+  REGISTRATION = 'REGISTRATION',
+  /** Bracket generated; its matches are played as bot-hosted duels. */
+  LIVE = 'LIVE',
+  /** Final (and third-place match) decided, places fixed. */
+  FINISHED = 'FINISHED',
+  /** Called off by the organiser; unstarted duels were cancelled. */
+  CANCELLED = 'CANCELLED',
+}
+
+/** How the participants are placed into the bracket at launch. */
+export enum DuelBracketSeeding {
+  RANDOM = 'random',
+  /** Best 1v1 ladder rating = seed 1; byes go to the top seeds. */
+  RATING = 'rating',
+}
+
+/** Where one bracket match stands (`duel_bracket_match.status`). */
+export enum DuelBracketMatchStatus {
+  /** At least one slot still waits for an earlier match. */
+  WAITING = 'WAITING',
+  /** Both players known, no running duel (created on the next advance). */
+  READY = 'READY',
+  /** A duel for the match is running (`duelId`). */
+  LIVE = 'LIVE',
+  /** The duel ended without a usable result — the organiser decides. */
+  NEEDS_DECISION = 'NEEDS_DECISION',
+  /** Winner fixed (or nobody, when both slots were empty). */
+  DONE = 'DONE',
+}
+
+/** How a finished bracket match was decided. */
+export enum DuelBracketMatchResult {
+  /** The game was played and the bot reported the winner. */
+  PLAYED = 'played',
+  /** The opponent did not show up, cancelled or ignored the drawn hero. */
+  FORFEIT = 'forfeit',
+  /** No opponent in this slot (bye). */
+  BYE = 'bye',
+  /** Set by the organiser or an admin. */
+  MANUAL = 'manual',
+}
+
+export const DUEL_BRACKET_MIN_PARTICIPANTS = 2;
+export const DUEL_BRACKET_MAX_PARTICIPANTS = 64;
+/** Prize places a bracket can award: 1–2, and 3–4 through the third-place match. */
+export const DUEL_BRACKET_PRIZE_PLACE_MAX = 4;
+/**
+ * Duels of one match that may end without a game for a technical reason
+ * (lobby not created, game aborted) before the organiser has to decide.
+ * `no_bots_available` never counts — the match simply waits for a bot.
+ */
+export const DUEL_BRACKET_MAX_TECH_RETRIES = 3;
+/** How often api-v1 re-checks live brackets (missed duel events, ready matches waiting for busy players). */
+export const DUEL_BRACKET_SWEEP_MS = 15_000;
 
 /** A monthly season of the ladder (`duel_season`). */
 export enum DuelSeasonStatus {
@@ -268,7 +347,11 @@ export const DUEL_FRIEND_RATING_DELTA = 10;
 export const duelRatingDeltaFor = (
   kind: DuelKind | null | undefined,
 ): number =>
-  kind === DuelKind.FRIEND ? DUEL_FRIEND_RATING_DELTA : DUEL_RATING_DELTA;
+  kind === DuelKind.BRACKET
+    ? 0
+    : kind === DuelKind.FRIEND
+      ? DUEL_FRIEND_RATING_DELTA
+      : DUEL_RATING_DELTA;
 /** How many friendly duels a player may accept (either side) per Kyiv calendar day. */
 export const DUEL_CHALLENGE_DAILY_LIMIT = 3;
 /** How long a friend challenge waits for an answer. */

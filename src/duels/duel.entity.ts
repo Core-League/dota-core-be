@@ -17,8 +17,10 @@ import {
   type DuelFailReason,
   type DuelHeroPick,
   type DuelLobbyPlayer,
+  type DuelSpectator,
   type DuelStats,
 } from './duel.constants';
+import { DuelBracketMatch } from './duel-bracket-match.entity';
 import { DuelSeason } from './duel-season.entity';
 import { DuelTournament } from './duel-tournament.entity';
 
@@ -58,6 +60,22 @@ export class Duel {
   @ManyToOne(() => DuelTournament, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'tournamentId' })
   tournament: DuelTournament | null;
+
+  /** Bracket match the duel is played for (kind `bracket`); null otherwise. */
+  @Index('IDX_duel_bracket_match')
+  @Column({ type: 'uuid', nullable: true })
+  bracketMatchId: string | null;
+
+  @ManyToOne(() => DuelBracketMatch, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'bracketMatchId' })
+  bracketMatch: DuelBracketMatch | null;
+
+  /**
+   * Accounts the host bot lets into the lobby without a game slot (the
+   * bracket's streamer watching the match). Invited by the bot, never kicked.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  spectators: DuelSpectator[] | null;
 
   /**
    * Ladder season the duel counts for (kinds `ranked` / `friend`), stamped at

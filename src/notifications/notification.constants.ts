@@ -23,6 +23,11 @@ export enum NotificationType {
   TEAM_INVITE_DECLINED = 'team_invite_declined',
   /** The player won a prize place of a finished duel season. */
   DUEL_SEASON_PRIZE = 'duel_season_prize',
+  /**
+   * The player's next match of a media bracket tournament is ready and the
+   * bot is creating the lobby (`refId` = bracket id, actor = the opponent).
+   */
+  DUEL_BRACKET_MATCH = 'duel_bracket_match',
 }
 
 /** Outcome of the request / challenge an actionable notification is about. */

@@ -7,6 +7,9 @@ import { FriendsModule } from '../friends/friends.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { VipModule } from '../vip/vip.module';
+import { DuelBracketsController } from './duel-brackets.controller';
+import { DuelBracketsScheduler } from './duel-brackets.scheduler';
+import { DuelBracketsService } from './duel-brackets.service';
 import { DuelChallengesService } from './duel-challenges.service';
 import { DuelEventsListener } from './duel-events.listener';
 import { DuelMatchmakerScheduler } from './duel-matchmaker.scheduler';
@@ -26,7 +29,8 @@ import { DuelsGateway } from './duels.gateway';
 /**
  * api-v1 side of the 1v1 ladder: HTTP endpoints, the matchmaker tick, the
  * real-time channel (socket.io gateway fed by Postgres `LISTEN duel_events`),
- * friendly-duel challenges and the Discord voice channel per duel.
+ * friendly-duel challenges, the Discord voice channel per duel and the
+ * single-elimination media tournaments (brackets).
  */
 @Module({
   imports: [
@@ -44,10 +48,13 @@ import { DuelsGateway } from './duels.gateway';
     DuelsAdminController,
     DuelTournamentsController,
     DuelSeasonsController,
+    DuelBracketsController,
   ],
   providers: [
     DuelTournamentsService,
     DuelTournamentPrizesScheduler,
+    DuelBracketsService,
+    DuelBracketsScheduler,
     DuelSeasonsService,
     DuelSeasonsScheduler,
     DuelMatchmakerService,
